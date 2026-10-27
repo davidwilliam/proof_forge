@@ -11,6 +11,7 @@ Environment:
   PF_LIVE_QUOTA=2         live jobs per client IP per day without the judge key
   PF_JUDGE_QUOTA=30       live jobs per day with the judge key
   PF_JOB_BUDGET_USD=3     per-job cap at standard-tier list prices
+  PF_PREWARM=1            build sidecars and hidden variants at startup
 """
 import asyncio, json, os, pathlib, shutil, subprocess, sys, tempfile, threading, time, uuid
 
@@ -130,6 +131,9 @@ def verify_job(d, t, label):
     set_job(d, state="CHECKING")
     prov_path = d / "summary.json"
     prov = json.loads(prov_path.read_text()) if prov_path.exists() else None
+    if prov and prov.get("budget"):
+        emit(d, kind="summary", budget=prov["budget"], versions=prov.get("versions"),
+             accepted_in_session=prov.get("accepted_in_session"))
     p = passport.run(final, t, cases=2000, seed=0, provenance=prov)
     (PASSPORTS / f"{p['passport_sha256']}.json").write_text(json.dumps(p, indent=2))
     state = "COMPLETE" if p["status"] == "VERIFIED" else "PARTIAL"
@@ -303,21 +307,36 @@ BUILDS_ALLOWED = {"buggy": "candidate/Solution.lean", "repaired": "evidence/muse
 _build_lock = threading.Lock()
 
 
-def built_project(which):
-    t = taskmod.load()
-    src = t.root / BUILDS_ALLOWED[which]
+def built_project(t, src):
+    """Build the task's executable from one candidate file once; cached by source hash."""
     sha = taskmod.sha256(src)
-    d = BUILDS / sha
+    d = BUILDS / f"{t.id}-{sha[:16]}"
     with _build_lock:
         if not (d / ".lake/build/bin" / t.exe).exists():
             shutil.rmtree(d, ignore_errors=True)
             ws = judge.load_workspace(str(src))
             tmp = judge.fresh_project(ws, judge.candidate_files(ws), t)
-            r = judge.in_container(tmp, f"lake build {t.exe} 2>&1 | tail -c 2000")
-            if r["exit_code"] != 0 or not (tmp / ".lake/build/bin" / t.exe).exists():
+            r = binary_check.build(tmp, t)
+            if r["exit_code"] != 0:
                 raise HTTPException(500, "sidecar build failed")
             shutil.move(str(tmp), d)
-    return t, d, sha
+    return d, sha
+
+
+def passports_for(solution_sha):
+    """Stored Passports whose candidate file has this hash, newest first."""
+    out = []
+    for f in sorted(PASSPORTS.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True):
+        p = json.loads(f.read_text())
+        if solution_sha in p.get("solution", {}).get("files", {}).values():
+            out.append({"passport_sha256": p["passport_sha256"], "status": p["status"],
+                        "task": p["task"]["id"], "generated": p["generated"]})
+    return out
+
+
+@app.get("/api/passports")
+def find_passports(solution_sha256: str):
+    return passports_for(solution_sha256)
 
 
 class PayoutRequest(BaseModel):
@@ -330,7 +349,8 @@ class PayoutRequest(BaseModel):
 def payout(body: PayoutRequest):
     if body.build not in BUILDS_ALLOWED:
         raise HTTPException(400, "build must be buggy or repaired")
-    t, d, sha = built_project(body.build)
+    t = taskmod.load()
+    d, sha = built_project(t, t.root / BUILDS_ALLOWED[body.build])
     line = json.dumps({"state": body.state, "request": body.request})
     if len(line) > 20_000:
         raise HTTPException(413, "input too large")
@@ -341,7 +361,9 @@ def payout(body: PayoutRequest):
         raise HTTPException(500, "sidecar produced no output")
     res = json.loads(out[-1])
     exe = d / ".lake/build/bin" / t.exe
+    found = passports_for(sha)
     return {"build": body.build, "solution_sha256": sha, "executable_sha256": taskmod.sha256(exe),
+            "passport_sha256": found[0]["passport_sha256"] if found else None,
             "result": res, "elapsed_ms": r["elapsed_ms"]}
 
 
@@ -368,7 +390,9 @@ def challenge(body: ChallengeRequest, request: Request):
         raise HTTPException(404, "no such variant")
     t = taskmod.Task(d)
     t0 = time.monotonic()
-    b = binary_check.check_binary(str(t.start), n_cases=300, seed=int(time.time()) % 1000, task=t)
+    project, _ = built_project(t, t.start)
+    b = binary_check.property_tests(project, t, 300, int(time.time()) % 1000, {})
+    b["binary_sha256"] = (project / "binary.sha256").read_text().strip()
     out = {"variant": body.variant, "elapsed_ms": int((time.monotonic() - t0) * 1000),
            "status": "REFUTED" if b["status"] == "REFUTED" else "UNRESOLVED",
            "violations": b["violations"], "witness": b["witnesses"][0] if b["witnesses"] else None,
@@ -376,6 +400,26 @@ def challenge(body: ChallengeRequest, request: Request):
     if body.repair and mode() == "live":
         out["repair_job"] = create_job(ForgeRequest(task=str(d), mode="live"), request)["id"]
     return out
+
+
+def prewarm():
+    """Build the payout sidecars and every hidden variant once, so first requests are warm."""
+    t = taskmod.load()
+    for rel in BUILDS_ALLOWED.values():
+        try:
+            built_project(t, t.root / rel)
+        except HTTPException:
+            pass
+    for d in sorted(HIDDEN.glob("*/task.json")):
+        ht = taskmod.Task(d.parent)
+        try:
+            built_project(ht, ht.start)
+        except HTTPException:
+            pass
+
+
+if os.environ.get("PF_PREWARM", "1") == "1":
+    threading.Thread(target=prewarm, daemon=True).start()
 
 
 # Results
