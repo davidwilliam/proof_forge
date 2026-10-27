@@ -16,7 +16,7 @@ The task (harness/task.py) defaults to the flagship payout component in formal/.
 A bare .lean file is treated as a workspace containing only candidate/Solution.lean.
 Statuses come only from exit codes recorded here; nothing a model writes is trusted.
 """
-import argparse, hashlib, json, pathlib, re, shutil, subprocess, sys, tempfile, time
+import argparse, contextlib, fcntl, hashlib, json, os, pathlib, re, shutil, subprocess, sys, tempfile, time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import task as taskmod  # noqa: E402
@@ -122,6 +122,31 @@ def fresh_project(ws: pathlib.Path, files, task) -> pathlib.Path:
     return d
 
 
+SLOTS = int(os.environ.get("PF_CONTAINER_SLOTS", "4"))
+SLOT_DIR = pathlib.Path(tempfile.gettempdir()) / "proofforge-slots"
+
+
+@contextlib.contextmanager
+def container_slot():
+    """Bound concurrent Lean containers across all processes on this host."""
+    SLOT_DIR.mkdir(exist_ok=True)
+    while True:
+        for i in range(SLOTS):
+            f = open(SLOT_DIR / f"slot{i}", "w")
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                f.close()
+                continue
+            try:
+                yield i
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+                f.close()
+            return
+        time.sleep(0.2)
+
+
 def in_container(project: pathlib.Path, script: str, timeout=900):
     cmd = [
         "docker", "run", "--rm", "--network", "none",
@@ -131,7 +156,8 @@ def in_container(project: pathlib.Path, script: str, timeout=900):
         "--memory", "4g", "--pids-limit", "512",
         "-v", f"{project}:/work", "-w", "/work", IMAGE, "bash", "-lc", script,
     ]
-    return run(cmd, timeout=timeout)
+    with container_slot():
+        return run(cmd, timeout=timeout)
 
 
 def judge(arg: str, scan: bool = True, task=None) -> dict:
