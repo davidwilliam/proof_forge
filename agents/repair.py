@@ -68,6 +68,7 @@ class Session:
         (self.ws / "candidate").mkdir()
         shutil.copy(start, self.ws / "candidate/Solution.lean")
         self.version = 0
+        self.targets = set()   # planned helper lemmas the bank may replace while they are sorry
         self.accepted = False
         self.events = []
 
@@ -205,7 +206,7 @@ class Session:
             if name not in existing:
                 self.replace_declaration(name, chunk)
                 banked.append(name)
-            elif name in THEOREMS:
+            elif name in THEOREMS or name in self.targets:
                 decl = re.search(rf"theorem\s+{re.escape(name)}\b.*?(?=\n(?:@\[|/--|private |theorem |lemma |def |instance |abbrev |end Payout))",
                                  self._source(), re.S)
                 if decl and "sorry" in decl.group(0):
@@ -218,13 +219,14 @@ class Session:
             existing = {m.group(1).split(".")[-1]: m.start() for m in self.DECL.finditer(src)}
         return banked
 
-    def theorem_status(self):
-        """Per-requirement status from `#print axioms` on the compiled candidate."""
-        probe = "import Solution\n" + "\n".join(f"#print axioms Payout.{t}" for t in THEOREMS) + "\n"
+    def theorem_status(self, names=None):
+        """Per-declaration status from `#print axioms` on the compiled candidate."""
+        names = names or THEOREMS
+        probe = "import Solution\n" + "\n".join(f"#print axioms Payout.{t}" for t in names) + "\n"
         (self.ws / "Status.lean").write_text(probe)
         r = judge.in_container(self.ws, "lake env lean Status.lean 2>&1", timeout=300)
         status, blocks = {}, re.split(r"(?='Payout\.)", r["output_tail"])
-        for t in THEOREMS:
+        for t in names:
             blk = next((b for b in blocks if b.startswith(f"'Payout.{t}'")), "")
             if not blk:
                 status[t] = "MISSING"
@@ -234,11 +236,11 @@ class Session:
                 status[t] = "PROVED"
         return status
 
-    def check_status(self):
+    def check_status(self, names=None):
         r = judge.in_container(self.ws, "lake build Solution 2>&1 | tail -c 2000", timeout=600)
         if "error:" in r["output_tail"]:
-            return {t: "ERROR" for t in THEOREMS}
-        return self.theorem_status()
+            return {t: "ERROR" for t in (names or THEOREMS)}
+        return self.theorem_status(names)
 
     def check(self):
         files = [self.ws / "candidate/Solution.lean"]
@@ -354,25 +356,108 @@ def orchestrate(s, a, usage):
     if not ok0:
         return
     # Phase 1: one focused dialog per obligation, easy ones first, then a second pass.
-    for budget, label in ((a.obligation_turns, "pass1"), (a.obligation_turns * 2, "pass2")):
+    status = s.check_status()
+    for t in ORDER:
+        if status.get(t) == "PROVED":
+            continue
+        prove_target(s, a, usage, spec, t, a.obligation_turns, "pass1")
         status = s.check_status()
-        for t in ORDER:
-            if status.get(t) == "PROVED":
-                continue
-            stmt = re.search(rf"theorem\s+{t}\s*:[^\n]*", s.read_file("spec/Payout/Challenge.lean")).group(0)
-            user = (f"{spec}\n\n=== candidate/Solution.lean (current) ===\n{s._source()}\n\n"
-                    f"Current requirement status: {', '.join(f'{k}={v}' for k, v in status.items())}\n\n"
-                    f"Your task now: prove `{stmt.replace(' := sorry', '')}`. Do not change `step` or theorems that are PROVED. "
-                    "Develop helper lemmas and the proof with try_snippet; a clean snippet that proves "
-                    f"`{t}` replaces its sorry automatically. Call check to confirm.")
-            ok, _ = dialog(s, a.model, a.effort, SYSTEM, user,
-                           {"try_snippet", "replace_declaration", "check", "read_file"},
-                           budget, lambda t=t: s.check_status().get(t) == "PROVED", usage, f"{label}:{t}")
+    for t in ORDER:
+        if status.get(t) == "PROVED" or a.planner == "none":
+            continue
+        for attempt in range(a.plans):
+            lemmas, plan_text = plan(s, a, usage, spec, t, attempt)
+            for name in lemmas:
+                prove_target(s, a, usage, spec, name, a.obligation_turns, f"plan{attempt}", plan_text)
+            prove_target(s, a, usage, spec, t, a.obligation_turns, f"plan{attempt}", plan_text)
             status = s.check_status()
-            s.log(kind="obligation", label=label, theorem=t, ok=ok, status=status)
-        if all(v == "PROVED" for v in status.values()):
-            break
+            if status.get(t) == "PROVED":
+                break
     s.check()
+
+
+PLANNER_SYSTEM = """You are a Lean 4 proof architect (Lean v4.35.0 core library only, no Mathlib).
+Given a specification, a candidate implementation, and a required theorem that a prover failed to prove,
+you design a chain of helper lemmas that makes the proof routine. Each lemma must be TRUE, stated in
+Lean 4 syntax that elaborates against the given file, and small enough to prove by induction or simp/omega.
+Prefer general lemmas over specific ones. Avoid Mathlib names (no Finset, no linarith, no BigOperators)."""
+
+
+def plan(s, a, usage, spec, t, attempt):
+    """Ask the planner model for helper lemma statements; install them as sorry targets."""
+    stmt = re.search(rf"theorem\s+{t}\s*:[^\n]*", s.read_file("spec/Payout/Challenge.lean") + s._source())
+    user = (f"{spec}\n\n=== candidate/Solution.lean (current) ===\n{s._source()}\n\n"
+            f"The prover could not prove `{stmt.group(0).replace(' := sorry', '') if stmt else t}`.\n"
+            "Reply with (1) a short proof plan in prose, then (2) exactly one ```lean code block containing 2 to 6 "
+            "helper lemmas, each written as `theorem <unique_name> ... := by sorry`, in dependency order, inside no "
+            "namespace (the code is inserted inside `namespace Payout`). Use names prefixed with `plan"
+            f"{attempt}_`.")
+    extra = {} if a.planner_effort == "default" else {"reasoning_effort": a.planner_effort}
+    for tries in range(3):
+        try:
+            r = chat(a.planner, [{"role": "system", "content": PLANNER_SYSTEM}, {"role": "user", "content": user}],
+                     f"plan:{t}:{attempt}", max_tokens=32000, timeout=900, **extra)
+        except APIError as e:
+            s.log(kind="api_error", status=e.status, body=e.body[:300])
+            time.sleep(20)
+            continue
+        u = r.get("usage") or {}
+        usage["prompt"] += u.get("prompt_tokens", 0)
+        usage["completion"] += u.get("completion_tokens", 0)
+        usage.setdefault("planner_completion", 0)
+        usage["planner_completion"] += u.get("completion_tokens", 0)
+        text = r["choices"][0]["message"].get("content") or ""
+        m = re.search(r"```lean\s*\n(.*?)```", text, re.S)
+        if not m:
+            user += "\n\nYour reply had no ```lean code block. Reply again in the required format."
+            continue
+        code = m.group(1).strip()
+        names = [d.group(1).split(".")[-1] for d in s.DECL.finditer(code)]
+        before = s._source()
+        new = before
+        for d in re.split(r"\n(?=(?:theorem|lemma) )", code):
+            dm = s.DECL.match(d.strip())
+            if dm:
+                new, _ = s._replace_in(new, dm.group(1), d.strip())
+        s._save(new, f"plan {t} {attempt}")
+        st = s.check_status(names)
+        if any(v == "ERROR" for v in st.values()):
+            r2 = judge.in_container(s.ws, "lake build Solution 2>&1 | tail -c 6000", timeout=600)
+            s._save(before, f"revert plan {t} {attempt}")
+            user += ("\n\nThese lemma statements do not elaborate. Fix them. Compiler output:\n"
+                     + s._clean(r2["output_tail"])[-3000:])
+            continue
+        s.targets.update(names)
+        prose = text[: m.start()].strip()[-3000:]
+        (s.out / f"plan_{t}_{attempt}.md").write_text(text)
+        s.log(kind="plan", theorem=t, attempt=attempt, lemmas=names, model=a.planner)
+        print(f"[plan {t}] {names}", flush=True)
+        return names, prose
+    return [], ""
+
+
+def prove_target(s, a, usage, spec, t, budget, label, plan_text=""):
+    src = s._source()
+    m = re.search(rf"theorem\s+{re.escape(t)}\b[^\n]*(?:\n(?!theorem|lemma|def|end )[^\n]*)*", src)
+    stmt = (m.group(0).split(":= by")[0].split(":= sorry")[0] if m else t).strip()
+    status = s.check_status()
+    user = (f"{spec}\n\n=== candidate/Solution.lean (current) ===\n{src}\n\n"
+            f"Current requirement status: {', '.join(f'{k}={v}' for k, v in status.items())}\n\n"
+            + (f"Proof plan from the architect:\n{plan_text}\n\n" if plan_text else "")
+            + f"Your task now: prove `{stmt}`. Do not change `step` or anything already proved. "
+            "Develop the proof with try_snippet; a clean snippet that proves "
+            f"`{t}` replaces its sorry automatically. You may use the other helper lemmas in the file even if "
+            "they are still sorry; they are proved separately.")
+    def own_proof_done():
+        """The target's own proof is sorry-free and the file compiles (dependencies may be pending)."""
+        m2 = re.search(rf"^(?:private\s+)?theorem\s+{re.escape(t)}\b.*?(?=^(?:@\[|/--|private |theorem |lemma |def |instance |abbrev |end Payout))",
+                       s._source(), re.S | re.M)
+        return bool(m2) and "sorry" not in m2.group(0) and s.check_status([t]).get(t) != "ERROR"
+    done = own_proof_done
+    ok, _ = dialog(s, a.model, a.effort, SYSTEM, user, {"try_snippet", "replace_declaration", "check", "read_file"},
+                   budget, done, usage, f"{label}:{t}")
+    s.log(kind="obligation", label=label, theorem=t, ok=ok)
+    return ok
 
 
 def main():
@@ -384,6 +469,9 @@ def main():
     ap.add_argument("--obligation-turns", type=int, default=12)
     ap.add_argument("--start", default=str(ROOT / "formal/attacks/buggy_original.lean"))
     ap.add_argument("--effort", default="medium", choices=["low", "medium", "high", "default"])
+    ap.add_argument("--planner", default="muse-wonder-1.0", help="planner model, or 'none' (arm A1)")
+    ap.add_argument("--planner-effort", default="high", choices=["low", "medium", "high", "default"])
+    ap.add_argument("--plans", type=int, default=2)
     a = ap.parse_args()
     out = ROOT / "runs" / f"repair-{time.strftime('%Y%m%d-%H%M%S')}-{a.mode}-{a.model}"
     out.mkdir(parents=True)
