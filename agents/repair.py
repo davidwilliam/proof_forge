@@ -37,7 +37,7 @@ Rules (enforced by an independent judge; violations are rejected):
 Workflow:
 - Read the spec, then write a first full candidate with write_solution (use `sorry` for proofs you have not done yet so the file compiles).
 - call check: it reports, per required theorem, PROVED / SORRY / ERROR, plus compiler errors with goal states.
-- Work on one obligation at a time. Develop a lemma or proof with try_snippet (it compiles your snippet after the current candidate without changing the file), then install it with replace_declaration. Never rewrite theorems that are already PROVED.
+- Work on one obligation at a time. Develop a lemma or proof with try_snippet: it compiles your snippet after the current candidate, and if the snippet compiles with no errors and no sorry, its new declarations are banked into candidate/Solution.lean automatically (a required theorem that is still `sorry` is replaced by your proved version). Give helper lemmas unique names. Use replace_declaration to change existing declarations. Never rewrite theorems that are already PROVED.
 - Prove easy obligations first. For hard ones, state and prove small helper lemmas by induction.
 - Use run_tests to see concrete counterexamples on the compiled binary.
 - Stop when check reports ACCEPTED."""
@@ -103,36 +103,32 @@ class Session:
         (self.out / f"candidate_v{self.version:03d}.lean").write_text(text)
         self.log(kind="write", version=self.version, bytes=len(text), why=why)
 
-    def replace_declaration(self, name, text):
-        src = self._source()
+    def _replace_in(self, src, name, text):
+        """Return (new_source, action): replace declaration `name` with `text`, or insert it."""
         lines = src.split("\n")
         starts = [(i, m.group(1)) for i, l in enumerate(lines) for m in [self.DECL.match(l)] if m]
         ends_at = [i for i, l in enumerate(lines) if l.startswith("end Payout")]
         short = name.split(".")[-1]
         hit = [k for k, (i, n) in enumerate(starts) if n.split(".")[-1] == short]
+        body = text.rstrip("\n").split("\n") if text else []
         if hit:
             k = hit[0]
             a = starts[k][0]
-            # include attached docstring / attributes directly above
             while a > 0 and (lines[a - 1].startswith("@[") or lines[a - 1].rstrip().endswith("-/")):
                 if lines[a - 1].rstrip().endswith("-/"):
                     while a > 0 and not lines[a - 1].lstrip().startswith("/-"):
                         a -= 1
                 a -= 1
             b = starts[k + 1][0] if k + 1 < len(starts) else (ends_at[-1] if ends_at else len(lines))
-            while b - 1 > a and (lines[b - 1].startswith("@[") or lines[b - 1].lstrip().startswith("/--")
-                                 or lines[b - 1].strip() == ""):
-                if lines[b - 1].strip() == "" or lines[b - 1].startswith("@["):
-                    b -= 1
-                else:
-                    break
-            new = lines[:a] + text.rstrip("\n").split("\n") + [""] + lines[b:]
-            action = "replaced"
-        else:
-            e = ends_at[-1] if ends_at else len(lines)
-            new = lines[:e] + text.rstrip("\n").split("\n") + [""] + lines[e:]
-            action = "inserted"
-        self._save("\n".join(new), f"{action} {name}")
+            while b - 1 > a and (lines[b - 1].startswith("@[") or lines[b - 1].strip() == ""):
+                b -= 1
+            return "\n".join(lines[:a] + body + [""] + lines[b:]), "replaced"
+        e = ends_at[-1] if ends_at else len(lines)
+        return "\n".join(lines[:e] + body + [""] + lines[e:]), "inserted"
+
+    def replace_declaration(self, name, text):
+        new, action = self._replace_in(self._source(), name, text)
+        self._save(new, f"{action} {name}")
         return f"{action} declaration {name} (version {self.version})"
 
     @staticmethod
@@ -144,6 +140,10 @@ class Session:
 
     def try_snippet(self, code):
         src = self._source()
+        # Declarations redefined by the snippet are removed from the context first.
+        for m in self.DECL.finditer(code):
+            if re.search(rf"^(?:@\[[^\]]*\]\s*)?(?:private\s+)?(?:theorem|lemma|def|instance|abbrev)\s+{re.escape(m.group(1).split('.')[-1])}\b", src, re.M):
+                src, _ = self._replace_in(src, m.group(1), "")
         body = src.rsplit("end Payout", 1)[0] if "end Payout" in src else src
         offset = body.count("\n") + 1
         scratch = body + "\n" + code + "\n\nend Payout\n"
@@ -161,8 +161,47 @@ class Session:
                     l = re.sub(r"^Scratch\.lean:\d+", f"snippet:{ln}", l)
             if cur:
                 msgs.append(l)
-        self.log(kind="snippet", version=self.version, ok=not any("error" in m for m in msgs), ms=r["elapsed_ms"])
-        return "\n".join(msgs)[-6000:] or "snippet compiles with no errors or warnings"
+        clean = not any(re.search(r": (error|warning)", m) for m in msgs)
+        self.log(kind="snippet", version=self.version, ok=clean, ms=r["elapsed_ms"])
+        if not clean:
+            return "\n".join(msgs)[-6000:]
+        banked = self.bank(code)
+        return "snippet compiles with no errors or warnings" + (
+            f"; banked into candidate/Solution.lean: {', '.join(banked)} (version {self.version})" if banked else "")
+
+    def bank(self, code):
+        """Install declarations from a clean snippet: new names are appended, and a required
+        theorem that is currently `sorry` is replaced by the proved version."""
+        lines = code.split("\n")
+        starts = [i for i, l in enumerate(lines) if self.DECL.match(l)]
+        src = self._source()
+        existing = {m.group(1).split(".")[-1]: m.start() for m in self.DECL.finditer(src)}
+        banked = []
+        for k, a in enumerate(starts):
+            while a > 0 and (lines[a - 1].startswith("@[") or lines[a - 1].lstrip().startswith("/--")):
+                a -= 1
+            b = starts[k + 1] if k + 1 < len(starts) else len(lines)
+            while b > 0 and b - 1 > a and (lines[b - 1].startswith("@[") or lines[b - 1].lstrip().startswith("/--")):
+                b -= 1
+            chunk = "\n".join(lines[a:b]).strip("\n")
+            name = self.DECL.match(lines[starts[k]]).group(1).split(".")[-1]
+            if "sorry" in chunk:
+                continue
+            if name not in existing:
+                self.replace_declaration(name, chunk)
+                banked.append(name)
+            elif name in THEOREMS:
+                decl = re.search(rf"theorem\s+{re.escape(name)}\b.*?(?=\n(?:@\[|/--|private |theorem |lemma |def |instance |abbrev |end Payout))",
+                                 self._source(), re.S)
+                if decl and "sorry" in decl.group(0):
+                    # Move the proved theorem to the end so it follows the helpers it uses.
+                    removed, _ = self._replace_in(self._source(), name, "")
+                    moved, _ = self._replace_in(removed, name, chunk)
+                    self._save(moved, f"banked {name}")
+                    banked.append(name)
+            src = self._source()
+            existing = {m.group(1).split(".")[-1]: m.start() for m in self.DECL.finditer(src)}
+        return banked
 
     def theorem_status(self):
         """Per-requirement status from `#print axioms` on the compiled candidate."""
@@ -276,6 +315,11 @@ def main():
             messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
         if s.accepted:
             break
+        mutating = {"write_solution", "replace_declaration"}
+        recent = [e for e in s.events if e["kind"] in ("turn",)][-6:]
+        if len(recent) == 6 and not any(set(e["tools"]) & mutating for e in recent) \
+                and not any(e["kind"] == "write" for e in s.events[-12:]):
+            messages.append({"role": "user", "content": "Six turns without changing the candidate. Install what you have proved (replace_declaration), then call check to see the per-requirement status."})
     summary = {"model": a.model, "accepted": s.accepted, "turns": turn + 1, "versions": s.version,
                "elapsed_s": int(time.monotonic() - t0), "usage": usage}
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
