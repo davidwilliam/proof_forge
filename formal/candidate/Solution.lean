@@ -3,7 +3,6 @@ import Payout.Lemmas
 namespace Payout
 instance instDecidableValidPayout (s : State) (r : Request) : Decidable (ValidPayout s r) := by
   unfold ValidPayout; infer_instance
--- Each recipient gets amount / n; the remainder is dropped.
 def step : Impl := fun s r =>
   if ValidPayout s r then
     let n := r.recipients.length
