@@ -137,10 +137,13 @@ def report(out, results, arms):
                   f"{hi} only {b}, {lo} only {c}; McNemar exact p = {p:.4f}."]
     lines += ["", "## Per family", "", "| Family | Tasks | " + " | ".join(arms) + " |",
               "|---|---|" + "---|" * len(arms)]
+    summary["families"] = {}
     for fam in sorted({r["family"] for r in results}):
         ft = [t for t in tasks if any(by.get((t, a), {}).get("family") == fam for a in arms)]
-        cells = [f"{sum(by[(t, a)]['completed'] for t in ft if (t, a) in by)}/{sum((t, a) in by for t in ft)}"
-                 for a in arms]
+        counts = {a: [sum(by[(t, a)]["completed"] for t in ft if (t, a) in by), sum((t, a) in by for t in ft)]
+                  for a in arms}
+        summary["families"][fam] = {a: {"completed": c, "n": n} for a, (c, n) in counts.items()}
+        cells = [f"{c}/{n}" for c, n in counts.values()]
         lines.append(f"| {fam} | {len(ft)} | " + " | ".join(cells) + " |")
     lines += ["", "## Per task", "", "| Task | " + " | ".join(arms) + " |", "|---|" + "---|" * len(arms)]
     for t in tasks:
