@@ -38,8 +38,8 @@ def docstring(task, theorem_stmt):
         return None
     pred = theorem_stmt.split()[0]
     text = (task.root / task.spec_dir / "Spec.lean").read_text()
-    m = re.search(rf"/--\s*(.*?)\s*-/\s*\ndef {re.escape(pred)}\b", text, re.S)
-    return re.sub(r"\s+", " ", m.group(1)) if m else None
+    m = re.search(rf"/--((?:(?!-/).)*)-/\s*\ndef {re.escape(pred)}\b", text, re.S)
+    return re.sub(r"\s+", " ", m.group(1)).strip() if m else None
 
 
 def check_record(r):
