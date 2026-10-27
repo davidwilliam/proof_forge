@@ -15,7 +15,8 @@ references (label good).
 
 Usage: e2.py --label NAME [--split dev] [--tasks id,id] [--no-refactors] [--report-only]
 """
-import argparse, json, pathlib, re, shutil, sys, tempfile, time
+import argparse, json, pathlib, re, shutil, sys, tempfile, threading, time
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "harness"))
@@ -85,7 +86,14 @@ def render(out, rows):
         fa = sum(r[arm]["accepted"] for r in bad)
         fr = sum(not r[arm]["accepted"] for r in good)
         lines.append(f"| {arm} | {fa}/{len(bad)} | {fr}/{len(good)} |")
-    lines += ["", "| Task | Case | Label | Ordinary | ProofForge | ProofForge reason |", "|---|---|---|---|---|---|"]
+    lines += ["", "## Per family", "", "| Family | Bad cases | Ordinary accepts bad | ProofForge accepts bad | Good cases | Ordinary rejects good | ProofForge rejects good |",
+              "|---|---|---|---|---|---|---|"]
+    for fam in sorted({r["family"] for r in rows}):
+        fb = [r for r in bad if r["family"] == fam]
+        fg = [r for r in good if r["family"] == fam]
+        lines.append(f"| {fam} | {len(fb)} | {sum(r['ordinary']['accepted'] for r in fb)} | {sum(r['proofforge']['accepted'] for r in fb)} | "
+                     f"{len(fg)} | {sum(not r['ordinary']['accepted'] for r in fg)} | {sum(not r['proofforge']['accepted'] for r in fg)} |")
+    lines += ["", "## Cases", "", "| Task | Case | Label | Ordinary | ProofForge | ProofForge reason |", "|---|---|---|---|---|---|"]
     for r in rows:
         lines.append(f"| {r['task']} | {r['case']} | {r['label']} | {'accept' if r['ordinary']['accepted'] else 'reject'} | "
                      f"{'accept' if r['proofforge']['accepted'] else 'reject'} | {r['proofforge']['reason'][:140] or 'none'} |")
@@ -100,6 +108,7 @@ def main():
     ap.add_argument("--tasks")
     ap.add_argument("--no-refactors", action="store_true")
     ap.add_argument("--report-only", action="store_true")
+    ap.add_argument("--parallel", type=int, default=3)
     a = ap.parse_args()
     out = ROOT / "results" / f"e2-{a.label}"
     out.mkdir(parents=True, exist_ok=True)
@@ -107,17 +116,25 @@ def main():
         render(out, json.loads((out / "e2.json").read_text())["rows"])
         return
     tasks = [taskmod.load(x) for x in a.tasks.split(",")] if a.tasks else taskmod.all_tasks(a.split)
-    rows = []
-    for t in tasks:
-        for c in collect(t, not a.no_refactors):
-            row = {"task": t.id, "family": t.family, "case": c["case"], "label": c["label"], "note": c["note"],
-                   "sha256": taskmod.sha256(c["path"]) if c["path"].is_file() else None,
-                   "ordinary": ordinary_check.check(t, c["path"]), "proofforge": proofforge(t, c["path"])}
+    cases = [(t, c) for t in tasks for c in collect(t, not a.no_refactors)]
+    rows, lock = [], threading.Lock()
+
+    def run_case(tc):
+        t, c = tc
+        row = {"task": t.id, "family": t.family, "split": t.split, "case": c["case"], "label": c["label"],
+               "note": c["note"], "sha256": taskmod.sha256(c["path"]) if c["path"].is_file() else None,
+               "ordinary": ordinary_check.check(t, c["path"]), "proofforge": proofforge(t, c["path"])}
+        with lock:
             rows.append(row)
             print(f"[{t.id}] {c['case']} ({c['label']}): ordinary={row['ordinary']['accepted']} "
                   f"proofforge={row['proofforge']['accepted']}", flush=True)
             (out / "e2.json").write_text(json.dumps({"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                                                     "rows": rows}, indent=2) + "\n")
+
+    with ThreadPoolExecutor(a.parallel) as ex:
+        list(ex.map(run_case, cases))
+    order = {(t.id, c["case"]): i for i, (t, c) in enumerate(cases)}
+    rows.sort(key=lambda r: order[(r["task"], r["case"])])
     render(out, rows)
 
 
