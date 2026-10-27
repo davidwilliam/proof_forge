@@ -16,7 +16,7 @@ The task (harness/task.py) defaults to the flagship payout component in formal/.
 A bare .lean file is treated as a workspace containing only candidate/Solution.lean.
 Statuses come only from exit codes recorded here; nothing a model writes is trusted.
 """
-import argparse, contextlib, fcntl, hashlib, json, os, pathlib, re, shutil, subprocess, sys, tempfile, time
+import argparse, contextlib, fcntl, hashlib, json, os, pathlib, re, shlex, shutil, subprocess, sys, tempfile, time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import task as taskmod  # noqa: E402
@@ -147,7 +147,25 @@ def container_slot():
         time.sleep(0.2)
 
 
+IN_IMAGE = os.environ.get("PF_IN_IMAGE") == "1"
+
+
+def image_id():
+    """Content digest of the judge image (recorded in every Passport)."""
+    if IN_IMAGE:
+        return os.environ.get("PF_IMAGE_ID", "unknown")
+    r = subprocess.run(["docker", "image", "inspect", IMAGE, "--format", "{{.Id}}"],
+                       capture_output=True, text=True)
+    return r.stdout.strip() or "unknown"
+
+
 def in_container(project: pathlib.Path, script: str, timeout=900):
+    """Run `script` in the pinned Lean image with `project` as the working directory. Inside
+    the image itself (PF_IN_IMAGE=1, as in the verify image and on Linux hosts) it runs
+    directly; Comparator's bubblewrap sandbox applies in both cases."""
+    if IN_IMAGE:
+        with container_slot():
+            return run(["bash", "-lc", f"cd {shlex.quote(str(project))} && {script}"], timeout=timeout)
     cmd = [
         "docker", "run", "--rm", "--network", "none",
         # bubblewrap (Comparator's sandbox) needs user namespaces inside the container.
@@ -158,6 +176,16 @@ def in_container(project: pathlib.Path, script: str, timeout=900):
     ]
     with container_slot():
         return run(cmd, timeout=timeout)
+
+
+def parse_axioms(output: str, task) -> dict:
+    """Map each required theorem to the axioms `#print axioms` reports for it."""
+    out = {}
+    for t in task.theorems:
+        m = re.search(rf"'{re.escape(task.ns)}\.{re.escape(t)}' (depends on axioms: \[([^\]]*)\]|does not depend on any axioms)",
+                      output)
+        out[t] = None if not m else sorted(x.strip() for x in (m.group(2) or "").replace("\n", " ").split(",") if x.strip())
+    return out
 
 
 def judge(arg: str, scan: bool = True, task=None) -> dict:
@@ -190,11 +218,17 @@ def judge(arg: str, scan: bool = True, task=None) -> dict:
         if c["comparator"]["exit_code"] == 0:
             c["leanchecker"] = in_container(
                 project, "lake build Solution >/dev/null && lake env leanchecker Solution")
+            if c["leanchecker"]["exit_code"] == 0:
+                (project / "Audit.lean").write_text("import Solution\n" + "".join(
+                    f"#print axioms {task.ns}.{t}\n" for t in task.theorems))
+                c["axioms"] = in_container(project, "lake env lean Audit.lean")
+                result["axioms_used"] = parse_axioms(c["axioms"]["output_tail"], task)
         shutil.rmtree(project, ignore_errors=True)
 
     accepted = (gate_ok and c.get("comparator", {}).get("exit_code") == 0
                 and c.get("leanchecker", {}).get("exit_code") == 0)
-    status = "VERIFIED" if accepted else "REJECTED"
+    # Proof acceptance only; VERIFIED additionally needs the binary check (harness/passport.py).
+    status = "ACCEPTED" if accepted else "REJECTED"
     result["requirements"] = {rid: status for rid, _ in task.requirements}
     result["accepted"] = accepted
     result["elapsed_ms"] = int((time.monotonic() - t0) * 1000)
