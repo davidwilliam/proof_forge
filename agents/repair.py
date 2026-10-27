@@ -85,10 +85,7 @@ class Session:
     def write_solution(self, content):
         if len(content) > 80_000:
             return "error: file too large"
-        self.version += 1
-        (self.ws / "candidate/Solution.lean").write_text(content)
-        (self.out / f"candidate_v{self.version:03d}.lean").write_text(content)
-        self.log(kind="write", version=self.version, bytes=len(content))
+        self._save(content, "write_solution")
         return f"written (version {self.version}, {len(content)} bytes)"
 
     DECL = re.compile(r"^(?:@\[[^\]]*\]\s*)?(?:private\s+|protected\s+|noncomputable\s+)*"
@@ -97,7 +94,25 @@ class Session:
     def _source(self):
         return (self.ws / "candidate/Solution.lean").read_text()
 
+    def _normalize(self, text):
+        """Keep the eight required theorems at the end of the file, after every helper."""
+        chunks = []
+        for t in THEOREMS:
+            m = re.search(rf"^theorem\s+{t}\b", text, re.M)
+            if not m:
+                continue
+            rest = text[m.end():]
+            n = re.search(r"^(?:@\[|/--|private |protected |theorem |lemma |def |instance |abbrev |end Payout)", rest, re.M)
+            end = m.end() + (n.start() if n else len(rest))
+            chunks.append(text[m.start():end].rstrip("\n"))
+            text = text[:m.start()] + text[end:]
+        if "end Payout" in text:
+            head, tail = text.rsplit("end Payout", 1)
+            return head.rstrip("\n") + "\n\n" + "\n\n".join(chunks) + "\n\nend Payout" + tail
+        return text.rstrip("\n") + "\n\n" + "\n\n".join(chunks) + "\n"
+
     def _save(self, text, why):
+        text = self._normalize(text)
         self.version += 1
         (self.ws / "candidate/Solution.lean").write_text(text)
         (self.out / f"candidate_v{self.version:03d}.lean").write_text(text)
@@ -219,6 +234,12 @@ class Session:
                 status[t] = "PROVED"
         return status
 
+    def check_status(self):
+        r = judge.in_container(self.ws, "lake build Solution 2>&1 | tail -c 2000", timeout=600)
+        if "error:" in r["output_tail"]:
+            return {t: "ERROR" for t in THEOREMS}
+        return self.theorem_status()
+
     def check(self):
         files = [self.ws / "candidate/Solution.lean"]
         scan = judge.impl_scan(files)
@@ -260,32 +281,28 @@ class Session:
         return json.dumps({"status": b["status"], "violations": b["violations"], "examples": ws})
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="muse-spark-1.3-contributor")
-    ap.add_argument("--max-turns", type=int, default=40)
-    ap.add_argument("--start", default=str(ROOT / "formal/attacks/buggy_original.lean"))
-    ap.add_argument("--effort", default="medium", choices=["low", "medium", "high", "default"])
-    a = ap.parse_args()
-    out = ROOT / "runs" / f"repair-{time.strftime('%Y%m%d-%H%M%S')}-{a.model}"
-    out.mkdir(parents=True)
-    s = Session(a.model, a.start, out)
-    s.log(kind="start", model=a.model, start=a.start, max_turns=a.max_turns, effort=a.effort)
-    messages = [{"role": "system", "content": SYSTEM},
-                {"role": "user", "content": "Begin. The current candidate is candidate/Solution.lean."}]
-    t0 = time.monotonic()
-    usage = {"prompt": 0, "completion": 0, "cached": 0}
-    for turn in range(a.max_turns):
+ORDER = ["req_valid_succeeds", "req_invalid_noop", "req_authorization", "req_effects",
+         "req_idempotency", "req_nonnegative", "req_fair_shares", "req_conservation"]
+
+
+def dialog(s, model, effort, system, user, tool_names, max_turns, done, usage, label):
+    """Run one tool-using dialog until done() or the turn budget is spent."""
+    tools = [t for t in TOOLS if t["function"]["name"] in tool_names]
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    extra = {} if effort == "default" else {"reasoning_effort": effort}
+    for turn in range(max_turns):
         try:
-            extra = {} if a.effort == "default" else {"reasoning_effort": a.effort}
-            r = chat(a.model, messages, f"repair:turn{turn}", tools=TOOLS, max_tokens=32000, timeout=600, **extra)
+            r = chat(model, messages, f"repair:{label}:turn{turn}", tools=tools, max_tokens=32000,
+                     timeout=600, **extra)
         except APIError as e:
             s.log(kind="api_error", status=e.status, body=e.body[:300])
             if e.status in (429, 500, 502, 503):
-                time.sleep(20); continue
-            break
+                time.sleep(20)
+                continue
+            return False, messages
         u = r.get("usage") or {}
-        usage["prompt"] += u.get("prompt_tokens", 0); usage["completion"] += u.get("completion_tokens", 0)
+        usage["prompt"] += u.get("prompt_tokens", 0)
+        usage["completion"] += u.get("completion_tokens", 0)
         usage["cached"] += (u.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
         msg = r["choices"][0]["message"]
         assistant = {"role": "assistant", "content": msg.get("content") or ""}
@@ -293,11 +310,11 @@ def main():
             assistant["tool_calls"] = msg["tool_calls"]
         messages.append(assistant)
         calls = msg.get("tool_calls") or []
-        s.log(kind="turn", turn=turn, tools=[c["function"]["name"] for c in calls],
+        s.log(kind="turn", label=label, turn=turn, tools=[c["function"]["name"] for c in calls],
               text=(msg.get("content") or "")[:300], usage=u)
-        print(f"turn {turn}: {[c['function']['name'] for c in calls]} {(msg.get('content') or '')[:120]!r}", flush=True)
+        print(f"[{label}] turn {turn}: {[c['function']['name'] for c in calls]}", flush=True)
         if not calls:
-            messages.append({"role": "user", "content": "Continue: use the tools until check reports ACCEPTED."})
+            messages.append({"role": "user", "content": "Continue with the tools."})
             continue
         for c in calls:
             name = c["function"]["name"]
@@ -309,21 +326,80 @@ def main():
                   "write_solution": lambda: s.write_solution(args.get("content", "")),
                   "replace_declaration": lambda: s.replace_declaration(args.get("name", ""), args.get("text", "")),
                   "try_snippet": lambda: s.try_snippet(args.get("code", "")),
-                  "check": s.check, "run_tests": s.run_tests}.get(name)
-            result = fn() if fn else f"error: unknown tool {name}"
-            print(f"   {name} -> {result[:160]!r}", flush=True)
+                  "check": s.check, "run_tests": s.run_tests}.get(name) if name in tool_names else None
+            result = fn() if fn else f"error: tool {name} is not available in this phase"
+            print(f"   {name} -> {result[:150]!r}", flush=True)
             messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
-        if s.accepted:
+        if done():
+            return True, messages
+    return done(), messages
+
+
+def orchestrate(s, a, usage):
+    spec = "\n\n".join(f"=== {p} ===\n{s.read_file(p)}" for p in READABLE[:3])
+    # Phase 0: behavior first. The binary must pass the requirement-derived tests.
+    tests_ok = {"v": False}
+    orig_run_tests = s.run_tests
+    def run_tests_tracked():
+        out = orig_run_tests()
+        tests_ok["v"] = out.startswith('{"status": "PASS"')
+        return out
+    s.run_tests = run_tests_tracked
+    user0 = (f"{spec}\n\n=== candidate/Solution.lean (current, buggy) ===\n{s._source()}\n\n"
+             "Phase 1 of 2: fix `Payout.step` so it meets the requirements. Keep every required theorem in the file "
+             "(use `sorry` proofs for now). Write the file with write_solution, then call run_tests until it reports PASS.")
+    ok0, _ = dialog(s, a.model, a.effort, SYSTEM, user0, {"write_solution", "run_tests", "read_file"},
+                    a.phase0_turns, lambda: tests_ok["v"], usage, "implement")
+    s.log(kind="phase", phase="implement", ok=ok0)
+    if not ok0:
+        return
+    # Phase 1: one focused dialog per obligation, easy ones first, then a second pass.
+    for budget, label in ((a.obligation_turns, "pass1"), (a.obligation_turns * 2, "pass2")):
+        status = s.check_status()
+        for t in ORDER:
+            if status.get(t) == "PROVED":
+                continue
+            stmt = re.search(rf"theorem\s+{t}\s*:[^\n]*", s.read_file("spec/Payout/Challenge.lean")).group(0)
+            user = (f"{spec}\n\n=== candidate/Solution.lean (current) ===\n{s._source()}\n\n"
+                    f"Current requirement status: {', '.join(f'{k}={v}' for k, v in status.items())}\n\n"
+                    f"Your task now: prove `{stmt.replace(' := sorry', '')}`. Do not change `step` or theorems that are PROVED. "
+                    "Develop helper lemmas and the proof with try_snippet; a clean snippet that proves "
+                    f"`{t}` replaces its sorry automatically. Call check to confirm.")
+            ok, _ = dialog(s, a.model, a.effort, SYSTEM, user,
+                           {"try_snippet", "replace_declaration", "check", "read_file"},
+                           budget, lambda t=t: s.check_status().get(t) == "PROVED", usage, f"{label}:{t}")
+            status = s.check_status()
+            s.log(kind="obligation", label=label, theorem=t, ok=ok, status=status)
+        if all(v == "PROVED" for v in status.values()):
             break
-        mutating = {"write_solution", "replace_declaration"}
-        recent = [e for e in s.events if e["kind"] in ("turn",)][-6:]
-        if len(recent) == 6 and not any(set(e["tools"]) & mutating for e in recent) \
-                and not any(e["kind"] == "write" for e in s.events[-12:]):
-            messages.append({"role": "user", "content": "Six turns without changing the candidate. Install what you have proved (replace_declaration), then call check to see the per-requirement status."})
-    summary = {"model": a.model, "accepted": s.accepted, "turns": turn + 1, "versions": s.version,
-               "elapsed_s": int(time.monotonic() - t0), "usage": usage}
+    s.check()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", default="muse-spark-1.3-contributor")
+    ap.add_argument("--mode", default="orchestrated", choices=["orchestrated", "free"])
+    ap.add_argument("--max-turns", type=int, default=40, help="free mode only")
+    ap.add_argument("--phase0-turns", type=int, default=12)
+    ap.add_argument("--obligation-turns", type=int, default=12)
+    ap.add_argument("--start", default=str(ROOT / "formal/attacks/buggy_original.lean"))
+    ap.add_argument("--effort", default="medium", choices=["low", "medium", "high", "default"])
+    a = ap.parse_args()
+    out = ROOT / "runs" / f"repair-{time.strftime('%Y%m%d-%H%M%S')}-{a.mode}-{a.model}"
+    out.mkdir(parents=True)
+    s = Session(a.model, a.start, out)
+    s.log(kind="start", **vars(a))
+    t0 = time.monotonic()
+    usage = {"prompt": 0, "completion": 0, "cached": 0}
+    if a.mode == "orchestrated":
+        orchestrate(s, a, usage)
+    else:
+        dialog(s, a.model, a.effort, SYSTEM, "Begin. The current candidate is candidate/Solution.lean.",
+               {t["function"]["name"] for t in TOOLS}, a.max_turns, lambda: s.accepted, usage, "free")
+    summary = {"model": a.model, "mode": a.mode, "effort": a.effort, "accepted": s.accepted,
+               "versions": s.version, "elapsed_s": int(time.monotonic() - t0), "usage": usage,
+               "final_status": s.check_status()}
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
-    (out / "messages.json").write_text(json.dumps(messages, indent=2))
     print(json.dumps(summary))
 
 
