@@ -93,6 +93,7 @@ class Session:
         self.targets = set()   # planned helper lemmas the bank may replace while they are sorry
         self.plan_count = 0
         self.accepted = False
+        self.last_good = None  # source of the newest version known to compile
         self.events = []
         # Declaration boundary: the next top-level item or the namespace end.
         self.boundary = rf"(?:@\[|/--|private |protected |theorem |lemma |def |instance |abbrev |{re.escape(self.end)})"
@@ -168,7 +169,11 @@ class Session:
         return "\n".join(lines[:e] + body + [""] + lines[e:]), "inserted"
 
     def compile(self, tail=9000):
-        return judge.in_container(self.ws, f"lake build Solution 2>&1 | tail -c {tail}", timeout=600)
+        src = self._source()
+        r = judge.in_container(self.ws, f"lake build Solution 2>&1 | tail -c {tail}", timeout=600)
+        if "error:" not in r["output_tail"]:
+            self.last_good = src
+        return r
 
     def replace_declaration(self, name, text):
         """Transactional edit: kept only if the file still compiles."""
@@ -244,11 +249,16 @@ class Session:
             elif name in self.theorems or name in self.targets:
                 decl = re.search(rf"theorem\s+{re.escape(name)}\b.*?(?=\n{self.boundary})", self._source(), re.S)
                 if decl and "sorry" in decl.group(0):
-                    # Move the proved theorem to the end so it follows the helpers it uses.
-                    removed, _ = self._replace_in(self._source(), name, "")
+                    # Move the proved theorem to the end so it follows the helpers it uses;
+                    # kept only if the whole file still compiles.
+                    before = self._source()
+                    removed, _ = self._replace_in(before, name, "")
                     moved, _ = self._replace_in(removed, name, chunk)
                     self._save(moved, f"banked {name}")
-                    banked.append(name)
+                    if "error:" in self.compile(2000)["output_tail"]:
+                        self._save(before, f"revert banked {name}")
+                    else:
+                        banked.append(name)
             src = self._source()
             existing = {m.group(1).split(".")[-1]: m.start() for m in self.DECL.finditer(src)}
         return banked
@@ -394,8 +404,19 @@ def orchestrate(s, a):
     ok0 = tests_ok["v"] or dialog(s, a.model, a.effort, system, user0, {"write_solution", "run_tests", "read_file"},
                                   a.phase0_turns, lambda: tests_ok["v"], "implement")[0]
     s.log(kind="phase", phase="implement", ok=ok0)
-    if not ok0:
-        return
+    if ok0:
+        structured(s, a, system, spec)
+    # Phase 3: spend the rest of the budget on whole-file repair from the current file,
+    # with the same protocol as the compile-and-retry baseline.
+    if not s.accepted:
+        import baseline
+        s.log(kind="phase", phase="whole-file")
+        baseline.run(s, argparse.Namespace(model=a.model, effort=a.effort, max_turns=200),
+                     state="current, partly repaired")
+
+
+def structured(s, a, system, spec):
+    """Phases 1 and 2: per-obligation dialogs, then planner-assisted resolution rounds."""
     # Phase 1: one focused dialog per obligation, in the task's listed order.
     status = s.check_status()
     for t in s.theorems:
@@ -403,11 +424,20 @@ def orchestrate(s, a):
             continue
         prove_target(s, a, system, spec, t, a.obligation_turns, "pass1")
         status = s.check_status()
-    # Phase 2: resolve what is left, decomposing hard goals with the planner.
-    for t in s.theorems:
-        if s.check_status([t]).get(t) != "PROVED":
+    # Phase 2: resolve what is left, decomposing hard goals with the planner (A2), and
+    # repeat while a round makes progress.
+    pending = [t for t, v in s.check_status().items() if v != "PROVED"]
+    for _ in range(a.rounds):
+        if not pending:
+            break
+        for t in pending:
             resolve(s, a, system, spec, t, 0)
-    prune(s)
+        prune(s)
+        now = [t for t, v in s.check_status().items() if v != "PROVED"]
+        progress = len(now) < len(pending)
+        pending = now
+        if not progress:
+            break
     s.check()
 
 
@@ -552,7 +582,10 @@ def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
 
 
 def finish(s, out, arm, extra):
-    """Write summary.json and the final candidate; final judging is done by the evaluator."""
+    """Write summary.json and the final candidate; final judging is done by the evaluator.
+    A final file that does not compile is replaced by the newest version that did."""
+    if "error:" in s.compile(2000)["output_tail"] and s.last_good is not None:
+        s._save(s.last_good, "restore last compiling version")
     shutil.copy(s.ws / "candidate/Solution.lean", out / "final.lean")
     summary = {"task": s.task.id, "arm": arm, "model": s.model, **extra, "accepted_in_session": s.accepted,
                "versions": s.version, "budget": s.budget.summary(), "final_status": s.check_status()}
@@ -574,6 +607,7 @@ def main():
     ap.add_argument("--planner", default="muse-wonder-1.0", help="planner model, or 'none' (arm A1)")
     ap.add_argument("--planner-effort", default="high", choices=["low", "medium", "high", "default"])
     ap.add_argument("--max-depth", type=int, default=2)
+    ap.add_argument("--rounds", type=int, default=3, help="phase 2 rounds while they make progress")
     ap.add_argument("--budget-usd", type=float, help="cap at standard-tier list prices")
     ap.add_argument("--budget-wall", type=float, help="wall-clock cap in seconds")
     ap.add_argument("--out", help="run directory (default: runs/repair-<time>-<task>-<arm>)")
