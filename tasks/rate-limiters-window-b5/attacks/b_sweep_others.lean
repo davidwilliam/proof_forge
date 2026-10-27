@@ -1,0 +1,221 @@
+import FixedWindow.Spec
+import FixedWindow.Lemmas
+namespace FixedWindow
+instance instDecidableAdmits (s : State) (t : Nat) : (o : Option Client) → Decidable (Admits s t o)
+  | some c => inferInstanceAs (Decidable (c.start ≤ t ∧ windowCount s c t < s.limit))
+  | none => isFalse (fun h => h)
+
+instance instDecidableAdmissible (s : State) (r : Request) : Decidable (Admissible s r) := by
+  unfold Admissible; infer_instance
+
+/-- Advance the entry of the requesting client, keep every other entry. -/
+def touch (s : State) (r : Request) (c : Client) : Client :=
+  if c.id = r.client then advance s c r.time else c
+
+def refStep : Impl := fun s r =>
+  if Admissible s r then (.ok, { s with clients := s.clients.map (touch s r) })
+  else (.rejected, s)
+
+theorem ref_step_of_adm {s : State} {r : Request} (h : Admissible s r) :
+    refStep s r = (.ok, { s with clients := s.clients.map (touch s r) }) := by
+  simp [refStep, h]
+
+theorem ref_step_of_not {s : State} {r : Request} (h : ¬ Admissible s r) :
+    refStep s r = (.rejected, s) := by
+  simp [refStep, h]
+
+theorem ref_adm_of_ok {s : State} {r : Request} (h : (refStep s r).1 = .ok) : Admissible s r := by
+  by_cases hv : Admissible s r
+  · exact hv
+  · rw [ref_step_of_not hv] at h; cases h
+
+theorem touch_id (s : State) (r : Request) (c : Client) : (touch s r c).id = c.id := by
+  unfold touch; split <;> rfl
+
+theorem lookup_map_id (f : Client → Client) (hf : ∀ c, (f c).id = c.id) :
+    ∀ (l : List Client) (i : ClientId), lookup (l.map f) i = (lookup l i).map f := by
+  intro l i
+  induction l with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [List.map_cons, lookup_cons, hf]
+    split <;> simp [ih]
+
+/-- In a list with distinct ids, a member is the entry found under its id. -/
+theorem lookup_of_mem {l : List Client} (hl : (l.map Client.id).Nodup) {c : Client}
+    (hc : c ∈ l) : lookup l c.id = some c := by
+  induction l with
+  | nil => simp at hc
+  | cons x xs ih =>
+    simp only [List.map_cons, List.nodup_cons, List.mem_map] at hl
+    rw [lookup_cons]
+    rcases List.mem_cons.mp hc with h | h
+    · subst h; simp
+    · have hne : x.id ≠ c.id := fun e => hl.1 ⟨c, h, e.symm⟩
+      simp [hne, ih hl.2 h]
+
+theorem ref_lookup_next {s : State} {r : Request} (hv : Admissible s r) (i : ClientId) :
+    lookup (refStep s r).2.clients i = expectedLookup s r i := by
+  rw [ref_step_of_adm hv]
+  show lookup (s.clients.map (touch s r)) i = _
+  rw [lookup_map_id _ (touch_id s r)]
+  unfold expectedLookup
+  cases hl : lookup s.clients i with
+  | none => simp
+  | some c =>
+    have hid := lookup_id hl
+    by_cases hi : i = r.client
+    · simp [hi, touch] at *
+      simp [hid]
+    · have : c.id ≠ r.client := by rw [hid]; exact hi
+      simp [hi, touch, this]
+
+theorem ref_req_valid_succeeds : ValidSucceeds refStep := by
+  intro s r h; rw [ref_step_of_adm h]
+
+theorem ref_req_invalid_noop : InvalidNoop refStep := by
+  intro s r h; exact ref_step_of_not h
+
+theorem ref_req_isolation : Isolation refStep := by
+  intro s r i hi
+  by_cases hv : Admissible s r
+  · rw [ref_lookup_next hv]; simp [expectedLookup, hi]
+  · rw [ref_step_of_not hv]
+
+theorem ref_req_reset : ResetRule refStep := by
+  intro s r hok c hc
+  have hv := ref_adm_of_ok hok
+  refine ⟨advance s c r.time, ?_, ?_, ?_⟩
+  · rw [ref_lookup_next hv]; simp [expectedLookup, hc]
+  · intro h; simp [advance, windowStart, windowCount, h]
+  · intro h
+    have : ¬ c.start + s.window ≤ r.time := by omega
+    simp [advance, windowStart, windowCount, this]
+
+theorem ref_req_effects : Effects refStep := by
+  intro s r hok
+  have hv := ref_adm_of_ok hok
+  refine ⟨?_, ?_, ?_, ref_lookup_next hv⟩
+  · rw [ref_step_of_adm hv]
+  · rw [ref_step_of_adm hv]
+  · rw [ref_step_of_adm hv]
+    show (s.clients.map (touch s r)).map Client.id = _
+    rw [List.map_map]
+    congr 1
+    funext c
+    exact touch_id s r c
+
+theorem ref_req_window_bound : WindowBound refStep := by
+  intro s r hb c' hc'
+  by_cases hv : Admissible s r
+  · rw [ref_step_of_adm hv] at hc' ⊢
+    show c'.count ≤ s.limit
+    obtain ⟨c, hc, rfl⟩ := List.mem_map.mp hc'
+    unfold touch
+    by_cases hid : c.id = r.client
+    · have hl := lookup_of_mem hv.1 hc
+      rw [hid] at hl
+      have ha := hv.2
+      rw [hl] at ha
+      have : windowCount s c r.time < s.limit := ha.2
+      simp [hid, advance]
+      omega
+    · simp [hid]; exact hb c hc
+  · rw [ref_step_of_not hv] at hc' ⊢
+    exact hb c' hc'
+
+/-- Restart the expired window of every other client. -/
+def sweep (s : State) (r : Request) (c : Client) : Client :=
+  if c.id ≠ r.client ∧ c.start + s.window ≤ r.time then { c with start := r.time, count := 0 } else c
+
+-- Side-effect fix: correct for the requesting client, but expired windows of other
+-- clients are restarted at the request time.
+def step : Impl := fun s r =>
+  if Admissible s r then
+    (.ok, { (refStep s r).2 with clients := (refStep s r).2.clients.map (sweep s r) })
+  else (.rejected, s)
+
+theorem sweep_id (s : State) (r : Request) (c : Client) : (sweep s r c).id = c.id := by
+  unfold sweep; split <;> rfl
+
+theorem sweep_self (s : State) (r : Request) (c : Client) (h : c.id = r.client) : sweep s r c = c := by
+  unfold sweep; simp [h]
+
+theorem step_of_adm {s : State} {r : Request} (h : Admissible s r) :
+    step s r = (.ok, { (refStep s r).2 with clients := (refStep s r).2.clients.map (sweep s r) }) := by
+  simp [step, h]
+
+theorem step_of_not {s : State} {r : Request} (h : ¬ Admissible s r) : step s r = (.rejected, s) := by
+  simp [step, h]
+
+theorem adm_of_ok {s : State} {r : Request} (h : (step s r).1 = .ok) : Admissible s r := by
+  by_cases hv : Admissible s r
+  · exact hv
+  · rw [step_of_not hv] at h; cases h
+
+theorem lookup_next {s : State} {r : Request} (hv : Admissible s r) (i : ClientId) :
+    lookup (step s r).2.clients i = (expectedLookup s r i).map (sweep s r) := by
+  rw [step_of_adm hv]
+  show lookup ((refStep s r).2.clients.map (sweep s r)) i = _
+  rw [lookup_map_id _ (sweep_id s r), ref_lookup_next hv]
+
+theorem req_valid_succeeds : ValidSucceeds step := by
+  intro s r h; rw [step_of_adm h]
+
+theorem req_invalid_noop : InvalidNoop step := by
+  intro s r h; exact step_of_not h
+
+-- Weakened restatement: other clients keep their ids, not their entries.
+theorem req_isolation : ∀ s r i, i ≠ r.client →
+    (lookup (step s r).2.clients i).map Client.id = (lookup s.clients i).map Client.id := by
+  intro s r i hi
+  by_cases hv : Admissible s r
+  · rw [lookup_next hv]
+    simp only [expectedLookup, hi, ite_false, Option.map_map]
+    congr 1
+    funext c
+    exact sweep_id s r c
+  · rw [step_of_not hv]
+
+theorem req_reset : ResetRule step := by
+  intro s r hok c hc
+  have hv := adm_of_ok hok
+  have hid : (advance s c r.time).id = r.client := (lookup_id hc : c.id = r.client)
+  refine ⟨advance s c r.time, ?_, ?_, ?_⟩
+  · rw [lookup_next hv]; simp [expectedLookup, hc, sweep_self s r _ hid]
+  · intro h; simp [advance, windowStart, windowCount, h]
+  · intro h
+    have : ¬ c.start + s.window ≤ r.time := by omega
+    simp [advance, windowStart, windowCount, this]
+
+-- Weakened restatement: entries are no longer pinned down.
+theorem req_effects : ∀ s r, (step s r).1 = .ok →
+    (step s r).2.window = s.window ∧
+    (step s r).2.limit = s.limit ∧
+    (step s r).2.clients.map Client.id = s.clients.map Client.id := by
+  intro s r hok
+  have hv := adm_of_ok hok
+  have hr := ref_req_effects s r (ref_req_valid_succeeds s r hv)
+  rw [step_of_adm hv]
+  refine ⟨hr.1, hr.2.1, ?_⟩
+  show ((refStep s r).2.clients.map (sweep s r)).map Client.id = _
+  rw [List.map_map, ← hr.2.2.1]
+  congr 1
+  funext c
+  exact sweep_id s r c
+
+theorem req_window_bound : WindowBound step := by
+  intro s r hb c' hc'
+  by_cases hv : Admissible s r
+  · have hr := ref_req_window_bound s r hb
+    have hl := (ref_req_effects s r (ref_req_valid_succeeds s r hv)).2.1
+    rw [step_of_adm hv] at hc' ⊢
+    show c'.count ≤ (refStep s r).2.limit
+    obtain ⟨c, hc, rfl⟩ := List.mem_map.mp hc'
+    unfold sweep
+    split
+    · simp
+    · exact hr c hc
+  · rw [step_of_not hv] at hc' ⊢
+    exact hb c' hc'
+end FixedWindow
