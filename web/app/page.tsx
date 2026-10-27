@@ -39,7 +39,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
     statementSha: createHash("sha256").update(r.statement ?? "").digest("hex"),
   }));
 
-  const preferred = process.env.NEXT_PUBLIC_DEFAULT_RECORDING || "flagship-a2-20261027";
+  const preferred = process.env.NEXT_PUBLIC_DEFAULT_RECORDING || "flagship-a2-run7";
   const requested = one(sp.recording);
   const defaultRecording =
     (requested && recordings.includes(requested) && requested) || (recordings.includes(preferred) ? preferred : recordings[0] ?? "");
