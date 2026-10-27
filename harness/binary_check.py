@@ -21,28 +21,20 @@ def run_cases(project, exe, cases, name):
     return [json.loads(l) for l in (project / f"{name}.out").read_text().splitlines()]
 
 
-def check_binary(arg, n_cases=2000, seed=0, task=None):
-    t0 = time.monotonic()
-    task = task or taskmod.load()
+def build(project, task):
+    """Build the task's executable in `project`; returns the build record."""
+    return judge.in_container(project,
+        f"lake build {task.exe} >/tmp/build.log 2>&1 || {{ tail -20 /tmp/build.log; exit 3; }}; "
+        f"sha256sum .lake/build/bin/{task.exe} | cut -d' ' -f1 > binary.sha256")
+
+
+def property_tests(project, task, n_cases, seed, result):
+    """Run round 1 and round 2 cases against an already built executable."""
     oracle = task.oracle
-    ws = judge.load_workspace(arg)
-    files = judge.candidate_files(ws)
-    project = judge.fresh_project(ws, files, task)
     rng = random.Random(seed)
     flagship = getattr(oracle, "FLAGSHIP", None)
     cases = ([flagship] if flagship else []) + [oracle.gen_case(rng) for _ in range(n_cases)]
-    build = judge.in_container(project,
-        f"lake build {task.exe} >/tmp/build.log 2>&1 || {{ tail -20 /tmp/build.log; exit 3; }}; "
-        f"sha256sum .lake/build/bin/{task.exe} | cut -d' ' -f1 > binary.sha256")
-    result = {"task": task.id, "candidate": str(arg),
-              "build": {k: build[k] for k in ("exit_code", "elapsed_ms")},
-              "cases": len(cases), "violations": {}, "witnesses": []}
-    if build["exit_code"] != 0:
-        result["build"]["output_tail"] = build["output_tail"]
-        result["status"] = "BUILD_FAILED"
-        shutil.rmtree(project, ignore_errors=True)
-        return result
-    result["binary_sha256"] = (project / "binary.sha256").read_text().strip()
+    result.update(cases=len(cases), violations={}, witnesses=[])
 
     def record(rid, msg, case, out):
         result["violations"][rid] = result["violations"].get(rid, 0) + 1
@@ -70,6 +62,26 @@ def check_binary(arg, n_cases=2000, seed=0, task=None):
         if hasattr(oracle, "describe"):
             result["flagship"] = oracle.describe(outs[0])
     result["status"] = "PASS" if not result["violations"] else "REFUTED"
+    return result
+
+
+def check_binary(arg, n_cases=2000, seed=0, task=None):
+    t0 = time.monotonic()
+    task = task or taskmod.load()
+    ws = judge.load_workspace(arg)
+    files = judge.candidate_files(ws)
+    project = judge.fresh_project(ws, files, task)
+    b = build(project, task)
+    result = {"task": task.id, "candidate": str(arg),
+              "build": {k: b[k] for k in ("exit_code", "elapsed_ms")},
+              "cases": 0, "violations": {}, "witnesses": []}
+    if b["exit_code"] != 0:
+        result["build"]["output_tail"] = b["output_tail"]
+        result["status"] = "BUILD_FAILED"
+        shutil.rmtree(project, ignore_errors=True)
+        return result
+    result["binary_sha256"] = (project / "binary.sha256").read_text().strip()
+    property_tests(project, task, n_cases, seed, result)
     result["elapsed_ms"] = int((time.monotonic() - t0) * 1000)
     shutil.rmtree(project, ignore_errors=True)
     return result
