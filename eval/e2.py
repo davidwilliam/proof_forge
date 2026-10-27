@@ -39,9 +39,16 @@ def proofforge(t, path):
             "binary": b["status"], "reason": "; ".join(reasons)}
 
 
+# Names that also occur as tactics or keywords; renaming them would rewrite proof scripts.
+RESERVED = {"apply", "exact", "intro", "intros", "cases", "simp", "rw", "omega", "decide", "show", "have",
+            "induction", "rfl", "constructor", "split", "refine", "calc", "use", "ext", "trivial", "contradiction",
+            "exists", "left", "right", "subst", "unfold", "assumption", "rcases", "obtain", "rintro", "by", "fun",
+            "match", "let", "if", "then", "else", "do", "return", "at", "with", "from", "this", "step", "id"}
+
+
 def refactor(t, src: str):
     """Harmless refactor: rename every helper declaration and add documentation comments."""
-    protected = set(t.theorems) | set(t.definitions)
+    protected = set(t.theorems) | set(t.definitions) | RESERVED
     names = [n for n in re.findall(r"^(?:@\[[^\]]*\]\s*)?(?:private\s+)?(?:theorem|lemma|def|abbrev)\s+([A-Za-z_][\w']*)", src, re.M)
              if n not in protected]
     out = src
@@ -58,7 +65,7 @@ def collect(t, refactors=True):
         for name, spec in json.loads(am.read_text()).items():
             if spec.get("judge", "REJECT") == "REJECT":
                 cases.append({"case": f"attack:{name}", "path": t.root / "attacks" / name, "label": "bad",
-                              "note": spec.get("note", "")})
+                              "note": spec.get("note", ""), "complete": spec.get("ordinary") == "ACCEPT"})
     for r in sorted((t.root / "reference").glob("*.lean")):
         cases.append({"case": f"reference:{r.name}", "path": r, "label": "good", "note": "reference solution"})
         if refactors:
@@ -82,10 +89,17 @@ def render(out, rows):
              "| Arm | Bad cases accepted (false acceptances) | Good cases rejected (false rejections) |", "|---|---|---|"]
     bad = [r for r in rows if r["label"] == "bad"]
     good = [r for r in rows if r["label"] == "good"]
+    excluded = [r for r in rows if r["label"] == "excluded"]
     for arm in ("ordinary", "proofforge"):
         fa = sum(r[arm]["accepted"] for r in bad)
         fr = sum(not r[arm]["accepted"] for r in good)
         lines.append(f"| {arm} | {fa}/{len(bad)} | {fr}/{len(good)} |")
+    complete = [r for r in bad if r.get("complete")]
+    lines += ["", f"Complete-proof attacks (every required theorem proved, no `sorry`; the cheat is a restated theorem, a tampered workspace or a code swap): "
+              f"ordinary checking accepts {sum(r['ordinary']['accepted'] for r in complete)}/{len(complete)}, "
+              f"ProofForge accepts {sum(r['proofforge']['accepted'] for r in complete)}/{len(complete)}."]
+    if excluded:
+        lines += ["", f"Excluded: {len(excluded)} generated refactors that do not compile (generator defects, not test cases)."]
     lines += ["", "## Per family", "", "| Family | Bad cases | Ordinary accepts bad | ProofForge accepts bad | Good cases | Ordinary rejects good | ProofForge rejects good |",
               "|---|---|---|---|---|---|---|"]
     for fam in sorted({r["family"] for r in rows}):
@@ -122,8 +136,15 @@ def main():
     def run_case(tc):
         t, c = tc
         row = {"task": t.id, "family": t.family, "split": t.split, "case": c["case"], "label": c["label"],
-               "note": c["note"], "sha256": taskmod.sha256(c["path"]) if c["path"].is_file() else None,
-               "ordinary": ordinary_check.check(t, c["path"]), "proofforge": proofforge(t, c["path"])}
+               "note": c["note"], "complete": c.get("complete", False), "sha256": taskmod.sha256(c["path"]) if c["path"].is_file() else None,
+               "ordinary": ordinary_check.check(t, c["path"])}
+        if c["case"].startswith("refactor:") and row["ordinary"]["reason"] == "build failed":
+            # A generated refactor that does not compile is a generator defect, not a test case.
+            row["label"] = "excluded"
+            row["note"] = "generated refactor does not compile; excluded"
+            row["proofforge"] = {"accepted": False, "reason": "not run"}
+        else:
+            row["proofforge"] = proofforge(t, c["path"])
         with lock:
             rows.append(row)
             print(f"[{t.id}] {c['case']} ({c['label']}): ordinary={row['ordinary']['accepted']} "
