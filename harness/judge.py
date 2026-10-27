@@ -5,7 +5,9 @@ Pipeline:
   1. tree check       protected files in the workspace match spec/locked.json
   2. impl scan        candidate source has no code overrides or meta-programming
   3. fresh container  locked project + candidate files only, never built before
-  4. comparator       `lake comparator` with bubblewrap (mandatory for VERIFIED)
+  4. comparator       `lake comparator --paranoid` with bubblewrap: Lean default and
+                      paranoid kernels plus lean4lean, nanoda, con-leche, con-ron
+                      (mandatory for VERIFIED)
   5. leanchecker      kernel replay of the solution module
   6. (optional) binary build + property tests are run by binary_check.py
 
@@ -158,7 +160,7 @@ def judge(arg: str, scan: bool = True) -> dict:
     if gate_ok:
         project = fresh_project(ws, files)
         c["comparator"] = in_container(
-            project, "lake comparator --config spec/comparator.json")
+            project, "lake comparator --paranoid --config spec/comparator.json")
         if c["comparator"]["exit_code"] == 0:
             c["leanchecker"] = in_container(
                 project, "lake build Solution >/dev/null && lake env leanchecker Solution")
