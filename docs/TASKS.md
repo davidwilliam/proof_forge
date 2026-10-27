@@ -73,7 +73,7 @@ Each task is a self-contained Lean project in `tasks/<id>/`:
 ## Executable and oracle
 
 - `app/Main.lean` reads one JSON object per stdin line and prints one JSON object per stdout line; on a parse error it prints `{"error":"bad input"}` and exits with code 2 at the end. The serialization must expose every field the requirements constrain, so the oracle can check them.
-- `oracle.py` exports `gen_case(rng)` (one input object; mix valid and invalid inputs, about 30% invalid, with boundary values), `check(case, out)` (list of `(REQ-ID, message)` violations), and optionally `followup(case, out)` (a follow-up input and the REQ-ID its violations count against, or `None`), `FLAGSHIP` (a fixed showcase input) and `describe(out)`. The oracle mirrors `Spec.lean` independently; it never imports Lean output.
+- `oracle.py` exports `gen_case(rng)` (one input object; mix valid and invalid inputs, about 30% invalid, with boundary values), `check(case, out)` (list of `(REQ-ID, message)` violations), and optionally `followup(case, out)` (a follow-up input and the REQ-ID its violations count against, or `None`), `FLAGSHIP` (a fixed showcase input) and `describe(out)`. The oracle mirrors `Spec.lean` independently; it never imports Lean output. Every violation found on a follow-up case is charged to the REQ-ID that `followup` returns, not to the one `check` reports, so use `followup` only for requirements that need a second step (such as resubmission for idempotency).
 
 ## Validation
 
