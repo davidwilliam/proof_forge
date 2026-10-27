@@ -1,0 +1,50 @@
+# Proof-carrying PR check for the payout component.
+#
+# pull_request_target runs this workflow and the harness from the base branch. The PR
+# head is checked out only as data: its candidate files are judged against the base
+# branch's locked spec, so a PR that edits the harness, the lock or the spec cannot
+# change the verdict (the tree check reports protected-file edits). Candidate Lean code is
+# built only inside the pinned image with no network, after the implementation scan.
+name: proofforge
+on:
+  pull_request_target:
+    paths: ["formal/candidate/**"]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the trusted base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+      - name: Check out the PR head as data
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr
+          persist-credentials: false
+      - name: Build the pinned Lean image
+        run: docker build -t proofforge-lean:4.35.0 -f trusted/infra/docker/Dockerfile.lean trusted/infra/docker
+      - name: Judge the candidate
+        id: judge
+        run: |
+          set +e
+          python3 trusted/bin/proofforge check --task payout-flagship --candidate pr/formal \
+            --out passport.json --comment comment.md
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+      - name: Comment on the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body-file comment.md
+      - name: Upload the Passport
+        uses: actions/upload-artifact@v4
+        with:
+          name: passport
+          path: passport.json
+      - name: Fail unless VERIFIED
+        if: steps.judge.outputs.exit != '0'
+        run: exit 1
