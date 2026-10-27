@@ -11,26 +11,18 @@ Pipeline:
   5. leanchecker      kernel replay of the solution module
   6. (optional) binary build + property tests are run by binary_check.py
 
-Usage: judge.py <workspace-dir | candidate.lean> [--json out.json]
+Usage: judge.py <workspace-dir | candidate.lean> [--task T] [--json out.json]
+The task (harness/task.py) defaults to the flagship payout component in formal/.
 A bare .lean file is treated as a workspace containing only candidate/Solution.lean.
 Statuses come only from exit codes recorded here; nothing a model writes is trusted.
 """
 import argparse, hashlib, json, pathlib, re, shutil, subprocess, sys, tempfile, time
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-FORMAL = ROOT / "formal"
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import task as taskmod  # noqa: E402
+
 IMAGE = "proofforge-lean:4.35.0"
 CANDIDATE_GLOBS = ["candidate/Solution.lean", "candidate/Lib/**/*.lean"]
-REQS = [
-    ("REQ-VALID-SUCCEEDS", "Payout.req_valid_succeeds"),
-    ("REQ-INVALID-NOOP", "Payout.req_invalid_noop"),
-    ("REQ-FAIR-SHARES", "Payout.req_fair_shares"),
-    ("REQ-EFFECTS", "Payout.req_effects"),
-    ("REQ-CONSERVATION", "Payout.req_conservation"),
-    ("REQ-NONNEGATIVE", "Payout.req_nonnegative"),
-    ("REQ-AUTHORIZATION", "Payout.req_authorization"),
-    ("REQ-IDEMPOTENCY", "Payout.req_idempotency"),
-]
 # Constructs that can make compiled code differ from what the kernel checked, or that
 # run arbitrary code during elaboration. Defense in depth; Comparator is the authority.
 FORBIDDEN = [
@@ -39,7 +31,11 @@ FORBIDDEN = [
     r"#eval", r"\brun_cmd\b", r"\brun_elab\b", r"\brun_meta\b", r"\bnative_decide\b",
     r"\bset_option\b", r"\bopaque\b", r"\baxiom\b", r"@\[\s*csimp",
 ]
-ALLOWED_IMPORTS = re.compile(r"^(Payout\.Spec|Payout\.Lemmas|Init(\..+)?|Std(\..+)?)$")
+
+
+def allowed_imports(task):
+    lib = re.escape(task.lib)
+    return re.compile(rf"^({lib}\.Spec|{lib}\.Lemmas|Init(\..+)?|Std(\..+)?)$")
 
 
 def sha256_bytes(b: bytes) -> str:
@@ -69,7 +65,7 @@ def load_workspace(arg: str) -> pathlib.Path:
     return ws
 
 
-def tree_check(ws: pathlib.Path, locked: dict) -> dict:
+def tree_check(ws: pathlib.Path, locked: dict, task) -> dict:
     """Any protected file present in the workspace must be byte-identical to the lock."""
     problems = []
     for rel, digest in locked["files"].items():
@@ -79,8 +75,10 @@ def tree_check(ws: pathlib.Path, locked: dict) -> dict:
     lock_digest = sha256_bytes(json.dumps(locked["files"], sort_keys=True).encode())
     if lock_digest != locked["manifest_sha256"]:
         problems.append("spec/locked.json is internally inconsistent")
+    if sorted(locked["files"]) != sorted(task.protected()):
+        problems.append("spec/locked.json does not cover exactly the protected files")
     for rel in locked["files"]:
-        if sha256_bytes((FORMAL / rel).read_bytes()) != locked["files"][rel]:
+        if sha256_bytes((task.root / rel).read_bytes()) != locked["files"][rel]:
             problems.append(f"repository protected file differs from lock: {rel}")
     return {"passed": not problems, "problems": problems}
 
@@ -92,7 +90,7 @@ def candidate_files(ws: pathlib.Path):
     return files
 
 
-def impl_scan(files) -> dict:
+def impl_scan(files, task) -> dict:
     problems = []
     for f in files:
         text = f.read_text()
@@ -103,16 +101,16 @@ def impl_scan(files) -> dict:
                 line = code[: m.start()].count("\n") + 1
                 problems.append(f"{f.name}:{line}: forbidden construct `{m.group(0)}`")
         for m in re.finditer(r"^\s*import\s+(\S+)", code, flags=re.M):
-            if not ALLOWED_IMPORTS.match(m.group(1)):
+            if not allowed_imports(task).match(m.group(1)):
                 problems.append(f"{f.name}: import not allowed: {m.group(1)}")
     return {"passed": not problems, "problems": problems}
 
 
-def fresh_project(ws: pathlib.Path, files) -> pathlib.Path:
+def fresh_project(ws: pathlib.Path, files, task) -> pathlib.Path:
     """Locked project files from the repository + the candidate files, nothing else."""
     d = pathlib.Path(tempfile.mkdtemp(prefix="pf-judge-"))
-    for rel in ["lean-toolchain", "lakefile.toml", "lake-manifest.json", "spec", "app"]:
-        src = FORMAL / rel
+    for rel in taskmod.PROJECT_FILES:
+        src = task.root / rel
         if src.is_dir():
             shutil.copytree(src, d / rel)
         else:
@@ -136,13 +134,15 @@ def in_container(project: pathlib.Path, script: str, timeout=900):
     return run(cmd, timeout=timeout)
 
 
-def judge(arg: str, scan: bool = True) -> dict:
+def judge(arg: str, scan: bool = True, task=None) -> dict:
     t0 = time.monotonic()
-    locked = json.loads((FORMAL / "spec" / "locked.json").read_text())
+    task = task or taskmod.load()
+    locked = task.locked()
     ws = load_workspace(arg)
     files = candidate_files(ws)
     result = {
         "schema_version": 1,
+        "task": task.id,
         "candidate": str(arg),
         "manifest_sha256": locked["manifest_sha256"],
         "solution_tree_sha256": sha256_bytes(
@@ -150,15 +150,15 @@ def judge(arg: str, scan: bool = True) -> dict:
         "checks": {},
     }
     c = result["checks"]
-    c["tree"] = tree_check(ws, locked)
+    c["tree"] = tree_check(ws, locked, task)
     if not files:
         c["tree"]["passed"] = False
         c["tree"]["problems"].append("no candidate/Solution.lean")
-    c["impl_scan"] = impl_scan(files) if scan else {"passed": True, "problems": [], "skipped": True}
+    c["impl_scan"] = impl_scan(files, task) if scan else {"passed": True, "problems": [], "skipped": True}
 
     gate_ok = c["tree"]["passed"] and c["impl_scan"]["passed"]
     if gate_ok:
-        project = fresh_project(ws, files)
+        project = fresh_project(ws, files, task)
         c["comparator"] = in_container(
             project, "lake comparator --paranoid --config spec/comparator.json")
         if c["comparator"]["exit_code"] == 0:
@@ -169,7 +169,7 @@ def judge(arg: str, scan: bool = True) -> dict:
     accepted = (gate_ok and c.get("comparator", {}).get("exit_code") == 0
                 and c.get("leanchecker", {}).get("exit_code") == 0)
     status = "VERIFIED" if accepted else "REJECTED"
-    result["requirements"] = {rid: status for rid, _ in REQS}
+    result["requirements"] = {rid: status for rid, _ in task.requirements}
     result["accepted"] = accepted
     result["elapsed_ms"] = int((time.monotonic() - t0) * 1000)
     return result
@@ -178,9 +178,10 @@ def judge(arg: str, scan: bool = True) -> dict:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("candidate")
+    ap.add_argument("--task")
     ap.add_argument("--json")
     a = ap.parse_args()
-    r = judge(a.candidate)
+    r = judge(a.candidate, task=taskmod.load(a.task))
     if a.json:
         pathlib.Path(a.json).write_text(json.dumps(r, indent=2) + "\n")
     verdict = "ACCEPTED" if r["accepted"] else "REJECTED"

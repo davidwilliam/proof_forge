@@ -59,7 +59,7 @@ def render(raw):
         print(f"[c] without the implementation scan, comparator alone: {'ACCEPT' if w['accepted'] else 'REJECT'}")
     md = ["# G0 results", "",
           "Pipeline: tree check, implementation scan, `lake comparator` (bubblewrap sandbox, Lean 4.35.0), `leanchecker`. "
-          "Binary: `payout-sidecar` rebuilt in a fresh container, 2,001 property cases plus resubmission cases, checked against `harness/oracle.py`.", "",
+          "Binary: `payout-sidecar` rebuilt in a fresh container, 2,001 property cases plus resubmission cases, checked against `formal/oracle.py`.", "",
           "| Case | Candidate | Judge | Expected | Judge reasons | Binary | Flagship shares ($1.00 to 3) |",
           "|---|---|---|---|---|---|---|"]
     md += [f"| {r[0]} | {r[1]} | {r[2]} | {r[3]} | {r[4] or 'none'} | {r[5]} | {r[6]} |" for r in rows]
