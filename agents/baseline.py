@@ -47,9 +47,9 @@ def audit(s):
     return s.accepted, verdict
 
 
-def run(s, a):
+def run(s, a, state="current, buggy"):
     system = repair.task_brief(s.task) + PROTOCOL
-    user = (repair.spec_text(s) + "\n\n=== candidate/Solution.lean (current, buggy) ===\n" + s._source())
+    user = (repair.spec_text(s) + f"\n\n=== candidate/Solution.lean ({state}) ===\n" + s._source())
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     extra = {} if a.effort == "default" else {"reasoning_effort": a.effort}
     for turn in range(a.max_turns):
