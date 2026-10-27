@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""proofforge: check a candidate against a locked task, and reproduce a Passport.
+
+  proofforge check  --task T [--candidate PATH] [--out passport.json] [--comment comment.md]
+  proofforge verify passport.json --candidate PATH
+  proofforge tasks  [--split S]
+
+`check` runs the official pipeline (tree check, implementation scan, Comparator in a fresh
+sandbox, leanchecker, axiom audit) and the binary property check, and writes a Passport.
+`verify` re-runs the pipeline on the candidate and compares every recorded hash and status
+with the given Passport. Exit code 0 means VERIFIED (check) or reproduced (verify).
+
+The harness and locked tasks are read from this repository checkout, so in CI it must be a
+trusted checkout (the base branch), with only candidate files taken from the change.
+"""
+import argparse, json, pathlib, sys
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "harness"))
+import passport, task as taskmod  # noqa: E402
+
+
+def cmd_check(a):
+    t = taskmod.load(a.task)
+    cand = pathlib.Path(a.candidate) if a.candidate else t.start
+    p = passport.run(cand, t, cases=a.cases, seed=a.seed)
+    p["reproduce"] = f"proofforge verify passport.json --candidate {a.candidate or cand}"
+    if a.out:
+        pathlib.Path(a.out).write_text(json.dumps(p, indent=2) + "\n")
+    md = passport.markdown(p)
+    if a.comment:
+        pathlib.Path(a.comment).write_text(md)
+    print(md)
+    return 0 if p["status"] == "VERIFIED" else 1
+
+
+def cmd_verify(a):
+    old = json.loads(pathlib.Path(a.passport).read_text())
+    t = taskmod.load(old["task"]["id"])
+    cand = pathlib.Path(a.candidate)
+    new = passport.run(cand, t, cases=old["checks"]["property_tests"]["cases"] - (1 if hasattr(t.oracle, "FLAGSHIP") else 0),
+                       seed=old["checks"]["property_tests"].get("seed") or 0)
+    checks = [
+        ("locked manifest", old["locked"]["manifest_sha256"], new["locked"]["manifest_sha256"]),
+        ("solution tree", old["solution"]["solution_tree_sha256"], new["solution"]["solution_tree_sha256"]),
+        ("executable", old["executable"]["sha256"], new["executable"]["sha256"]),
+        ("component status", old["status"], new["status"]),
+    ] + [(f"{r['id']} status", r["status"], n["status"]) for r, n in zip(old["requirements"], new["requirements"])] \
+      + [(f"{r['id']} statement", r["statement_sha256"], n["statement_sha256"]) for r, n in zip(old["requirements"], new["requirements"])]
+    bad = 0
+    for name, x, y in checks:
+        ok = x == y
+        bad += not ok
+        print(f"{'same' if ok else 'DIFFERENT':<9}  {name}: {str(x)[:20]}" + ("" if ok else f" vs {str(y)[:20]}"))
+    print("reproduced" if not bad else f"NOT reproduced: {bad} differences")
+    return 0 if not bad else 1
+
+
+def cmd_tasks(a):
+    for t in taskmod.all_tasks(a.split):
+        print(f"{t.id:<32} {t.family:<14} {t.split:<5} {len(t.requirements)} requirements")
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="proofforge")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    c = sub.add_parser("check")
+    c.add_argument("--task", default="payout-flagship")
+    c.add_argument("--candidate", help="candidate .lean file or workspace dir (default: the task's start candidate)")
+    c.add_argument("--cases", type=int, default=2000)
+    c.add_argument("--seed", type=int, default=0)
+    c.add_argument("--out")
+    c.add_argument("--comment")
+    v = sub.add_parser("verify")
+    v.add_argument("passport")
+    v.add_argument("--candidate", required=True)
+    s = sub.add_parser("tasks")
+    s.add_argument("--split")
+    a = ap.parse_args()
+    return {"check": cmd_check, "verify": cmd_verify, "tasks": cmd_tasks}[a.cmd](a)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
