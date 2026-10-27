@@ -46,7 +46,7 @@ def sha256_bytes(b: bytes) -> str:
 
 def run(cmd, timeout=900):
     t0 = time.monotonic()
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    p = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout)
     return {
         "command": cmd if isinstance(cmd, list) else [cmd],
         "exit_code": p.returncode,
