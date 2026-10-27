@@ -340,8 +340,8 @@ def dialog(s, model, effort, system, user, tool_names, max_turns, done, label):
             assistant["tool_calls"] = msg["tool_calls"]
         messages.append(assistant)
         calls = msg.get("tool_calls") or []
-        s.log(kind="turn", label=label, turn=turn, tools=[c["function"]["name"] for c in calls],
-              text=(msg.get("content") or "")[:300], usage=u)
+        s.log(kind="turn", label=label, turn=turn, model=model, tools=[c["function"]["name"] for c in calls],
+              text=(msg.get("content") or "")[:2000], usage=u)
         print(f"[{label}] turn {turn}: {[c['function']['name'] for c in calls]}", flush=True)
         if not calls:
             messages.append({"role": "user", "content": "Continue with the tools."})
@@ -357,7 +357,11 @@ def dialog(s, model, effort, system, user, tool_names, max_turns, done, label):
                   "replace_declaration": lambda: s.replace_declaration(args.get("name", ""), args.get("text", "")),
                   "try_snippet": lambda: s.try_snippet(args.get("code", "")),
                   "check": s.check, "run_tests": s.run_tests}.get(name) if name in tool_names else None
+            t_tool = time.monotonic()
             result = fn() if fn else f"error: tool {name} is not available in this phase"
+            s.log(kind="tool", label=label, name=name,
+                  args={k: (v if len(str(v)) <= 4000 else str(v)[:4000] + " [truncated]") for k, v in args.items()},
+                  result=result[:4000], ms=int((time.monotonic() - t_tool) * 1000), version=s.version)
             print(f"   {name} -> {result[:150]!r}", flush=True)
             messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
         if done():
@@ -518,7 +522,7 @@ def plan(s, a, spec, t, attempt):
         s.plan_count += 1
         prose = text[: m.start()].strip()[-3000:]
         (s.out / f"plan_{t}_{attempt}.md").write_text(text)
-        s.log(kind="plan", theorem=t, attempt=attempt, lemmas=names, model=a.planner)
+        s.log(kind="plan", theorem=t, attempt=attempt, lemmas=names, model=a.planner, prose=prose[:3000], code=code[:6000])
         print(f"[plan {t}] {names}", flush=True)
         return names, prose
     return [], ""
