@@ -1,0 +1,222 @@
+import type { Metadata } from "next";
+import { getJson } from "@/lib/api";
+import { aggregateE2, isE1, isE2, pairText, type E1Summary, type E2Data, type Rate } from "@/lib/results";
+import { formatUsd, prettyJson, shortHash } from "@/lib/format";
+import { Code, ErrorBox, Status } from "@/components/ui";
+
+export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "Results, ProofForge" };
+
+const rate = (r: Rate) => `${r.count}/${r.of}`;
+
+export default async function ResultsPage() {
+  let data: Record<string, unknown>;
+  try {
+    data = await getJson<Record<string, unknown>>("/api/results");
+  } catch (e) {
+    return (
+      <main className="page">
+        <h1>Results</h1>
+        <ErrorBox title="Could not load results." message={(e as Error).message} />
+      </main>
+    );
+  }
+  const entries = Object.entries(data ?? {});
+  const e1 = entries.filter(([k, v]) => k.startsWith("e1") && isE1(v)) as [string, E1Summary][];
+  const e2 = entries.filter(([k, v]) => k.startsWith("e2") && isE2(v)) as [string, E2Data][];
+  const other = entries.filter(([k]) => !e1.some(([x]) => x === k) && !e2.some(([x]) => x === k));
+
+  return (
+    <main className="page">
+      <h1>Results</h1>
+      <p className="muted" style={{ maxWidth: "80ch" }}>
+        E1 measures repair completion per agent arm under identical budgets. E2 measures integrity: the same candidate artifacts are checked by
+        ordinary checking and by ProofForge, counting bad candidates accepted and good candidates rejected.
+      </p>
+      {entries.length === 0 ? (
+        <div className="notice">No result sets have been published yet. They appear here when the evaluation writes results under results/.</div>
+      ) : null}
+
+      {e1.map(([key, s]) => (
+        <E1Section key={key} name={key} s={s} />
+      ))}
+      {e2.map(([key, d]) => (
+        <E2Section key={key} name={key} d={d} />
+      ))}
+      {other.map(([key, v]) => (
+        <section key={key}>
+          <h2>{key}</h2>
+          <Code text={prettyJson(v)} />
+        </section>
+      ))}
+    </main>
+  );
+}
+
+function E1Section({ name, s }: { name: string; s: E1Summary }) {
+  const arms = Object.entries(s.arms ?? {});
+  const pairs = Object.entries(s.pairs ?? {});
+  const fams = Object.entries(s.families ?? {});
+  return (
+    <section>
+      <h2>E1 repair completion: {name}</h2>
+      {s.tasks ? <p className="muted">{s.tasks.length} tasks.</p> : null}
+      {arms.length ? (
+        <table>
+          <thead>
+            <tr>
+              <th>Arm</th>
+              <th className="num">Completed</th>
+              <th className="num">Rate</th>
+              <th className="num">List cost, total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {arms.map(([arm, a]) => (
+              <tr key={arm}>
+                <td className="mono">{arm}</td>
+                <td className="num">
+                  {a.completed}/{a.n}
+                </td>
+                <td className="num">{a.n ? `${((100 * a.completed) / a.n).toFixed(0)}%` : "none"}</td>
+                <td className="num">{formatUsd(a.usd_list_total)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="muted">No arms recorded.</p>
+      )}
+      {pairs.length ? (
+        <>
+          <h3 style={{ marginTop: 16 }}>Paired comparisons</h3>
+          <ul>
+            {pairs.map(([k, p]) => (
+              <li key={k}>{pairText(k, p)}</li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+      <h3 style={{ marginTop: 16 }}>Per family</h3>
+      {fams.length ? (
+        <table>
+          <thead>
+            <tr>
+              <th>Family</th>
+              {arms.map(([arm]) => (
+                <th key={arm} className="num">
+                  {arm}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {fams.map(([fam, byArm]) => (
+              <tr key={fam}>
+                <td>{fam}</td>
+                {arms.map(([arm]) => (
+                  <td key={arm} className="num">
+                    {byArm[arm] ? `${byArm[arm]!.completed}/${byArm[arm]!.n}` : "none"}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="muted">The E1 summary from the API does not include a per-family breakdown.</p>
+      )}
+    </section>
+  );
+}
+
+function E2Section({ name, d }: { name: string; d: E2Data }) {
+  const agg = aggregateE2(d);
+  return (
+    <section>
+      <h2>E2 integrity: {name}</h2>
+      {d.generated ? <p className="muted">Generated {d.generated}. {d.rows.length} candidate artifacts.</p> : null}
+      <table>
+        <thead>
+          <tr>
+            <th>Arm</th>
+            <th className="num">Bad cases accepted (false acceptances)</th>
+            <th className="num">Good cases rejected (false rejections)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {agg.arms.map((a) => (
+            <tr key={a.arm}>
+              <td>{a.arm === "proofforge" ? "ProofForge" : "Ordinary checking"}</td>
+              <td className="num">{rate(a.falseAccept)}</td>
+              <td className="num">{rate(a.falseReject)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <h3 style={{ marginTop: 16 }}>Per family</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Family</th>
+            <th className="num">Ordinary false acceptances</th>
+            <th className="num">Ordinary false rejections</th>
+            <th className="num">ProofForge false acceptances</th>
+            <th className="num">ProofForge false rejections</th>
+          </tr>
+        </thead>
+        <tbody>
+          {agg.families.map((f) => (
+            <tr key={f.family}>
+              <td>{f.family}</td>
+              <td className="num">{rate(f.arms.ordinary.falseAccept)}</td>
+              <td className="num">{rate(f.arms.ordinary.falseReject)}</td>
+              <td className="num">{rate(f.arms.proofforge.falseAccept)}</td>
+              <td className="num">{rate(f.arms.proofforge.falseReject)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <details style={{ marginTop: 12 }} open>
+        <summary>All cases</summary>
+        <table className="small">
+          <thead>
+            <tr>
+              <th>Task</th>
+              <th>Case</th>
+              <th>Label</th>
+              <th>Ordinary</th>
+              <th>ProofForge</th>
+              <th>ProofForge reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.rows.map((r, i) => (
+              <tr key={i}>
+                <td className="mono">{r.task}</td>
+                <td>
+                  <span className="mono">{r.case}</span>
+                  {r.note ? <div className="muted">{r.note}</div> : null}
+                  {r.sha256 ? <div className="muted hash">{shortHash(r.sha256)}</div> : null}
+                </td>
+                <td>{r.label}</td>
+                <td>
+                  <Status value={r.ordinary.accepted === (r.label === "good") ? "PASS" : "REFUTED"}>
+                    {r.ordinary.accepted ? "accept" : "reject"}
+                  </Status>
+                </td>
+                <td>
+                  <Status value={r.proofforge.accepted === (r.label === "good") ? "PASS" : "REFUTED"}>
+                    {r.proofforge.accepted ? "accept" : "reject"}
+                  </Status>
+                </td>
+                <td className="mono">{r.proofforge.reason || "none"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="small muted">Green marks a correct decision; red marks a wrong one (a bad case accepted or a good case rejected).</p>
+      </details>
+    </section>
+  );
+}
