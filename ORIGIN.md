@@ -16,6 +16,9 @@ Development uses AI coding agents under the owner's direction and review.
 | bubblewrap | Comparator's sandbox |
 | elan | Lean toolchain installer |
 | Ubuntu 24.04 base image | Judge/dev container |
-| Meta Model API (Muse Spark, Muse Wonder) | Repair, proof and review agents |
+| Meta Model API (Muse Spark, Muse Wonder) | Repair, proof and planning agents |
+| FastAPI, Starlette, Pydantic, Uvicorn | API server |
+| Next.js, React | Web front end |
+| fast-check, Vitest | Property tests of the web glue code |
 
 No code from earlier personal projects is included.
