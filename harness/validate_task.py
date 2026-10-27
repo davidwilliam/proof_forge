@@ -7,14 +7,15 @@ Checks, in order:
   3. hygiene     text rules over every task file
   4. references  every reference/*.lean is ACCEPTED by the judge and its binary PASSes
   5. start       candidate/Solution.lean compiles, is rejected, and its binary is REFUTED
-  6. attacks     every candidate in attacks/attacks.json gets the expected verdicts
+  6. attacks     every candidate in attacks/attacks.json gets the expected verdicts from the
+                 judge, the binary check and ordinary checking (harness/ordinary.py)
 
 Usage: validate_task.py TASK [--cases N] [--json]   (writes TASK/validation.json)
 """
 import argparse, json, pathlib, re, sys, time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import binary_check, judge, lock, task as taskmod  # noqa: E402
+import binary_check, judge, lock, ordinary, task as taskmod  # noqa: E402
 
 KEYS = {"schema_version", "id", "family", "split", "lib", "namespace", "definitions",
         "requirements", "exe", "issue"}
@@ -156,7 +157,12 @@ def validate(t, cases):
     if am.exists():
         for name, spec in json.loads(am.read_text()).items():
             v = verdicts(t, t.root / "attacks" / name, cases)
+            o = ordinary.check(t, t.root / "attacks" / name)
+            v["ordinary"] = "ACCEPT" if o["accepted"] else "REJECT"
+            v["ordinary_reason"] = o["reason"]
             rep["checks"]["attacks"][name] = {**v, "expected": spec}
+            if spec.get("ordinary", "any") != "any" and v["ordinary"] != spec["ordinary"]:
+                P.append(f"attack {name}: ordinary checking {v['ordinary']} ({o['reason']}), expected {spec['ordinary']}")
             if v["judge"] != spec.get("judge", "REJECT"):
                 P.append(f"attack {name}: judge {v['judge']}, expected {spec.get('judge', 'REJECT')}")
             if spec.get("binary", "any") != "any" and v["binary"] != spec["binary"]:
