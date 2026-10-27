@@ -69,6 +69,7 @@ class Session:
         shutil.copy(start, self.ws / "candidate/Solution.lean")
         self.version = 0
         self.targets = set()   # planned helper lemmas the bank may replace while they are sorry
+        self.plan_count = 0
         self.accepted = False
         self.events = []
 
@@ -143,9 +144,16 @@ class Session:
         return "\n".join(lines[:e] + body + [""] + lines[e:]), "inserted"
 
     def replace_declaration(self, name, text):
-        new, action = self._replace_in(self._source(), name, text)
+        """Transactional edit: kept only if the file still compiles."""
+        before = self._source()
+        new, action = self._replace_in(before, name, text)
         self._save(new, f"{action} {name}")
-        return f"{action} declaration {name} (version {self.version})"
+        r = judge.in_container(self.ws, "lake build Solution 2>&1 | tail -c 9000", timeout=600)
+        if "error:" in r["output_tail"]:
+            self._save(before, f"revert {name}")
+            return (f"REVERTED: the edit to {name} broke compilation, so the file is unchanged "
+                    f"(version {self.version}). Errors:\n" + self._clean(r["output_tail"])[-5000:])
+        return f"{action} declaration {name} (version {self.version}); file compiles"
 
     @staticmethod
     def _clean(text):
@@ -347,33 +355,89 @@ def orchestrate(s, a, usage):
         tests_ok["v"] = out.startswith('{"status": "PASS"')
         return out
     s.run_tests = run_tests_tracked
+    if orig_run_tests().startswith('{"status": "PASS"'):
+        s.log(kind="phase", phase="implement", ok=True, skipped="start candidate already passes tests")
+        tests_ok["v"] = True
     user0 = (f"{spec}\n\n=== candidate/Solution.lean (current, buggy) ===\n{s._source()}\n\n"
              "Phase 1 of 2: fix `Payout.step` so it meets the requirements. Keep every required theorem in the file "
              "(use `sorry` proofs for now). Write the file with write_solution, then call run_tests until it reports PASS.")
-    ok0, _ = dialog(s, a.model, a.effort, SYSTEM, user0, {"write_solution", "run_tests", "read_file"},
-                    a.phase0_turns, lambda: tests_ok["v"], usage, "implement")
+    ok0 = tests_ok["v"] or dialog(s, a.model, a.effort, SYSTEM, user0, {"write_solution", "run_tests", "read_file"},
+                                  a.phase0_turns, lambda: tests_ok["v"], usage, "implement")[0]
     s.log(kind="phase", phase="implement", ok=ok0)
     if not ok0:
         return
-    # Phase 1: one focused dialog per obligation, easy ones first, then a second pass.
+    # Phase 1: one focused dialog per obligation, easy ones first.
     status = s.check_status()
     for t in ORDER:
-        if status.get(t) == "PROVED":
+        if status.get(t) == "PROVED" or own_sorry_free(s, t):
             continue
         prove_target(s, a, usage, spec, t, a.obligation_turns, "pass1")
         status = s.check_status()
+    # Phase 2: resolve what is left, decomposing hard goals with the planner.
     for t in ORDER:
-        if status.get(t) == "PROVED" or a.planner == "none":
-            continue
-        for attempt in range(a.plans):
-            lemmas, plan_text = plan(s, a, usage, spec, t, attempt)
-            for name in lemmas:
-                prove_target(s, a, usage, spec, name, a.obligation_turns, f"plan{attempt}", plan_text)
-            prove_target(s, a, usage, spec, t, a.obligation_turns, f"plan{attempt}", plan_text)
-            status = s.check_status()
-            if status.get(t) == "PROVED":
-                break
+        if s.check_status([t]).get(t) != "PROVED":
+            resolve(s, a, usage, spec, t, 0)
+    prune(s)
     s.check()
+
+
+def decl_text(s, name):
+    m = re.search(rf"^(?:@\[[^\]]*\]\s*)?(?:private\s+)?(?:theorem|lemma|def)\s+{re.escape(name)}(?=[\s:({{\[]).*?"
+                  rf"(?=^(?:@\[|/--|private |theorem |lemma |def |instance |abbrev |end Payout))",
+                  s._source(), re.S | re.M)
+    return m.group(0) if m else ""
+
+
+def own_sorry_free(s, name):
+    text = decl_text(s, name)
+    return bool(text) and "sorry" not in text
+
+
+def pending_deps(s, name):
+    """Helper declarations still proved by `sorry` that `name`'s proof mentions."""
+    body = decl_text(s, name)
+    out = []
+    for m in s.DECL.finditer(s._source()):
+        n = m.group(1).split(".")[-1]
+        if n != name and n not in THEOREMS and re.search(rf"(?<![\w.]){re.escape(n)}(?![\w?!'])", body) \
+                and not own_sorry_free(s, n):
+            out.append(n)
+    return out
+
+
+def resolve(s, a, usage, spec, name, depth, plan_text=""):
+    """Make `name` sorry-free: try directly, then decompose with the planner (bounded depth)."""
+    if not own_sorry_free(s, name):
+        prove_target(s, a, usage, spec, name, a.obligation_turns, f"d{depth}", plan_text)
+    if not own_sorry_free(s, name) and depth < a.max_depth and a.planner != "none":
+        lemmas, text = plan(s, a, usage, spec, name, s.plan_count)
+        for l in lemmas:
+            resolve(s, a, usage, spec, l, depth + 1, text)
+        prove_target(s, a, usage, spec, name, a.obligation_turns, f"d{depth}", text)
+    if own_sorry_free(s, name):
+        for dep in pending_deps(s, name):
+            resolve(s, a, usage, spec, dep, depth + 1, plan_text)
+    ok = s.check_status([name]).get(name) == "PROVED"
+    s.log(kind="resolve", name=name, depth=depth, ok=ok)
+    return ok
+
+
+def prune(s):
+    """Delete helper declarations that still use sorry and are referenced by nothing else."""
+    changed = True
+    while changed:
+        changed = False
+        src = s._source()
+        for m in list(s.DECL.finditer(src)):
+            n = m.group(1).split(".")[-1]
+            if n in THEOREMS or own_sorry_free(s, n):
+                continue
+            others = src.replace(decl_text(s, n), "")
+            if not re.search(rf"(?<![\w.]){re.escape(n)}(?![\w?!'])", others):
+                new, _ = s._replace_in(src, n, "")
+                s._save(new, f"prune {n}")
+                changed = True
+                break
 
 
 PLANNER_SYSTEM = """You are a Lean 4 proof architect (Lean v4.35.0 core library only, no Mathlib).
@@ -391,7 +455,7 @@ def plan(s, a, usage, spec, t, attempt):
             "Reply with (1) a short proof plan in prose, then (2) exactly one ```lean code block containing 2 to 6 "
             "helper lemmas, each written as `theorem <unique_name> ... := by sorry`, in dependency order, inside no "
             "namespace (the code is inserted inside `namespace Payout`). Use names prefixed with `plan"
-            f"{attempt}_`.")
+            f"{attempt}_` and no `?` or `!` in names.")
     extra = {} if a.planner_effort == "default" else {"reasoning_effort": a.planner_effort}
     for tries in range(3):
         try:
@@ -428,6 +492,7 @@ def plan(s, a, usage, spec, t, attempt):
                      + s._clean(r2["output_tail"])[-3000:])
             continue
         s.targets.update(names)
+        s.plan_count += 1
         prose = text[: m.start()].strip()[-3000:]
         (s.out / f"plan_{t}_{attempt}.md").write_text(text)
         s.log(kind="plan", theorem=t, attempt=attempt, lemmas=names, model=a.planner)
@@ -471,7 +536,8 @@ def main():
     ap.add_argument("--effort", default="medium", choices=["low", "medium", "high", "default"])
     ap.add_argument("--planner", default="muse-wonder-1.0", help="planner model, or 'none' (arm A1)")
     ap.add_argument("--planner-effort", default="high", choices=["low", "medium", "high", "default"])
-    ap.add_argument("--plans", type=int, default=2)
+    ap.add_argument("--plans", type=int, default=2, help="unused; kept for compatibility")
+    ap.add_argument("--max-depth", type=int, default=2)
     a = ap.parse_args()
     out = ROOT / "runs" / f"repair-{time.strftime('%Y%m%d-%H%M%S')}-{a.mode}-{a.model}"
     out.mkdir(parents=True)
