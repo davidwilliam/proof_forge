@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "harness"))
-import judge, passport, task as taskmod  # noqa: E402
+import binary_check, judge, passport, task as taskmod  # noqa: E402
 
 JOBS = ROOT / "runs" / "jobs"
 PASSPORTS = ROOT / "runs" / "passports"
@@ -343,6 +343,39 @@ def payout(body: PayoutRequest):
     exe = d / ".lake/build/bin" / t.exe
     return {"build": body.build, "solution_sha256": sha, "executable_sha256": taskmod.sha256(exe),
             "result": res, "elapsed_ms": r["elapsed_ms"]}
+
+
+# Live challenge: a hidden flagship variant. A witness comes from the binary check within
+# the response contract; a repair, if requested, continues as a background job.
+
+HIDDEN = ROOT / "hidden"
+
+
+class ChallengeRequest(BaseModel):
+    variant: str
+    repair: bool = False
+
+
+@app.get("/api/challenge/variants")
+def challenge_variants():
+    return sorted(p.name for p in HIDDEN.glob("*/task.json") for p in [p.parent])
+
+
+@app.post("/api/challenge")
+def challenge(body: ChallengeRequest, request: Request):
+    d = HIDDEN / body.variant
+    if ".." in body.variant or not (d / "task.json").exists():
+        raise HTTPException(404, "no such variant")
+    t = taskmod.Task(d)
+    t0 = time.monotonic()
+    b = binary_check.check_binary(str(t.start), n_cases=300, seed=int(time.time()) % 1000, task=t)
+    out = {"variant": body.variant, "elapsed_ms": int((time.monotonic() - t0) * 1000),
+           "status": "REFUTED" if b["status"] == "REFUTED" else "UNRESOLVED",
+           "violations": b["violations"], "witness": b["witnesses"][0] if b["witnesses"] else None,
+           "executable_sha256": b.get("binary_sha256"), "label": "Live"}
+    if body.repair and mode() == "live":
+        out["repair_job"] = create_job(ForgeRequest(task=str(d), mode="live"), request)["id"]
+    return out
 
 
 # Results
