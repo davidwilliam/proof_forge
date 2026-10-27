@@ -58,7 +58,7 @@ def run(s, a):
             r = chat(a.model, messages, f"baseline:{s.task.id}:turn{turn}", max_tokens=32000, timeout=600, **extra)
         except APIError as e:
             s.log(kind="api_error", status=e.status, body=e.body[:300])
-            if e.status in (429, 500, 502, 503):
+            if e.status in (0, 429, 500, 502, 503, 504):
                 time.sleep(20)
                 continue
             return

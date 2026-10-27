@@ -4,7 +4,7 @@ Reads META_API_KEY from the environment or the repository's .env file. Every cal
 logged to runs/model_calls.jsonl with model, purpose, token usage and latency; the key
 and message contents are never logged.
 """
-import json, os, pathlib, time, urllib.error, urllib.request
+import http.client, json, os, pathlib, socket, time, urllib.error, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 BASE_URL = os.environ.get("META_API_BASE", "https://api.meta.ai/v1")
@@ -28,24 +28,36 @@ class APIError(Exception):
         self.status, self.body = status, body
 
 
-def chat(model, messages, purpose, tools=None, max_tokens=2048, timeout=180, **extra):
+TRANSIENT = (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError,
+             http.client.RemoteDisconnected, http.client.IncompleteRead)
+
+
+def chat(model, messages, purpose, tools=None, max_tokens=2048, timeout=180, retries=4, **extra):
+    """One chat completion. Network failures are retried with backoff; after the last
+    retry they raise APIError with status 0, which callers treat as transient."""
     payload = {"model": model, "messages": messages, "max_tokens": max_tokens, **extra}
     if tools:
         payload["tools"] = tools
-    req = urllib.request.Request(
-        f"{BASE_URL}/chat/completions", data=json.dumps(payload).encode(),
-        headers={"Authorization": f"Bearer {api_key()}", "Content-Type": "application/json"})
-    t0 = time.monotonic()
-    status, body = None, None
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            status, body = resp.status, json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        status, text = e.code, e.read().decode(errors="replace")
-        _log(model, purpose, status, int((time.monotonic() - t0) * 1000), None)
-        raise APIError(status, text) from None
-    _log(model, purpose, status, int((time.monotonic() - t0) * 1000), body)
-    return body
+    data = json.dumps(payload).encode()
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(
+            f"{BASE_URL}/chat/completions", data=data,
+            headers={"Authorization": f"Bearer {api_key()}", "Content-Type": "application/json"})
+        t0 = time.monotonic()
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = json.loads(resp.read())
+            _log(model, purpose, resp.status, int((time.monotonic() - t0) * 1000), body)
+            return body
+        except urllib.error.HTTPError as e:
+            text = e.read().decode(errors="replace")
+            _log(model, purpose, e.code, int((time.monotonic() - t0) * 1000), None)
+            raise APIError(e.code, text) from None
+        except TRANSIENT as e:
+            _log(model, purpose, 0, int((time.monotonic() - t0) * 1000), None)
+            if attempt == retries:
+                raise APIError(0, f"network error: {type(e).__name__}: {e}") from None
+            time.sleep(min(60, 5 * 2 ** attempt))
 
 
 def _log(model, purpose, status, ms, body):

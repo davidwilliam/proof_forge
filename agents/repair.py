@@ -328,7 +328,7 @@ def dialog(s, model, effort, system, user, tool_names, max_turns, done, label):
                      timeout=600, **extra)
         except APIError as e:
             s.log(kind="api_error", status=e.status, body=e.body[:300])
-            if e.status in (429, 500, 502, 503):
+            if e.status in (0, 429, 500, 502, 503, 504):
                 time.sleep(20)
                 continue
             return False, messages
