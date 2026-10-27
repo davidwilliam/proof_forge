@@ -19,12 +19,13 @@ task.json keys: id, family, split (dev | val | test), lib, namespace, definition
 requirements ([[REQ-ID, theorem_name], ...] in the order agents attempt them),
 exe, issue (the bug report given to agents).
 """
-import hashlib, importlib.util, json, pathlib, sys
+import hashlib, importlib.util, json, pathlib, sys, threading
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FLAGSHIP = ROOT / "formal"
 TASKS = ROOT / "tasks"
 PROJECT_FILES = ["lean-toolchain", "lakefile.toml", "lake-manifest.json", "spec", "app"]
+_ORACLE_LOCK = threading.Lock()
 
 
 def sha256(p: pathlib.Path) -> str:
@@ -64,12 +65,15 @@ class Task:
         if self._oracle is None:
             spec = importlib.util.spec_from_file_location(f"oracle_{self.id.replace('-', '_')}",
                                                           self.root / "oracle.py")
-            self._oracle = importlib.util.module_from_spec(spec)
-            flag, sys.dont_write_bytecode = sys.dont_write_bytecode, True   # keep task dirs clean
-            try:
-                spec.loader.exec_module(self._oracle)
-            finally:
-                sys.dont_write_bytecode = flag
+            with _ORACLE_LOCK:
+                if self._oracle is None:
+                    mod = importlib.util.module_from_spec(spec)
+                    flag, sys.dont_write_bytecode = sys.dont_write_bytecode, True   # keep task dirs clean
+                    try:
+                        spec.loader.exec_module(mod)
+                    finally:
+                        sys.dont_write_bytecode = flag
+                    self._oracle = mod   # published only once fully executed
         return self._oracle
 
     @property
