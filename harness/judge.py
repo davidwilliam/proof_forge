@@ -16,7 +16,7 @@ The task (harness/task.py) defaults to the flagship payout component in formal/.
 A bare .lean file is treated as a workspace containing only candidate/Solution.lean.
 Statuses come only from exit codes recorded here; nothing a model writes is trusted.
 """
-import argparse, contextlib, fcntl, hashlib, json, os, pathlib, re, shlex, shutil, signal, subprocess, sys, tempfile, time
+import argparse, contextlib, fcntl, hashlib, json, os, pathlib, re, shlex, shutil, signal, subprocess, sys, tempfile, threading, time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import task as taskmod  # noqa: E402
@@ -45,12 +45,32 @@ def sha256_bytes(b: bytes) -> str:
 # Monotonic deadline for every Lean run in this process (set by agents from their budget).
 DEADLINE = None
 TIMEOUT_MARK = "error: run stopped at the time limit"
+_local = threading.local()
+
+
+def deadline():
+    """The earlier of the process deadline and the calling thread's `time_limit`, if any."""
+    ds = [d for d in (DEADLINE, getattr(_local, "deadline", None)) if d is not None]
+    return min(ds) if ds else None
+
+
+@contextlib.contextmanager
+def time_limit(seconds):
+    """Deadline for every Lean run made by the calling thread (one API request), nested
+    limits keep the earlier one."""
+    prev = getattr(_local, "deadline", None)
+    end = time.monotonic() + seconds
+    _local.deadline = end if prev is None else min(prev, end)
+    try:
+        yield
+    finally:
+        _local.deadline = prev
 
 
 def run(cmd, timeout=900, on_timeout=None):
     t0 = time.monotonic()
-    if DEADLINE is not None:
-        timeout = min(timeout, DEADLINE - t0)
+    if deadline() is not None:
+        timeout = min(timeout, deadline() - t0)
     rec = {"command": cmd if isinstance(cmd, list) else [cmd]}
     if timeout <= 0:
         return {**rec, "exit_code": 124, "elapsed_ms": 0, "stdout_sha256": sha256_bytes(b""),
@@ -155,9 +175,13 @@ SLOT_DIR = pathlib.Path(tempfile.gettempdir()) / "proofforge-slots"
 
 @contextlib.contextmanager
 def container_slot():
-    """Bound concurrent Lean containers across all processes on this host."""
+    """Bound concurrent Lean containers across all processes on this host. A caller whose
+    deadline passes while waiting gets None and no slot; its run then stops at once."""
     SLOT_DIR.mkdir(exist_ok=True)
     while True:
+        if deadline() is not None and time.monotonic() >= deadline():
+            yield None
+            return
         for i in range(SLOTS):
             f = open(SLOT_DIR / f"slot{i}", "w")
             try:
