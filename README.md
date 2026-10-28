@@ -103,6 +103,18 @@ python3 -m venv .venv && .venv/bin/pip install -r server/requirements.txt
 cd web && pnpm install && pnpm dev
 ```
 
+## Deployment
+
+The API and judge run on a Fly.io Machine (performance-4x, 8 GB, region iad), the front end on Vercel. Fly Machines are microVMs with their own Linux kernel, so Comparator's bubblewrap sandbox runs unchanged as an unprivileged user. Both deploy scripts build from the committed tree only (`infra/fly/deploy.sh`, `infra/vercel/deploy.sh`); Passports record the judge image by registry digest.
+
+Controls (`server/controls.py`): per-client daily quotas and a daily live spending cap stored on the data volume, a per-job dollar and wall-clock cap, concurrency limits that answer 503 with Retry-After, request-wide deadlines on checks (a check stopped by its deadline is UNRESOLVED, never REFUTED), and an operator switch to replay-only mode that can also stop running live agents.
+
+Measured on the deployed host:
+
+- [Host smoke test](reports/host-smoke/fly-iad.json): the recorded repair is VERIFIED by all six kernels in the sandbox; the seeded bulk-rounding candidate passes its tests and is UNRESOLVED; a complete-proof attack and an `implemented_by` override are REFUTED.
+- [Live repair on the host](reports/host-smoke/fly-live-repair.json): Muse Spark 1.3 with the Wonder planner repaired the flagship in 1,620 s for $2.74; all eight requirements VERIFIED.
+- Demo reliability (`infra/reliability.py`): each session loads the four web pages, replays the accepted recording to a fresh check, runs the hidden challenge, calls both payout builds and fetches the Passport, through the API rather than a browser. [Run 1](reports/reliability/fly-vercel-1.json): 19 of 20 sessions; session 10 returned HTTP 500 from a race on the job record, fixed by atomic replacement with a regression test. [Run 2](reports/reliability/fly-vercel-2.json), after the fix: 20 of 20 sessions, about 30 s each. Both runs passed three failure drills: replay-only mode refuses live jobs while replays continue; five simultaneous verifications give two results and three 503 refusals with nothing left running; a restart during a job ends it with a stated reason and the next session succeeds.
+
 ## Layout
 
 | Path | Contents |
@@ -114,6 +126,7 @@ cd web && pnpm install && pnpm dev
 | `agents/` | Meta Model API client, budget, repair agent, compile-and-retry baseline |
 | `eval/` | E1 and E2 runners |
 | `server/`, `web/` | API and front end |
+| `infra/` | images, deployment, host smoke test and reliability check |
 | `.github/workflows/` | proof-carrying PR check |
 | `results/`, `reports/`, `recordings/` | measured results, the G0 gate report, recorded sessions |
 
