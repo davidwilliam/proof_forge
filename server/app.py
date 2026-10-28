@@ -5,15 +5,17 @@ Statuses shown to clients come only from runner records: agent events, judge and
 binary-check results, and Passports built by harness/passport.py.
 
 Run: .venv/bin/uvicorn server.app:app --port 8000
-Environment:
-  PF_MODE=live|replay     replay refuses live model jobs (kill switch); default live
-  PF_JUDGE_KEY=<secret>   requests with header X-Judge-Key get the judge quota
-  PF_LIVE_QUOTA=2         live jobs per client IP per day without the judge key
-  PF_JUDGE_QUOTA=30       live jobs per day with the judge key
-  PF_JOB_BUDGET_USD=3     per-job cap at standard-tier list prices
+Environment (admission, quotas and spending are documented in server/controls.py):
+  PF_MODE=live|replay     replay refuses live model jobs; the admin endpoint overrides it
+  PF_JOB_BUDGET_USD=3     per live job cap at standard-tier list prices
+  PF_JOB_BUDGET_WALL=2700 per live job wall clock; the process is killed 300 s after it
+  PF_VERIFY_DEADLINE_S=240, PF_CHALLENGE_DEADLINE_S=45, PF_PAYOUT_DEADLINE_S=20
+                          request-wide limits on Lean and binary runs; a check stopped by
+                          its limit is reported UNRESOLVED, never REFUTED
   PF_PREWARM=1            build sidecars and hidden variants at startup
+  PF_DATA=runs            jobs, Passports, builds and server.db
 """
-import asyncio, json, os, pathlib, shutil, subprocess, sys, tempfile, threading, time, uuid
+import asyncio, json, os, pathlib, shutil, signal, subprocess, sys, tempfile, threading, time, uuid
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,10 +25,12 @@ from pydantic import BaseModel
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "harness"))
 import binary_check, judge, passport, task as taskmod  # noqa: E402
+from server import controls  # noqa: E402
 
-JOBS = ROOT / "runs" / "jobs"
-PASSPORTS = ROOT / "runs" / "passports"
-BUILDS = ROOT / "runs" / "builds"
+DATA = pathlib.Path(os.environ.get("PF_DATA", ROOT / "runs"))   # a persistent volume on the host
+JOBS = DATA / "jobs"
+PASSPORTS = DATA / "passports"
+BUILDS = DATA / "builds"
 RECORDINGS = ROOT / "recordings"
 for d in (JOBS, PASSPORTS, BUILDS):
     d.mkdir(parents=True, exist_ok=True)
@@ -35,24 +39,17 @@ app = FastAPI(title="ProofForge API", version="0.1")
 app.add_middleware(CORSMiddleware, allow_origins=os.environ.get("PF_CORS", "*").split(","),
                    allow_methods=["GET", "POST"], allow_headers=["*"])
 
-_quota, _lock = {}, threading.Lock()
+CTRL = controls.Controls()
+LIVE = {}               # job id -> agent process, for the operator stop
+WARM = threading.Event()
 
 
 def mode():
-    return os.environ.get("PF_MODE", "live")
+    return CTRL.mode()
 
 
-def take_quota(req: Request):
-    key = req.headers.get("x-judge-key")
-    judge_ok = bool(os.environ.get("PF_JUDGE_KEY")) and key == os.environ.get("PF_JUDGE_KEY")
-    who = "judge" if judge_ok else (req.client.host if req.client else "unknown")
-    limit = int(os.environ.get("PF_JUDGE_QUOTA" if judge_ok else "PF_LIVE_QUOTA", "30" if judge_ok else "2"))
-    day = time.strftime("%Y-%m-%d")
-    with _lock:
-        n = _quota.get((who, day), 0)
-        if n >= limit:
-            raise HTTPException(429, f"live quota reached ({limit} per day); replay mode is available")
-        _quota[(who, day)] = n + 1
+def seconds(name, default):
+    return float(os.environ.get(name, str(default)))
 
 
 # Tasks
@@ -73,7 +70,9 @@ def task_summary(t, detail=False):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "mode": mode(), "judge_image": judge.image_id(), "in_image": judge.IN_IMAGE}
+    free = shutil.disk_usage(JOBS).free
+    return {"ok": True, "ready": WARM.is_set(), "judge_image": judge.image_id(), "in_image": judge.IN_IMAGE,
+            "disk_free_gb": round(free / 2**30, 1), "live_jobs": len(LIVE), **CTRL.state()}
 
 
 @app.get("/api/tasks")
@@ -83,10 +82,7 @@ def tasks(split: str | None = None):
 
 @app.get("/api/tasks/{task_id}")
 def task_detail(task_id: str):
-    try:
-        return task_summary(taskmod.load(task_id), detail=True)
-    except FileNotFoundError:
-        raise HTTPException(404, "no such task")
+    return task_summary(public_task(task_id), detail=True)
 
 
 # Jobs
@@ -96,7 +92,7 @@ class ForgeRequest(BaseModel):
     mode: str = "replay"            # live | replay
     arm: str = "A2"                 # A1 (no planner) | A2 (planner)
     recording: str | None = None    # replay source under recordings/
-    speed: float = 20.0             # replay time compression
+    speed: float = 20.0             # replay time compression, 1 to 100
 
 
 def job_dir(job_id):
@@ -134,7 +130,15 @@ def verify_job(d, t, label):
     if prov and prov.get("budget"):
         emit(d, kind="summary", budget=prov["budget"], versions=prov.get("versions"),
              accepted_in_session=prov.get("accepted_in_session"))
-    p = passport.run(final, t, cases=2000, seed=0, provenance=prov)
+    try:
+        CTRL.checks.acquire()
+    except HTTPException:
+        emit(d, kind="job", state="QUEUED", reason="waiting for a check slot")
+        CTRL.checks.acquire(wait=3600)
+    try:
+        p = passport.run(final, t, cases=2000, seed=0, provenance=prov)
+    finally:
+        CTRL.checks.release()
     (PASSPORTS / f"{p['passport_sha256']}.json").write_text(json.dumps(p, indent=2))
     state = "COMPLETE" if p["status"] == "VERIFIED" else "PARTIAL"
     if prov and prov.get("budget", {}).get("stop") and state != "COMPLETE":
@@ -148,14 +152,36 @@ def verify_job(d, t, label):
 def run_live(d, t, arm):
     set_job(d, state="DIAGNOSING")
     emit(d, kind="job", state="DIAGNOSING", label="Live")
+    wall = seconds("PF_JOB_BUDGET_WALL", 2700)
     cmd = [sys.executable, str(ROOT / "agents/repair.py"), "--task", str(t.root), "--out", str(d),
            "--planner", "none" if arm == "A1" else "muse-wonder-1.0",
            "--model", os.environ.get("PF_LIVE_MODEL", "muse-spark-1.3"),
-           "--budget-usd", os.environ.get("PF_JOB_BUDGET_USD", "3"),
-           "--budget-wall", os.environ.get("PF_JOB_BUDGET_WALL", "2700")]
+           "--budget-usd", os.environ.get("PF_JOB_BUDGET_USD", "3"), "--budget-wall", str(wall)]
     with (d / "agent.log").open("w") as log:
-        subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, cwd=ROOT)
+        proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, cwd=ROOT, start_new_session=True)
+        LIVE[d.name] = proc
+        try:
+            proc.wait(timeout=wall + 300)
+        except subprocess.TimeoutExpired:
+            stop_process(proc)
+        finally:
+            LIVE.pop(d.name, None)
+    summary = d / "summary.json"
+    CTRL.store.settle(d.name, json.loads(summary.read_text()).get("budget", {}).get("usd_list")
+                      if summary.exists() else None)
+    if json.loads((d / "job.json").read_text()).get("stopped"):
+        emit(d, kind="job", state="FAILED", reason="stopped by the operator")
+        set_job(d, state="FAILED")
+        return
     verify_job(d, t, "Live")
+
+
+def stop_process(proc):
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    proc.wait()
 
 
 def run_replay(d, t, src, speed):
@@ -164,6 +190,7 @@ def run_replay(d, t, src, speed):
     emit(d, kind="job", state="DIAGNOSING", label="Recorded run", recording=src.name)
     events = [json.loads(l) for l in (src / "events.jsonl").read_text().splitlines() if l.strip()]
     prev = None
+    speed = min(100.0, max(1.0, speed))
     for e in events:
         if prev is not None:
             time.sleep(min(2.0, max(0.0, (e["t"] - prev) / speed)))
@@ -181,31 +208,65 @@ def run_replay(d, t, src, speed):
     verify_job(d, t, "Fresh check of stored artifact")
 
 
+def public_task(task_id):
+    """A listed task by id; paths and hidden variants are not reachable from requests."""
+    try:
+        t = taskmod.load(task_id) if "/" not in task_id and ".." not in task_id else None
+    except FileNotFoundError:
+        t = None
+    if t is None or t.split == "hidden":
+        raise HTTPException(404, "no such task")
+    return t
+
+
 @app.post("/api/jobs")
 def create_job(body: ForgeRequest, request: Request):
-    try:
-        t = taskmod.load(body.task)
-    except FileNotFoundError:
-        raise HTTPException(404, "no such task")
+    return start_job(public_task(body.task), body, request)
+
+
+def start_job(t, body: ForgeRequest, request: Request):
+    job_id = uuid.uuid4().hex[:12]
     if body.mode == "live":
         if mode() != "live":
             raise HTTPException(503, "live sessions are disabled; replay mode is available")
-        take_quota(request)
     elif body.mode == "replay":
         src = RECORDINGS / (body.recording or "")
-        if not body.recording or not (src / "events.jsonl").exists() or ".." in body.recording:
+        if not body.recording or "/" in body.recording or ".." in body.recording or not (src / "events.jsonl").exists():
             raise HTTPException(404, "no such recording")
     else:
         raise HTTPException(400, "mode must be live or replay")
-    job_id = uuid.uuid4().hex[:12]
+    gates = [CTRL.jobs] + ([CTRL.live] if body.mode == "live" else [])
+    held = []
+    try:
+        for g in gates:
+            g.acquire()
+            held.append(g)
+        CTRL.quota(request, body.mode)
+        if body.mode == "live":
+            CTRL.reserve_live(job_id, float(os.environ.get("PF_JOB_BUDGET_USD", "3")))
+    except HTTPException:
+        for g in held:
+            g.release()
+        raise
     d = JOBS / job_id
     d.mkdir()
     (d / "job.json").write_text(json.dumps({"id": job_id, "task": t.id, "mode": body.mode, "arm": body.arm,
                                             "recording": body.recording, "state": "CREATED",
                                             "created": time.time()}, indent=2))
     emit(d, kind="job", state="CREATED")
-    target = (lambda: run_live(d, t, body.arm)) if body.mode == "live" else \
+    work = (lambda: run_live(d, t, body.arm)) if body.mode == "live" else \
         (lambda: run_replay(d, t, RECORDINGS / body.recording, body.speed))
+
+    def target():
+        try:
+            work()
+        except Exception as e:  # a job never ends without a terminal event
+            emit(d, kind="job", state="FAILED", reason=f"server error: {type(e).__name__}")
+            set_job(d, state="FAILED")
+        finally:
+            for g in held:
+                g.release()
+
     threading.Thread(target=target, daemon=True).start()
     return json.loads((d / "job.json").read_text())
 
@@ -229,6 +290,20 @@ def get_candidate(job_id: str, version: int):
 
 
 TERMINAL = {"COMPLETE", "PARTIAL", "FAILED", "TIMEOUT", "BUDGET_STOP"}
+HEARTBEAT_S = 15
+
+
+def recover_jobs():
+    """A restart ends every job that was running: mark each with a terminal event, so that
+    clients waiting on its stream stop waiting. Unsettled live reservations stay charged."""
+    for f in JOBS.glob("*/job.json"):
+        j = json.loads(f.read_text())
+        if j.get("state") not in TERMINAL:
+            emit(f.parent, kind="job", state="FAILED", reason="server restarted during the job")
+            set_job(f.parent, state="FAILED")
+
+
+recover_jobs()
 
 
 @app.get("/api/jobs/{job_id}/events")
@@ -238,7 +313,7 @@ async def job_events(job_id: str, request: Request):
     start = int(request.headers.get("last-event-id", "-1")) + 1
 
     async def gen():
-        seq, pos = 0, 0
+        seq, pos, quiet = 0, 0, time.monotonic()
         while True:
             f = d / "events.jsonl"
             if f.exists():
@@ -253,12 +328,16 @@ async def job_events(job_id: str, request: Request):
                         continue
                     if seq >= start:
                         yield f"id: {seq}\ndata: {line}\n\n"
+                        quiet = time.monotonic()
                     seq += 1
                     e = json.loads(line)
                     if e.get("kind") == "job" and e.get("state") in TERMINAL:
                         return
             if await request.is_disconnected():
                 return
+            if time.monotonic() - quiet > HEARTBEAT_S:   # keeps proxies from closing an idle stream
+                yield ": keepalive\n\n"
+                quiet = time.monotonic()
             await asyncio.sleep(0.3)
 
     return StreamingResponse(gen(), media_type="text/event-stream",
@@ -273,17 +352,18 @@ class VerifyRequest(BaseModel):
 
 
 @app.post("/api/verify")
-def verify(body: VerifyRequest):
+def verify(body: VerifyRequest, request: Request):
     """Synchronous fresh check of submitted candidate source (no model calls)."""
     if len(body.source) > 200_000:
         raise HTTPException(413, "candidate too large")
-    try:
-        t = taskmod.load(body.task)
-    except FileNotFoundError:
-        raise HTTPException(404, "no such task")
-    f = pathlib.Path(tempfile.mkdtemp(prefix="pf-verify-")) / "Solution.lean"
-    f.write_text(body.source)
-    p = passport.run(f, t, cases=1000, seed=0)
+    t = public_task(body.task)
+    with CTRL.checks.hold(wait=10):
+        CTRL.quota(request, "verify")
+        with tempfile.TemporaryDirectory(prefix="pf-verify-") as tmp, \
+                judge.time_limit(seconds("PF_VERIFY_DEADLINE_S", 240)):
+            f = pathlib.Path(tmp) / "Solution.lean"
+            f.write_text(body.source)
+            p = passport.run(f, t, cases=1000, seed=0)
     (PASSPORTS / f"{p['passport_sha256']}.json").write_text(json.dumps(p, indent=2))
     return p
 
@@ -346,16 +426,24 @@ class PayoutRequest(BaseModel):
 
 
 @app.post("/api/payout")
-def payout(body: PayoutRequest):
+def payout(body: PayoutRequest, request: Request):
     if body.build not in BUILDS_ALLOWED:
         raise HTTPException(400, "build must be buggy or repaired")
-    t = taskmod.load()
-    d, sha = built_project(t, t.root / BUILDS_ALLOWED[body.build])
     line = json.dumps({"state": body.state, "request": body.request})
     if len(line) > 20_000:
         raise HTTPException(413, "input too large")
-    (d / "in.jsonl").write_text(line + "\n")
-    r = judge.in_container(d, f".lake/build/bin/{t.exe} < in.jsonl")
+    if not WARM.is_set():
+        raise HTTPException(503, "the sidecar builds are warming up; retry shortly", headers={"Retry-After": "30"})
+    CTRL.quota(request, "payout")
+    t = taskmod.load()
+    d, sha = built_project(t, t.root / BUILDS_ALLOWED[body.build])
+    with tempfile.TemporaryDirectory(dir=d, prefix="in-") as tmp, \
+            judge.time_limit(seconds("PF_PAYOUT_DEADLINE_S", 20)):
+        name = pathlib.Path(tmp).name
+        (d / name / "in.jsonl").write_text(line + "\n")
+        r = judge.in_container(d, f".lake/build/bin/{t.exe} < {name}/in.jsonl")
+    if judge.TIMEOUT_MARK in r["output_tail"]:
+        raise HTTPException(504, "the sidecar did not answer within its time limit")
     out = r["output_tail"].strip().splitlines()
     if not out:
         raise HTTPException(500, "sidecar produced no output")
@@ -388,17 +476,24 @@ def challenge(body: ChallengeRequest, request: Request):
     d = HIDDEN / body.variant
     if ".." in body.variant or not (d / "task.json").exists():
         raise HTTPException(404, "no such variant")
+    if not WARM.is_set():
+        raise HTTPException(503, "the hidden variants are warming up; retry shortly", headers={"Retry-After": "30"})
     t = taskmod.Task(d)
     t0 = time.monotonic()
-    project, _ = built_project(t, t.start)
-    b = binary_check.property_tests(project, t, 300, int(time.time()) % 1000, {})
+    with CTRL.challenges.hold():
+        CTRL.quota(request, "challenge")
+        with judge.time_limit(seconds("PF_CHALLENGE_DEADLINE_S", 45)):
+            project, _ = built_project(t, t.start)
+            b = binary_check.property_tests(project, t, 300, int(time.time()) % 1000, {})
+    if b["status"] == "TIMEOUT":
+        raise HTTPException(504, "no result within the challenge time limit; the result is unresolved")
     b["binary_sha256"] = (project / "binary.sha256").read_text().strip()
     out = {"variant": body.variant, "elapsed_ms": int((time.monotonic() - t0) * 1000),
            "status": "REFUTED" if b["status"] == "REFUTED" else "UNRESOLVED",
            "violations": b["violations"], "witness": b["witnesses"][0] if b["witnesses"] else None,
            "executable_sha256": b.get("binary_sha256"), "label": "Live"}
     if body.repair and mode() == "live":
-        out["repair_job"] = create_job(ForgeRequest(task=str(d), mode="live"), request)["id"]
+        out["repair_job"] = start_job(t, ForgeRequest(task=t.id, mode="live"), request)["id"]
     return out
 
 
@@ -418,8 +513,46 @@ def prewarm():
             pass
 
 
+def warm():
+    try:
+        prewarm()
+    finally:
+        WARM.set()
+
+
 if os.environ.get("PF_PREWARM", "1") == "1":
-    threading.Thread(target=prewarm, daemon=True).start()
+    threading.Thread(target=warm, daemon=True).start()
+else:
+    WARM.set()
+
+
+# Operator controls
+
+class ModeRequest(BaseModel):
+    mode: str                       # live | replay
+    stop_live: bool = False         # also kill running live jobs
+
+
+@app.get("/api/admin/state")
+def admin_state(request: Request):
+    CTRL.admin(request)
+    return {**CTRL.state(), "live_jobs": sorted(LIVE)}
+
+
+@app.post("/api/admin/mode")
+def admin_mode(body: ModeRequest, request: Request):
+    """Kill switch: replay mode refuses new live jobs at once and survives restarts."""
+    CTRL.admin(request)
+    if body.mode not in ("live", "replay"):
+        raise HTTPException(400, "mode must be live or replay")
+    CTRL.store.put("mode", body.mode)
+    stopped = []
+    if body.stop_live:
+        for job_id, proc in list(LIVE.items()):
+            set_job(JOBS / job_id, stopped=True)
+            stop_process(proc)
+            stopped.append(job_id)
+    return {**CTRL.state(), "stopped": stopped}
 
 
 # Results
