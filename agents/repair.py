@@ -15,7 +15,7 @@ import argparse, json, pathlib, re, shutil, sys, tempfile, time
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "agents"))
 sys.path.insert(0, str(ROOT / "harness"))
-from meta_client import chat, APIError  # noqa: E402
+from meta_client import chat, APIError, DeadlineReached  # noqa: E402
 from budget import Budget, BudgetExceeded  # noqa: E402
 import judge, binary_check, task as taskmod  # noqa: E402
 
@@ -99,16 +99,36 @@ class Session:
         # Declaration boundary: the next top-level item or the namespace end.
         self.boundary = rf"(?:@\[|/--|private |protected |theorem |lemma |def |instance |abbrev |{re.escape(self.end)})"
 
-    def call(self, model, messages, purpose, tools=None, max_tokens=32000, timeout=600, **extra):
-        """One model call inside the budget: limits come from the remaining dollars and
-        time, and a response without usage is charged its worst case."""
-        chars = len(json.dumps(messages)) + (len(json.dumps(tools)) if tools else 0)
-        mt, to = self.budget.call_limits(model, chars, max_tokens, timeout)
-        r = chat(model, messages, purpose, tools=tools, max_tokens=mt, timeout=to,
-                 deadline=self.budget.deadline(), **extra)
-        u = r.get("usage") or {}
-        self.budget.charge(model, u, worst_case=(chars, mt))
-        return r, u
+    def call(self, model, messages, purpose, tools=None, max_tokens=32000, timeout=600, attempts=5, **extra):
+        """One model call inside the budget. Every attempt is reserved at its worst case
+        before it is sent and settled to the reported usage only if its full response arrives
+        before the deadline. A network failure or timeout leaves the worst case charged (the
+        request may have been processed); an HTTP error response carries no completion and
+        is charged nothing. A response completed after the deadline is discarded."""
+        payload_bytes = len(json.dumps({"messages": messages, "tools": tools}).encode())
+        for i in range(attempts):
+            mt, to = self.budget.call_limits(model, payload_bytes, len(messages), max_tokens, timeout)
+            tok = self.budget.reserve(model, payload_bytes, len(messages), mt)
+            try:
+                r = chat(model, messages, purpose, tools=tools, max_tokens=mt, timeout=to, retries=0,
+                         deadline=self.budget.deadline(), **extra)
+            except DeadlineReached:
+                self.budget.lost(tok)
+                self.budget.stop = "wall"
+                raise BudgetExceeded("wall")
+            except APIError as e:
+                if e.status == 0:
+                    self.budget.lost(tok)
+                else:
+                    self.budget.settle(tok, {"prompt_tokens": 0, "completion_tokens": 0, "http_error": e.status})
+                if e.status in (0, 429, 500, 502, 503, 504) and i < attempts - 1:
+                    self.log(kind="api_error", status=e.status, body=e.body[:300], attempt=i)
+                    self.pause(min(60, 5 * 2 ** i))
+                    continue
+                raise
+            u = r.get("usage") or {}
+            self.budget.settle(tok, u)
+            return r, u
 
     def pause(self, seconds):
         """Back off after a transient error, never past the deadline."""
@@ -156,6 +176,9 @@ class Session:
         return text.rstrip("\n") + "\n\n" + "\n\n".join(chunks) + "\n"
 
     def _save(self, text, why):
+        if self.budget.past_deadline() and not why.startswith(("revert", "restore")):
+            self.budget.stop = "wall"
+            raise BudgetExceeded("wall")
         text = self._normalize(text)
         self.version += 1
         (self.ws / "candidate/Solution.lean").write_text(text)
@@ -370,6 +393,9 @@ def dialog(s, model, effort, system, user, tool_names, max_turns, done, label):
             messages.append({"role": "user", "content": "Continue with the tools."})
             continue
         for c in calls:
+            if s.budget.past_deadline():
+                s.budget.stop = "wall"
+                raise BudgetExceeded("wall")
             name = c["function"]["name"]
             try:
                 args = json.loads(c["function"].get("arguments") or "{}")
@@ -600,7 +626,12 @@ def finish(s, out, arm, extra):
     if "error:" in s.compile(2000)["output_tail"] and s.last_good is not None:
         s._save(s.last_good, "restore last compiling version")
     shutil.copy(s.ws / "candidate/Solution.lean", out / "final.lean")
-    summary = {"task": s.task.id, "arm": arm, "model": s.model, **extra, "accepted_in_session": s.accepted,
+    writes = [e for e in s.events if e.get("kind") == "write"]
+    snapshot = {"sha256": taskmod.sha256(out / "final.lean"), "version": s.version,
+                "selected": writes[-1]["why"] if writes else "start candidate",
+                "written_at_s": round(writes[-1]["t"] - s.events[0]["t"], 1) if writes else 0.0}
+    summary = {"task": s.task.id, "arm": arm, "model": s.model, **extra, "final_snapshot": snapshot,
+               "accepted_in_session": s.accepted,
                "versions": s.version, "budget": s.budget.summary(), "final_status": s.check_status()}
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
     shutil.rmtree(s.ws, ignore_errors=True)
