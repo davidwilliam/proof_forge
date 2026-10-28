@@ -107,7 +107,7 @@ cd web && pnpm install && pnpm dev
 
 The API and judge run on a Fly.io Machine (performance-4x, 8 GB, region iad), the front end on Vercel. Fly Machines are microVMs with their own Linux kernel, so Comparator's bubblewrap sandbox runs unchanged as an unprivileged user. Both deploy scripts build from the committed tree only (`infra/fly/deploy.sh`, `infra/vercel/deploy.sh`); Passports record the judge image by registry digest.
 
-Controls (`server/controls.py`): per-client daily quotas and a daily live spending cap stored on the data volume, a per-job dollar and wall-clock cap, concurrency limits that answer 503 with Retry-After, request-wide deadlines on checks (a check stopped by its deadline is UNRESOLVED, never REFUTED), and an operator switch to replay-only mode that can also stop running live agents.
+Live jobs run Muse Spark 1.3 on its Contributor tier (every task here is synthetic) with Muse Wonder as planner. Controls (`server/controls.py`): per-client daily quotas and a daily live spending cap at the prices actually charged, stored on the data volume, a per-job dollar cap at standard list prices and a wall-clock cap, concurrency limits that answer 503 with Retry-After, request-wide deadlines on checks (a check stopped by its deadline is UNRESOLVED, never REFUTED), and an operator switch to replay-only mode that can also stop running live agents.
 
 Measured on the deployed host:
 
