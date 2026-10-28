@@ -5,7 +5,7 @@ rejects attacks on the target host, with Comparator's sandbox enabled.
 Usage: smoke.py BASE_URL [--out reports/host-smoke/<name>.json]
 Reads PF_JUDGE_KEY from the environment or .env (the judge quota); makes no model calls.
 """
-import argparse, json, pathlib, time, urllib.error, urllib.request
+import argparse, http.client, json, pathlib, time, urllib.error, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 KERNELS = 6
@@ -47,16 +47,19 @@ class Client:
             r = urllib.request.urlopen(req, timeout=timeout)
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
             return [{"kind": "client", "error": f"connection error: {e}"}]
-        with r:
-            for raw in r:
-                line = raw.decode().strip()
-                if line.startswith("data: "):
-                    e = json.loads(line[6:])
-                    out.append(e)
-                    if e.get("kind") == "job" and e.get("state") in ("COMPLETE", "PARTIAL", "FAILED", "TIMEOUT", "BUDGET_STOP"):
-                        return out
-                if time.monotonic() > end:
-                    break
+        try:
+            with r:
+                for raw in r:
+                    line = raw.decode().strip()
+                    if line.startswith("data: "):
+                        e = json.loads(line[6:])
+                        out.append(e)
+                        if e.get("kind") == "job" and e.get("state") in ("COMPLETE", "PARTIAL", "FAILED", "TIMEOUT", "BUDGET_STOP"):
+                            return out
+                    if time.monotonic() > end:
+                        break
+        except (OSError, http.client.HTTPException) as e:
+            out.append({"kind": "client", "error": f"stream ended: {e}"})
         return out
 
 
