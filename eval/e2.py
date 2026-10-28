@@ -83,36 +83,76 @@ def collect(t, refactors=True):
     return cases
 
 
+def kind(r):
+    """What a case is, from its records (for the composition table)."""
+    c, pf, od = r["case"], r["proofforge"]["reason"], r["ordinary"]["reason"]
+    if c.startswith("reference:"):
+        return "reference solution"
+    if c.startswith("refactor:"):
+        return "generated refactor (helpers renamed, comments added)"
+    if c.startswith("model-repair:"):
+        return "accepted model repair"
+    if "uses sorry" in od:
+        return "attack with sorry"
+    if "protected file modified" in pf:
+        return "tampered workspace (modified spec or challenge)"
+    if "implemented_by" in pf or "forbidden construct" in pf:
+        return "code swap (implemented_by and similar)"
+    if "has already been declared" in pf:
+        return "redefines a protected definition"
+    if "statement do not match" in pf:
+        return "restated (weaker) theorem"
+    return "other (" + (pf[:40] or od[:40]) + ")"
+
+
+def binary_ok(r):
+    return r["proofforge"].get("binary") == "PASS"
+
+
 def render(out, rows):
-    lines = ["# E2 results", "",
-             "Same candidate artifacts in both arms. Ordinary checking: the candidate's own project builds, every required theorem name exists, and the axiom audit shows no sorry and only permitted axioms. ProofForge: judge (tree check, implementation scan, Comparator in a fresh sandbox, leanchecker) plus the binary property check.", "",
-             "| Arm | Bad cases accepted (false acceptances) | Good cases rejected (false rejections) |", "|---|---|---|"]
     bad = [r for r in rows if r["label"] == "bad"]
     good = [r for r in rows if r["label"] == "good"]
     excluded = [r for r in rows if r["label"] == "excluded"]
-    for arm in ("ordinary", "proofforge"):
-        fa = sum(r[arm]["accepted"] for r in bad)
-        fr = sum(not r[arm]["accepted"] for r in good)
-        lines.append(f"| {arm} | {fa}/{len(bad)} | {fr}/{len(good)} |")
-    complete = [r for r in bad if r.get("complete")]
-    lines += ["", f"Complete-proof attacks (every required theorem proved, no `sorry`; the cheat is a restated theorem, a tampered workspace or a code swap): "
-              f"ordinary checking accepts {sum(r['ordinary']['accepted'] for r in complete)}/{len(complete)}, "
-              f"ProofForge accepts {sum(r['proofforge']['accepted'] for r in complete)}/{len(complete)}."]
+    lines = ["# E2 results", "",
+             "Same candidate artifacts in every arm. All bad cases are seeded tests written by the build team; the results describe this suite, not repairs in general.", "",
+             "- Ordinary checking: the candidate's own project builds (its own spec files included), every required theorem name exists, and the axiom audit shows no `sorry` and only permitted axioms. It does not compare statements with the locked requirements, so an attack can prove a weaker statement under a required name.",
+             "- Rebuild and tests: the executable rebuilt in a fresh container from the locked project plus the candidate passes the task's property tests (1,000 generated cases plus follow-ups).",
+             "- ProofForge: tree check, implementation scan, Comparator against the locked challenge in a fresh sandbox, leanchecker, and the rebuild and tests.", "",
+             "| Arm | Bad cases accepted | Good cases rejected |", "|---|---|---|"]
+    arms = [("Ordinary checking", lambda r: r["ordinary"]["accepted"]),
+            ("Rebuild and tests", binary_ok),
+            ("ProofForge", lambda r: r["proofforge"]["accepted"])]
+    for name, acc in arms:
+        lines.append(f"| {name} | {sum(acc(r) for r in bad)}/{len(bad)} | {sum(not acc(r) for r in good)}/{len(good)} |")
+    tests_miss = [r for r in bad if binary_ok(r)]
+    lines += ["", f"Bad cases that pass the rebuild and tests: {len(tests_miss)}"
+              + (" (" + ", ".join(f"{r['task']} {r['case']}" for r in tests_miss) + "); ProofForge rejects "
+                 f"{sum(not r['proofforge']['accepted'] for r in tests_miss)} of them through proof checking." if tests_miss else ".")]
     if excluded:
         lines += ["", f"Excluded: {len(excluded)} generated refactors that do not compile (generator defects, not test cases)."]
-    lines += ["", "## Per family", "", "| Family | Bad cases | Ordinary accepts bad | ProofForge accepts bad | Good cases | Ordinary rejects good | ProofForge rejects good |",
+    lines += ["", "## Composition", "", "| Label | Kind | Cases | Distinct source files | Ordinary accepts | Rebuild and tests accept | ProofForge accepts |",
+              "|---|---|---|---|---|---|---|"]
+    groups = {}
+    for r in bad + good:
+        groups.setdefault((r["label"], kind(r)), []).append(r)
+    for (label, k), rs in sorted(groups.items()):
+        lines.append(f"| {label} | {k} | {len(rs)} | {len({r['sha256'] or r['case'] for r in rs})} | "
+                     f"{sum(r['ordinary']['accepted'] for r in rs)} | {sum(binary_ok(r) for r in rs)} | {sum(r['proofforge']['accepted'] for r in rs)} |")
+    lines += ["", "Tasks that share a base specification reuse artifacts (references and attacks are often identical across variants), so cases are not independent examples; the distinct-source column counts unique files."]
+    lines += ["", "## Per family", "", "| Family | Bad cases | Ordinary accepts bad | Rebuild and tests accept bad | ProofForge accepts bad | Good cases | ProofForge rejects good |",
               "|---|---|---|---|---|---|---|"]
     for fam in sorted({r["family"] for r in rows}):
         fb = [r for r in bad if r["family"] == fam]
         fg = [r for r in good if r["family"] == fam]
-        lines.append(f"| {fam} | {len(fb)} | {sum(r['ordinary']['accepted'] for r in fb)} | {sum(r['proofforge']['accepted'] for r in fb)} | "
-                     f"{len(fg)} | {sum(not r['ordinary']['accepted'] for r in fg)} | {sum(not r['proofforge']['accepted'] for r in fg)} |")
-    lines += ["", "## Cases", "", "| Task | Case | Label | Ordinary | ProofForge | ProofForge reason |", "|---|---|---|---|---|---|"]
+        lines.append(f"| {fam} | {len(fb)} | {sum(r['ordinary']['accepted'] for r in fb)} | {sum(binary_ok(r) for r in fb)} | "
+                     f"{sum(r['proofforge']['accepted'] for r in fb)} | {len(fg)} | {sum(not r['proofforge']['accepted'] for r in fg)} |")
+    lines += ["", "## Cases", "", "| Task | Case | Label | Ordinary | Rebuild and tests | ProofForge | ProofForge reason |", "|---|---|---|---|---|---|---|"]
     for r in rows:
         lines.append(f"| {r['task']} | {r['case']} | {r['label']} | {'accept' if r['ordinary']['accepted'] else 'reject'} | "
+                     f"{r['proofforge'].get('binary', 'not run').lower()} | "
                      f"{'accept' if r['proofforge']['accepted'] else 'reject'} | {r['proofforge']['reason'][:140] or 'none'} |")
     (out / "e2.md").write_text("\n".join(lines) + "\n")
-    print("\n".join(lines[:8]))
+    print("\n".join(lines[:16]))
 
 
 def main():
@@ -122,7 +162,8 @@ def main():
     ap.add_argument("--tasks")
     ap.add_argument("--no-refactors", action="store_true")
     ap.add_argument("--report-only", action="store_true")
-    ap.add_argument("--parallel", type=int, default=3)
+    ap.add_argument("--parallel", type=int, default=2)
+    ap.add_argument("--merge", action="store_true", help="replace only the given tasks' rows in an existing run")
     a = ap.parse_args()
     out = ROOT / "results" / f"e2-{a.label}"
     out.mkdir(parents=True, exist_ok=True)
@@ -132,6 +173,12 @@ def main():
     tasks = [taskmod.load(x) for x in a.tasks.split(",")] if a.tasks else taskmod.all_tasks(a.split)
     cases = [(t, c) for t in tasks for c in collect(t, not a.no_refactors)]
     rows, lock = [], threading.Lock()
+    kept = []
+    if a.merge and (out / "e2.json").exists():
+        # Re-run only the given tasks; keep every other task's rows.
+        ids = {t.id for t in tasks}
+        kept = [r for r in json.loads((out / "e2.json").read_text())["rows"] if r["task"] not in ids]
+    rows.extend(kept)
 
     def run_case(tc):
         t, c = tc
@@ -154,8 +201,10 @@ def main():
 
     with ThreadPoolExecutor(a.parallel) as ex:
         list(ex.map(run_case, cases))
-    order = {(t.id, c["case"]): i for i, (t, c) in enumerate(cases)}
-    rows.sort(key=lambda r: order[(r["task"], r["case"])])
+    if not kept:
+        order = {(t.id, c["case"]): i for i, (t, c) in enumerate(cases)}
+        rows.sort(key=lambda r: order[(r["task"], r["case"])])
+    (out / "e2.json").write_text(json.dumps({"generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "rows": rows}, indent=2) + "\n")
     render(out, rows)
 
 
