@@ -6,7 +6,7 @@ A component's requirements are written once as Lean 4 predicates over its implem
 
 ## What the protected pipeline adds
 
-A repository that keeps proofs next to the code accepts whatever its own build accepts. A repair can prove a weaker statement under a required theorem's name, ship a modified specification, or compile different code from the code that was proved, and the build stays green; Lean checks each of those proofs correctly, but they are proofs of something else. ProofForge judges every candidate against a locked challenge with Lean's `lake comparator` in a bubblewrap sandbox, replays it with `leanchecker`, rejects code-override constructs, and tests the executable rebuilt from the locked project.
+A repository that keeps proofs next to the code accepts whatever its own build accepts. A repair can prove a weaker statement under a required theorem's name, ship a modified specification, or compile different code from the code that was proved, and the build stays green; Lean checks each of those proofs correctly, but they are proofs of something else. ProofForge judges every candidate against a locked challenge with Lean's `lake comparator` in a bubblewrap sandbox, replays it with `leanchecker`, rejects code-override constructs, and tests the executable rebuilt from the locked project. Every step, with its exact command, is described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 E2 compares three ways of checking the same artifacts (`results/e2-all-1`; every bad case is a seeded test written by the build team, so this describes this suite, not repairs in general):
 
