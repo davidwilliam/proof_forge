@@ -85,6 +85,9 @@ def build(task, candidate, j, b, provenance=None):
         reasons.append(errs[0][:300] if errs else f"comparator exit {c['comparator']['exit_code']}")
     if c.get("leanchecker") and c["leanchecker"]["exit_code"] != 0:
         reasons.append(f"leanchecker exit {c['leanchecker']['exit_code']}")
+    runs = [r for r in c.values() if isinstance(r, dict)] + [b.get("build") or {}]
+    if any(judge.TIMEOUT_MARK in (r.get("output_tail") or "") for r in runs):
+        reasons.append("time limit reached before checking finished; the result is UNRESOLVED, not a refutation")
     p = {
         "schema_version": SCHEMA,
         "generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),

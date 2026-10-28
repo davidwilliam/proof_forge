@@ -16,6 +16,8 @@ import judge, task as taskmod  # noqa: E402
 def run_cases(project, exe, cases, name):
     (project / f"{name}.jsonl").write_text("\n".join(json.dumps(c) for c in cases) + "\n")
     r = judge.in_container(project, f".lake/build/bin/{exe} < {name}.jsonl > {name}.out")
+    if r["exit_code"] == 124 and judge.TIMEOUT_MARK in r["output_tail"]:
+        return None
     if r["exit_code"] not in (0, 2) or not (project / f"{name}.out").exists():
         return []
     return [json.loads(l) for l in (project / f"{name}.out").read_text().splitlines()]
@@ -42,6 +44,9 @@ def property_tests(project, task, n_cases, seed, result):
             result["witnesses"].append({"requirement": rid, "message": msg, "input": case, "output": out})
 
     outs = run_cases(project, task.exe, cases, "round1")
+    if outs is None:
+        result.update(status="TIMEOUT", followup_cases=0)
+        return result
     if len(outs) != len(cases):
         record("WRAPPER", f"binary produced {len(outs)} results for {len(cases)} inputs", cases[0], {})
     follow = []
@@ -53,6 +58,9 @@ def property_tests(project, task, n_cases, seed, result):
             follow.append(nxt)
     if follow:
         outs2 = run_cases(project, task.exe, [c for c, _ in follow], "round2")
+        if outs2 is None:
+            result.update(status="TIMEOUT", followup_cases=len(follow))
+            return result
         for (c, rid), o in zip(follow, outs2):
             for _, msg in oracle.check(c, o):
                 record(rid, f"follow-up case: {msg}", c, o)
