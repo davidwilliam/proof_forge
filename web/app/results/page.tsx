@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { getJson } from "@/lib/api";
-import { aggregateE2, isE1, isE2, pairText, type E1Summary, type E2Data, type Rate } from "@/lib/results";
+import { aggregateE2, e2ArmLabels, isE1, isE2, pairText, type E1Summary, type E2Data, type Rate } from "@/lib/results";
 import { formatUsd, prettyJson, shortHash } from "@/lib/format";
 import { Code, ErrorBox, Status } from "@/components/ui";
 
@@ -31,7 +31,8 @@ export default async function ResultsPage() {
       <h1>Results</h1>
       <p className="muted" style={{ maxWidth: "80ch" }}>
         E1 measures repair completion per agent arm under identical budgets. E2 measures integrity: the same candidate artifacts are checked by
-        ordinary checking and by ProofForge, counting bad candidates accepted and good candidates rejected.
+        ordinary checking, a trusted rebuild with property tests, and ProofForge. Every bad case in this suite is seeded;
+        these results do not estimate error rates on repairs in general.
       </p>
       {entries.length === 0 ? (
         <div className="notice">No result sets have been published yet. They appear here when the evaluation writes results under results/.</div>
@@ -135,7 +136,7 @@ function E2Section({ name, d }: { name: string; d: E2Data }) {
   return (
     <section>
       <h2>E2 integrity: {name}</h2>
-      {d.generated ? <p className="muted">Generated {d.generated}. {d.rows.length} candidate artifacts.</p> : null}
+      {d.generated ? <p className="muted">Generated {d.generated}. {d.rows.length} case evaluations; task variants may reuse source artifacts.</p> : null}
       <table>
         <thead>
           <tr>
@@ -147,7 +148,7 @@ function E2Section({ name, d }: { name: string; d: E2Data }) {
         <tbody>
           {agg.arms.map((a) => (
             <tr key={a.arm}>
-              <td>{a.arm === "proofforge" ? "ProofForge" : "Ordinary checking"}</td>
+              <td>{e2ArmLabels[a.arm]}</td>
               <td className="num">{rate(a.falseAccept)}</td>
               <td className="num">{rate(a.falseReject)}</td>
             </tr>
@@ -161,6 +162,8 @@ function E2Section({ name, d }: { name: string; d: E2Data }) {
             <th>Family</th>
             <th className="num">Ordinary false acceptances</th>
             <th className="num">Ordinary false rejections</th>
+            <th className="num">Rebuild/tests false acceptances</th>
+            <th className="num">Rebuild/tests false rejections</th>
             <th className="num">ProofForge false acceptances</th>
             <th className="num">ProofForge false rejections</th>
           </tr>
@@ -171,6 +174,8 @@ function E2Section({ name, d }: { name: string; d: E2Data }) {
               <td>{f.family}</td>
               <td className="num">{rate(f.arms.ordinary.falseAccept)}</td>
               <td className="num">{rate(f.arms.ordinary.falseReject)}</td>
+              <td className="num">{rate(f.arms.binary.falseAccept)}</td>
+              <td className="num">{rate(f.arms.binary.falseReject)}</td>
               <td className="num">{rate(f.arms.proofforge.falseAccept)}</td>
               <td className="num">{rate(f.arms.proofforge.falseReject)}</td>
             </tr>
@@ -186,6 +191,7 @@ function E2Section({ name, d }: { name: string; d: E2Data }) {
               <th>Case</th>
               <th>Label</th>
               <th>Ordinary</th>
+              <th>Rebuild and tests</th>
               <th>ProofForge</th>
               <th>ProofForge reason</th>
             </tr>
@@ -205,6 +211,7 @@ function E2Section({ name, d }: { name: string; d: E2Data }) {
                     {r.ordinary.accepted ? "accept" : "reject"}
                   </Status>
                 </td>
+                <td>{r.proofforge.binary === undefined ? "not recorded" : r.proofforge.binary === "PASS" ? "accept" : "reject"}</td>
                 <td>
                   <Status value={r.proofforge.accepted === (r.label === "good") ? "PASS" : "REFUTED"}>
                     {r.proofforge.accepted ? "accept" : "reject"}

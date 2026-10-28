@@ -40,9 +40,16 @@ export interface Rate {
 }
 
 export interface E2Aggregate {
-  arms: { arm: "ordinary" | "proofforge"; falseAccept: Rate; falseReject: Rate }[];
-  families: { family: string; arms: Record<"ordinary" | "proofforge", { falseAccept: Rate; falseReject: Rate }> }[];
+  arms: { arm: E2Arm; falseAccept: Rate; falseReject: Rate }[];
+  families: { family: string; arms: Record<E2Arm, { falseAccept: Rate; falseReject: Rate }> }[];
 }
+
+export type E2Arm = "ordinary" | "binary" | "proofforge";
+export const e2ArmLabels: Record<E2Arm, string> = {
+  ordinary: "Ordinary checking",
+  binary: "Rebuild and property tests only",
+  proofforge: "ProofForge",
+};
 
 export function isE2(v: unknown): v is E2Data {
   return !!v && typeof v === "object" && Array.isArray((v as E2Data).rows);
@@ -52,21 +59,24 @@ export function isE1(v: unknown): v is E1Summary {
   return !!v && typeof v === "object" && (typeof (v as E1Summary).arms === "object" || typeof (v as E1Summary).pairs === "object");
 }
 
-function rates(rows: E2Row[], arm: "ordinary" | "proofforge") {
+function rates(rows: E2Row[], arm: E2Arm) {
+  // Older records without a binary result are not evidence of rejection.
+  if (arm === "binary") rows = rows.filter((r) => r.proofforge.binary !== undefined);
   const bad = rows.filter((r) => r.label === "bad");
   const good = rows.filter((r) => r.label === "good");
+  const accepted = (r: E2Row) => arm === "binary" ? r.proofforge.binary === "PASS" : r[arm].accepted;
   return {
-    falseAccept: { count: bad.filter((r) => r[arm]?.accepted).length, of: bad.length },
-    falseReject: { count: good.filter((r) => !r[arm]?.accepted).length, of: good.length },
+    falseAccept: { count: bad.filter(accepted).length, of: bad.length },
+    falseReject: { count: good.filter((r) => !accepted(r)).length, of: good.length },
   };
 }
 
 export function aggregateE2(data: E2Data): E2Aggregate {
-  const arms = (["ordinary", "proofforge"] as const).map((arm) => ({ arm, ...rates(data.rows, arm) }));
+  const arms = (["ordinary", "binary", "proofforge"] as const).map((arm) => ({ arm, ...rates(data.rows, arm) }));
   const fams = [...new Set(data.rows.map((r) => r.family))].sort();
   const families = fams.map((family) => {
     const rows = data.rows.filter((r) => r.family === family);
-    return { family, arms: { ordinary: rates(rows, "ordinary"), proofforge: rates(rows, "proofforge") } };
+    return { family, arms: { ordinary: rates(rows, "ordinary"), binary: rates(rows, "binary"), proofforge: rates(rows, "proofforge") } };
   });
   return { arms, families };
 }

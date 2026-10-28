@@ -31,7 +31,7 @@ pnpm start
 | Variable | Default | Purpose |
 |---|---|---|
 | `NEXT_PUBLIC_API_BASE` | `http://localhost:8765` | ProofForge API base URL |
-| `NEXT_PUBLIC_DEFAULT_RECORDING` | `flagship-a2-20261027` | Recording preselected on the forge session page |
+| `NEXT_PUBLIC_DEFAULT_RECORDING` | `flagship-a2-run7` | Accepted recording preselected on the forge session page |
 
 ## Pages
 
