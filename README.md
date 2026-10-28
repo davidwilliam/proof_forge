@@ -42,7 +42,17 @@ E1 compares three arms under the same per-task budget (dollars at standard-tier 
 - A1: Muse Spark 1.3 with the ProofForge harness (behavior-first phase, per-obligation dialogs, snippet checks, binary tests)
 - A2: A1 plus Muse Wonder as lemma planner
 
-Development results (`results/e1-dev-2`, 23 tasks, $3 and 45 minutes per run): A0 completed 19, A1 20, A2 21; the differences are not significant. Every arm completed every rate-limiter and transfer task. Test-set results will be reported here as measured, including a null result.
+Development results (`results/e1-dev-2`, 23 tasks, $3 and 45 minutes per run): A0 completed 19, A1 20, A2 21; the differences are not significant. Every arm completed every rate-limiter and transfer task.
+
+Test results (`results/e1-test-1`, the 30 frozen test tasks, $3 and 60 minutes per run, Muse Spark 1.3 on the Contributor tier):
+
+| Arm | Completed | List $ per completed repair |
+|---|---|---|
+| A0 | 28 of 30 | 0.87 |
+| A1 | 30 of 30 | 0.61 |
+| A2 | 30 of 30 | 0.92 |
+
+The test tasks do not separate the arms. A1 and A2 each complete two tasks that A0 does not and none that A0 completes alone (McNemar exact p = 0.50); A1 and A2 complete the same tasks. Both A0 failures are ledger-reversal tasks on which compile-and-retry reached the dollar cap with a final candidate that does not build. Under these budgets Muse Spark completes almost every test task with or without the harness, and the Wonder planner adds cost without a measured completion gain. The 90 runs cost $70.09 at list prices; the amount charged on the Contributor tier was $6.38.
 
 The final test run requires `results/test-freeze.json`. Before making model calls, the
 runner checks each selected test task and its validation receipt against that approved
