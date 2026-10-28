@@ -1,5 +1,5 @@
 """Passport serialization and tampering regressions; no model or Docker calls."""
-import copy, hashlib, json, pathlib, runpy, sys, tempfile, types
+import copy, hashlib, json, pathlib, runpy, shutil, sys, tempfile, types
 from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -39,6 +39,18 @@ def test_changed_passport_is_refused_before_rechecking():
         with patch.object(passport, "run") as judge:
             assert cli["cmd_verify"](types.SimpleNamespace(passport=str(dest), candidate="unused")) == 1
             judge.assert_not_called()
+
+
+def test_missing_comparator_config_is_a_rejection_not_a_crash():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "formal"
+        shutil.copytree(ROOT / "formal", root, ignore=shutil.ignore_patterns(".lake", "__pycache__"))
+        (root / "spec/comparator.json").unlink()
+        task = passport.taskmod.load(str(root))
+        locked = json.loads((root / "spec/locked.json").read_text())
+        tree = passport.judge.tree_check(pathlib.Path(tmp) / "empty", locked, task)
+        assert not tree["passed"] and "repository protected file missing: spec/comparator.json" in tree["problems"]
+        assert passport.permitted_axioms(task) == []
 
 
 if __name__ == "__main__":

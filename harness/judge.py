@@ -125,7 +125,9 @@ def tree_check(ws: pathlib.Path, locked: dict, task) -> dict:
     if sorted(locked["files"]) != sorted(task.protected()):
         problems.append("spec/locked.json does not cover exactly the protected files")
     for rel in locked["files"]:
-        if sha256_bytes((task.root / rel).read_bytes()) != locked["files"][rel]:
+        if not (task.root / rel).is_file():
+            problems.append(f"repository protected file missing: {rel}")
+        elif sha256_bytes((task.root / rel).read_bytes()) != locked["files"][rel]:
             problems.append(f"repository protected file differs from lock: {rel}")
     return {"passed": not problems, "problems": problems}
 

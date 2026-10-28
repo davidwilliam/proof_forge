@@ -114,7 +114,7 @@ def build(task, candidate, j, b, provenance=None):
                                "seed": b.get("seed"), "violations": b.get("violations"),
                                "build": check_record(b.get("build"))},
         },
-        "permitted_axioms": sorted(json.loads((task.root / "spec/comparator.json").read_text())["permitted_axioms"]),
+        "permitted_axioms": permitted_axioms(task),
         "trust_assumptions": TRUST,
         "scope": (f"Properties are proved about the pure definitions {', '.join(task.definitions)} in namespace "
                   f"{task.ns} for all inputs; the executable {task.exe} is built from the same source and "
@@ -148,6 +148,15 @@ def markdown(p):
     if not p["proof_check"]["accepted"]:
         lines += ["", "Proof check rejected:"] + [f"- {x}" for x in p["proof_check"]["reasons"]]
     return "\n".join(lines) + "\n"
+
+
+def permitted_axioms(task):
+    """The configured axioms; empty when the configuration is missing or unreadable, which the
+    tree check has already rejected."""
+    try:
+        return sorted(json.loads((task.root / "spec/comparator.json").read_text())["permitted_axioms"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
 
 
 def run(candidate, task, cases=2000, seed=0, provenance=None):
