@@ -7,7 +7,10 @@ binary-check results, and Passports built by harness/passport.py.
 Run: .venv/bin/uvicorn server.app:app --port 8000
 Environment (admission, quotas and spending are documented in server/controls.py):
   PF_MODE=live|replay     replay refuses live model jobs; the admin endpoint overrides it
-  PF_JOB_BUDGET_USD=3     per live job cap at standard-tier list prices
+  PF_LIVE_MODEL=muse-spark-1.3-contributor   prover for live jobs (synthetic tasks only)
+  PF_JOB_BUDGET_USD=3     per live job cap at standard-tier list prices, for every tier; it is
+                          reserved against the daily limit until the job settles at the
+                          prices actually charged
   PF_JOB_BUDGET_WALL=2700 per live job wall clock; the process is killed 300 s after it
   PF_VERIFY_DEADLINE_S=240, PF_CHALLENGE_DEADLINE_S=45, PF_PAYOUT_DEADLINE_S=20
                           request-wide limits on Lean and binary runs; a check stopped by
@@ -179,7 +182,7 @@ def run_live(d, t, arm):
     wall = seconds("PF_JOB_BUDGET_WALL", 2700)
     cmd = [sys.executable, str(ROOT / "agents/repair.py"), "--task", str(t.root), "--out", str(d),
            "--planner", "none" if arm == "A1" else "muse-wonder-1.0",
-           "--model", os.environ.get("PF_LIVE_MODEL", "muse-spark-1.3"),
+           "--model", os.environ.get("PF_LIVE_MODEL", "muse-spark-1.3-contributor"),
            "--budget-usd", os.environ.get("PF_JOB_BUDGET_USD", "3"), "--budget-wall", str(wall)]
     with (d / "agent.log").open("w") as log:
         proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, cwd=ROOT, start_new_session=True)
@@ -191,7 +194,7 @@ def run_live(d, t, arm):
         finally:
             LIVE.pop(d.name, None)
     summary = d / "summary.json"
-    CTRL.store.settle(d.name, json.loads(summary.read_text()).get("budget", {}).get("usd_list")
+    CTRL.store.settle(d.name, json.loads(summary.read_text()).get("budget", {}).get("usd_actual")
                       if summary.exists() else None)
     if json.loads((d / "job.json").read_text()).get("stopped"):
         emit(d, kind="job", state="FAILED", reason="stopped by the operator")

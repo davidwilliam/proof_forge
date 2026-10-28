@@ -173,6 +173,30 @@ def test_daily_cap_refuses_live_jobs():
         raises(503, api.create_job, live_request(), request(ip="192.0.2.2"))
 
 
+def test_live_job_runs_the_contributor_tier_and_settles_actual_spend():
+    store = fresh_store()
+    seen = {}
+
+    class Agent:
+        def __init__(self, cmd, **kw):
+            seen["cmd"] = cmd
+            out = pathlib.Path(cmd[cmd.index("--out") + 1])
+            (out / "summary.json").write_text(json.dumps({"budget": {"usd_list": 2.7, "usd_actual": 0.4}}))
+
+        def wait(self, timeout=None):
+            return 0
+    with patch.object(api, "CTRL", controls.Controls(store)), patch.object(api.subprocess, "Popen", Agent), \
+            patch.object(api, "verify_job", lambda d, t, label: None):
+        d = api.JOBS / "settle000001"
+        d.mkdir(parents=True, exist_ok=True)
+        api.write_json(d / "job.json", {"id": d.name, "state": "CREATED"})
+        assert store.reserve(d.name, 6.0, 30.0)
+        api.run_live(d, taskmod.load(), "A2")
+    cmd = seen["cmd"]
+    assert cmd[cmd.index("--model") + 1] == "muse-spark-1.3-contributor"
+    assert abs(store.spent_today() - 0.4) < 1e-9
+
+
 def test_operator_stop_kills_the_agent_and_fails_the_job():
     store = fresh_store()
     proc = api.subprocess.Popen(["sleep", "30"], start_new_session=True)

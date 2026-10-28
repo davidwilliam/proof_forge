@@ -12,7 +12,9 @@ Environment (defaults in parentheses):
   PF_QUOTA_<KIND>         per-client daily quota for live, replay, verify, challenge, payout
                           (2, 30, 20, 40, 300); judge quotas are PF_JUDGE_QUOTA_<KIND>
                           (30, 300, 200, 400, 3000)
-  PF_DAILY_LIVE_USD       live spending per UTC day at list prices, all clients (30)
+  PF_DAILY_LIVE_USD       live spending per UTC day at the prices actually charged, all
+                          clients (30); a running job holds its full cap at standard list
+                          prices, an upper bound on its actual cost
   PF_MAX_JOBS             concurrent jobs of any mode (6)
   PF_MAX_LIVE             concurrent live jobs (1)
   PF_CHECK_SLOTS          concurrent fresh checks: verify requests and job final checks (2)
