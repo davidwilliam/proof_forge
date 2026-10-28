@@ -214,6 +214,48 @@ def test_job_thread_error_still_ends_the_stream():
         assert api.CTRL.jobs.active == 0
 
 
+def test_job_records_are_never_read_half_written():
+    """Reliability run 1, session 10: job creation read job.json while the job thread
+    rewrote it, and returned HTTP 500."""
+    d = api.JOBS / "atomic000001"
+    d.mkdir(parents=True, exist_ok=True)
+    api.write_json(d / "job.json", {"id": d.name, "state": "CREATED", "pad": "x" * 50_000})
+    stop, errors = threading.Event(), []
+
+    def writer():
+        i = 0
+        while not stop.is_set():
+            api.set_job(d, state=f"S{i}")
+            i += 1
+    th = threading.Thread(target=writer)
+    th.start()
+    try:
+        for _ in range(3000):
+            try:
+                json.loads((d / "job.json").read_text())
+            except ValueError as e:
+                errors.append(e)
+    finally:
+        stop.set()
+        th.join()
+    assert not errors, f"{len(errors)} partial reads"
+    assert not list(d.glob(".*.tmp"))
+
+
+def test_concurrent_job_updates_are_not_lost():
+    d = api.JOBS / "atomic000002"
+    d.mkdir(parents=True, exist_ok=True)
+    api.write_json(d / "job.json", {"id": d.name})
+    threads = [threading.Thread(target=lambda k=k: [api.set_job(d, **{f"k{k}": n}) for n in range(200)])
+               for k in range(4)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    j = json.loads((d / "job.json").read_text())
+    assert all(j[f"k{k}"] == 199 for k in range(4)), j
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
