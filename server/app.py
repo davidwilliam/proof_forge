@@ -109,10 +109,22 @@ def emit(d, **kw):
         f.write(json.dumps(kw) + "\n")
 
 
+_job_lock = threading.Lock()
+
+
+def write_json(path, obj):
+    """Replace `path` atomically, so a concurrent reader sees the old or the new content,
+    never a truncated file."""
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    tmp.write_text(json.dumps(obj, indent=2))
+    os.replace(tmp, path)
+
+
 def set_job(d, **kw):
-    j = json.loads((d / "job.json").read_text())
-    j.update(kw)
-    (d / "job.json").write_text(json.dumps(j, indent=2))
+    with _job_lock:
+        j = json.loads((d / "job.json").read_text())
+        j.update(kw)
+        write_json(d / "job.json", j)
     return j
 
 
@@ -139,7 +151,7 @@ def verify_job(d, t, label):
         p = passport.run(final, t, cases=2000, seed=0, provenance=prov)
     finally:
         CTRL.checks.release()
-    (PASSPORTS / f"{p['passport_sha256']}.json").write_text(json.dumps(p, indent=2))
+    write_json(PASSPORTS / f"{p['passport_sha256']}.json", p)
     state = "COMPLETE" if p["status"] == "VERIFIED" else "PARTIAL"
     if prov and prov.get("budget", {}).get("stop") and state != "COMPLETE":
         state = "BUDGET_STOP"
@@ -250,9 +262,9 @@ def start_job(t, body: ForgeRequest, request: Request):
         raise
     d = JOBS / job_id
     d.mkdir()
-    (d / "job.json").write_text(json.dumps({"id": job_id, "task": t.id, "mode": body.mode, "arm": body.arm,
-                                            "recording": body.recording, "state": "CREATED",
-                                            "created": time.time()}, indent=2))
+    job = {"id": job_id, "task": t.id, "mode": body.mode, "arm": body.arm,
+           "recording": body.recording, "state": "CREATED", "created": time.time()}
+    write_json(d / "job.json", job)
     emit(d, kind="job", state="CREATED")
     work = (lambda: run_live(d, t, body.arm)) if body.mode == "live" else \
         (lambda: run_replay(d, t, RECORDINGS / body.recording, body.speed))
@@ -268,7 +280,7 @@ def start_job(t, body: ForgeRequest, request: Request):
                 g.release()
 
     threading.Thread(target=target, daemon=True).start()
-    return json.loads((d / "job.json").read_text())
+    return job
 
 
 @app.get("/api/jobs/{job_id}")
@@ -364,7 +376,7 @@ def verify(body: VerifyRequest, request: Request):
             f = pathlib.Path(tmp) / "Solution.lean"
             f.write_text(body.source)
             p = passport.run(f, t, cases=1000, seed=0)
-    (PASSPORTS / f"{p['passport_sha256']}.json").write_text(json.dumps(p, indent=2))
+    write_json(PASSPORTS / f"{p['passport_sha256']}.json", p)
     return p
 
 
