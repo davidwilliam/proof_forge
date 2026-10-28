@@ -48,6 +48,12 @@ def check_record(r):
     return {k: r[k] for k in ("command", "exit_code", "elapsed_ms", "stdout_sha256", "stderr_sha256") if k in r}
 
 
+def content_hash(p):
+    """Digest all Passport content, excluding the digest field itself."""
+    body = {k: v for k, v in p.items() if k != "passport_sha256"}
+    return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+
+
 def build(task, candidate, j, b, provenance=None):
     locked = task.locked()
     files = [pathlib.Path(p) for p in [candidate]] if pathlib.Path(candidate).is_file() else \
@@ -114,8 +120,7 @@ def build(task, candidate, j, b, provenance=None):
         "reproduce": f"python3 harness/passport.py {candidate} --task {task.id}",
         "timings_ms": {"judge": j["elapsed_ms"], "binary": b.get("elapsed_ms")},
     }
-    body = json.dumps(p, sort_keys=True).encode()
-    p["passport_sha256"] = hashlib.sha256(body).hexdigest()
+    p["passport_sha256"] = content_hash(p)
     return p
 
 
