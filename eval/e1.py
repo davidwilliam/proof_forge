@@ -41,7 +41,10 @@ def git(*args):
 
 
 def frozen_config(a, tasks, arms):
-    """Everything that determines a run's outcome; its hash keys every stored result."""
+    """Hashes of everything that determines a run's outcome: the agent, harness and runner
+    source files (prompts included), every task's locked files, oracle, metadata and start
+    candidate, the models, budgets, evaluator settings and judge image. Its hash keys every
+    stored result. The git commit at the start is recorded in config.json but not hashed."""
     code = {str(p.relative_to(ROOT)): taskmod.sha256(p) for g in CODE_GLOBS for p in sorted(ROOT.glob(g))}
     task_hashes = {t.id: {"manifest_sha256": t.locked()["manifest_sha256"],
                           "task_json": taskmod.sha256(t.root / "task.json"),
@@ -57,59 +60,89 @@ def frozen_config(a, tasks, arms):
 
 
 class BatchCap:
-    """Admit a run only if spent + (running + 1) * per-run cap stays within the batch cap,
-    so the batch total never exceeds it."""
+    """Batch spending ledger at list prices. It is rebuilt from every stored run before
+    anything is scheduled: a run with a summary counts its recorded spend, and a run that
+    started but left no summary counts the full per-run cap. A task is admitted only if
+    spent + reserved + (arms it still needs) * per-run cap stays within the cap, so the
+    batch total cannot exceed it, and an admitted task runs all of its arms."""
     def __init__(self, cap, per_run):
-        self.cap, self.per_run, self.spent, self.running = cap, per_run, 0.0, 0
+        self.cap, self.per_run, self.spent, self.reserved = cap, per_run, 0.0, 0.0
         self.lock = threading.Lock()
 
-    def admit(self):
-        with self.lock:
-            if self.cap is not None and self.spent + (self.running + 1) * self.per_run > self.cap:
-                return False
-            self.running += 1
-            return True
+    def rebuild(self, out, tasks, arms):
+        for t in tasks:
+            for arm in arms:
+                d = out / t.id / arm
+                for run in [d] + sorted(d.parent.glob(f"{arm}.interrupted-*")):
+                    if (run / "summary.json").exists():
+                        self.spent += json.loads((run / "summary.json").read_text())["budget"]["usd_list"]
+                    elif run.exists() and any(run.iterdir()):
+                        self.spent += self.per_run   # interrupted run: usage unknown, counted at its cap
 
-    def add(self, usd):
-        """Count a run completed earlier (resume)."""
+    def admit(self, n_runs):
         with self.lock:
-            self.spent += usd or 0.0
+            need = n_runs * self.per_run
+            if self.cap is not None and self.spent + self.reserved + need > self.cap:
+                return False
+            self.reserved += need
+            return True
 
     def done(self, usd):
         with self.lock:
-            self.running -= 1
-            self.spent += usd or 0.0
+            self.reserved -= self.per_run
+            self.spent += usd
 
 
-def run_one(t, arm, a, out, cfg, cap):
-    d = out / t.id / arm
-    if (d / "eval.json").exists():
-        ev = json.loads((d / "eval.json").read_text())
-        if ev.get("config_sha256") != cfg["config_sha256"]:
+def set_aside_interrupted(d):
+    """A run that started but left no summary is kept as <arm>.interrupted-N (its spend is
+    already in the ledger at the per-run cap) and the arm is run again."""
+    if d.exists() and not (d / "summary.json").exists() and any(d.iterdir()):
+        k = 1
+        while d.with_name(f"{d.name}.interrupted-{k}").exists():
+            k += 1
+        d.rename(d.with_name(f"{d.name}.interrupted-{k}"))
+
+
+def run_task(t, arms, a, out, cfg, cap):
+    """All arms of one task, in a fixed per-task random order; None if not admitted."""
+    dirs = {arm: out / t.id / arm for arm in arms}
+    for d in dirs.values():
+        if (d / "eval.json").exists() and json.loads((d / "eval.json").read_text()).get("config_sha256") != cfg["config_sha256"]:
             raise SystemExit(f"{d}: stored result has a different configuration; use a new label")
-        cap.add(ev.get("usd_list"))
-        return ev
-    d.mkdir(parents=True, exist_ok=True)
-    if not (d / "summary.json").exists():
-        if not cap.admit():
-            print(f"[{t.id} {arm}] skipped: batch cap reached", flush=True)
-            return None
-        cmd = ARMS[arm] + ["--task", task_ref(t), "--model", a.model, "--out", str(d),
-                           "--budget-usd", str(a.budget_usd), "--budget-wall", str(a.budget_wall)]
-        with (d / "agent.log").open("w") as log:
-            try:
-                subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, cwd=ROOT,
-                               timeout=a.budget_wall + 1800)
-            except subprocess.TimeoutExpired:
-                log.write("\nrunner: agent process exceeded the wall cap plus grace and was stopped\n")
-        s = json.loads((d / "summary.json").read_text()) if (d / "summary.json").exists() else {}
-        cap.done(s.get("budget", {}).get("usd_list", a.budget_usd))
-    ev = evaluate(t, d)
-    ev["config_sha256"] = cfg["config_sha256"]
-    (d / "eval.json").write_text(json.dumps(ev, indent=2) + "\n")
-    print(f"[{t.id} {arm}] completed={ev['completed']} judge={ev['judge']} binary={ev['binary']} "
-          f"usd_list={ev['usd_list']} stop={ev['stop']}", flush=True)
-    return ev
+    for d in dirs.values():
+        set_aside_interrupted(d)
+    todo = [arm for arm in arms if not (dirs[arm] / "summary.json").exists()]
+    if todo and not cap.admit(len(todo)):
+        print(f"[{t.id}] not run: the batch cap leaves no room for {len(todo)} more runs", flush=True)
+        return {"task": t.id, "not_run": todo}
+    order = list(arms)
+    random.Random(t.id).shuffle(order)
+    results = []
+    for arm in order:
+        d = dirs[arm]
+        if arm in todo:
+            d.mkdir(parents=True, exist_ok=True)
+            cmd = ARMS[arm] + ["--task", task_ref(t), "--model", a.model, "--out", str(d),
+                               "--budget-usd", str(a.budget_usd), "--budget-wall", str(a.budget_wall)]
+            with (d / "agent.log").open("w") as log:
+                try:
+                    subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, cwd=ROOT,
+                                   timeout=a.budget_wall + 1800)
+                except subprocess.TimeoutExpired:
+                    log.write("\nrunner: agent process exceeded the wall cap plus grace and was stopped\n")
+            s = json.loads((d / "summary.json").read_text()) if (d / "summary.json").exists() else {}
+            cap.done(s.get("budget", {}).get("usd_list", a.budget_usd))
+        if (d / "eval.json").exists():
+            results.append(json.loads((d / "eval.json").read_text()))
+            continue
+        ev = evaluate(t, d)
+        ev["config_sha256"] = cfg["config_sha256"]
+        ev["arm_order"] = order
+        (d / "eval.json").write_text(json.dumps(ev, indent=2) + "\n")
+        print(f"[{t.id} {arm}] completed={ev['completed']} judge={ev['judge']} binary={ev['binary']} "
+              f"usd_list={ev['usd_list']} stop={ev['stop']}", flush=True)
+        results.append(ev)
+    return {"task": t.id, "results": results}
 
 
 def evaluate(t, d):
@@ -214,6 +247,17 @@ def report(out, results, arms):
             cells.append("-" if not r else ("completed" if r["completed"] else
                          f"{r['judge'].lower()}/{r['binary'].lower()}") + (f" ({r['stop']} stop)" if r and r["stop"] else ""))
         lines.append(f"| {t} | " + " | ".join(cells) + " |")
+    cov = out / "coverage.json"
+    if cov.exists():
+        c = json.loads(cov.read_text())
+        lines += ["", "## Coverage", "", f"Batch spend at list prices: ${c['batch_spent_usd_list']:.2f}."]
+        if c["not_run"]:
+            lines.append("Not run because the batch cap left no room: " + ", ".join(
+                f"{t} ({', '.join(a)})" for t, a in sorted(c["not_run"].items())) + ".")
+        else:
+            lines.append("Every task ran all arms.")
+        lines.append("Interrupted runs set aside and re-run: "
+                     + str(len(list(out.glob("*/*.interrupted-*")))) + ".")
     (out / "e1.md").write_text("\n".join(lines) + "\n")
     (out / "e1.json").write_text(json.dumps({"summary": summary, "results": results}, indent=2) + "\n")
     print("\n".join(lines[:12]))
@@ -253,10 +297,14 @@ def main():
                        started=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
             cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
         cap = BatchCap(a.batch_usd, a.budget_usd)
-        # Interleave arms so a partial run still yields paired tasks.
-        jobs = [(t, arm) for t in tasks for arm in arms]
+        cap.rebuild(out, tasks, arms)
+        print(f"batch ledger before scheduling: ${cap.spent:.2f} at list prices", flush=True)
         with ThreadPoolExecutor(a.parallel) as ex:
-            results = [r for r in ex.map(lambda j: run_one(j[0], j[1], a, out, cfg, cap), jobs) if r]
+            outcomes = list(ex.map(lambda t: run_task(t, arms, a, out, cfg, cap), tasks))
+        results = [r for o in outcomes for r in o.get("results", [])]
+        not_run = {o["task"]: o["not_run"] for o in outcomes if o.get("not_run")}
+        (out / "coverage.json").write_text(json.dumps({"not_run": not_run, "batch_spent_usd_list": round(cap.spent, 4)},
+                                                     indent=2) + "\n")
     else:
         results = [json.loads(p.read_text()) for p in sorted(out.glob("*/*/eval.json"))]
     report(out, results, arms)
