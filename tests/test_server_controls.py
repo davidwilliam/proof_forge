@@ -256,6 +256,22 @@ def test_concurrent_job_updates_are_not_lost():
     assert all(j[f"k{k}"] == 199 for k in range(4)), j
 
 
+def test_unhandled_errors_are_recorded_on_the_data_volume():
+    import asyncio
+
+    async def boom(req):
+        raise RuntimeError("synthetic failure")
+    req = Request({"type": "http", "method": "POST", "path": "/api/jobs", "headers": [], "query_string": b"",
+                   "server": ("test", 80), "scheme": "http", "client": ("192.0.2.1", 1)})
+    try:
+        asyncio.run(api.record_errors(req, boom))
+        raise AssertionError("the error was swallowed")
+    except RuntimeError:
+        pass
+    log = (api.DATA / "errors.log").read_text()
+    assert "POST /api/jobs" in log and "synthetic failure" in log
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
