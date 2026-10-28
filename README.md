@@ -68,7 +68,8 @@ checks the accepted repair separately; [PR #3](https://github.com/davidwilliam/p
 rejects a protected-specification-only edit. Accepted Passports were reproduced by a second
 fresh check. [Recorded outcomes and artifacts](reports/pr-integration/summary.json) include
 the exact trusted checker revisions and valid Passport content hashes. These are automated
-integration checks; an independent human developer trial remains to be completed.
+integration checks; an independent human developer trial remains to be completed, following
+[the trial protocol](docs/TRIAL.md).
 
 ## Trust assumptions and limits
 
