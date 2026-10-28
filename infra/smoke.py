@@ -36,12 +36,18 @@ class Client:
                 return r.status, json.loads(r.read()), time.monotonic() - t0
         except urllib.error.HTTPError as e:
             return e.code, {"detail": e.read().decode(errors="replace")[:500]}, time.monotonic() - t0
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:   # recorded as status 0
+            return 0, {"detail": f"connection error: {e}"}, time.monotonic() - t0
 
     def events(self, job, timeout=900):
         """Read a job's event stream until a terminal job event."""
         req = urllib.request.Request(f"{self.base}/api/jobs/{job}/events")
         out, end = [], time.monotonic() + timeout
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        try:
+            r = urllib.request.urlopen(req, timeout=timeout)
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            return [{"kind": "client", "error": f"connection error: {e}"}]
+        with r:
             for raw in r:
                 line = raw.decode().strip()
                 if line.startswith("data: "):
