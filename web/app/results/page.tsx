@@ -16,6 +16,13 @@ const SUPERSEDED: Record<string, string> = {
   "e2-dev-flagship": "Flagship task only, before the complete-proof attacks were added. Replaced by e2-all-1.",
 };
 
+// What each current E1 set measures; the test set is listed first.
+const E1_SETS: Record<string, string> = {
+  "e1-test-1": "The 30 frozen test tasks (ledgers, permissions, queues), never used in development. $3 at list prices and 60 minutes per run.",
+  "e1-dev-2": "The 23 development tasks, used to set the test-run caps. $3 at list prices and 45 minutes per run.",
+};
+const isTest = (key: string) => key.includes("-test-");
+
 export default async function ResultsPage() {
   let data: Record<string, unknown>;
   try {
@@ -29,7 +36,9 @@ export default async function ResultsPage() {
     );
   }
   const entries = Object.entries(data ?? {});
-  const e1 = entries.filter(([k, v]) => k.startsWith("e1") && isE1(v)) as [string, E1Summary][];
+  const e1 = (entries.filter(([k, v]) => k.startsWith("e1") && isE1(v)) as [string, E1Summary][]).sort(
+    ([a], [b]) => Number(isTest(b)) - Number(isTest(a)),
+  );
   const e2 = entries.filter(([k, v]) => k.startsWith("e2") && isE2(v)) as [string, E2Data][];
   const other = entries.filter(([k]) => !e1.some(([x]) => x === k) && !e2.some(([x]) => x === k));
   const earlier: [string, ReactNode][] = [
@@ -89,7 +98,7 @@ function E1Section({ name, s }: { name: string; s: E1Summary }) {
   return (
     <section>
       <h2>E1 repair completion: {name}</h2>
-      {s.tasks ? <p className="muted">{s.tasks.length} tasks.</p> : null}
+      {E1_SETS[name] ? <p className="muted">{E1_SETS[name]}</p> : s.tasks ? <p className="muted">{s.tasks.length} tasks.</p> : null}
       {arms.length ? (
         <div className="table-scroll">
           <table>
