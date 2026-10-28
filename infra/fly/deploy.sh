@@ -14,4 +14,4 @@ LEAN="registry.fly.io/$APP:lean-4.35.0"
 fly deploy "$STAGE/infra/docker" -a "$APP" -c "$STAGE/infra/fly/fly.toml" \
   --dockerfile "$STAGE/infra/docker/Dockerfile.lean" --build-only --push --image-label lean-4.35.0
 fly deploy "$STAGE" -a "$APP" -c "$STAGE/infra/fly/fly.toml" \
-  --build-arg LEAN_IMAGE="$LEAN" --image-label "api-$(git -C "$ROOT" rev-parse --short HEAD)"
+  --dockerfile "$STAGE/infra/docker/Dockerfile.api" --build-arg LEAN_IMAGE="$LEAN" --image-label "api-$(git -C "$ROOT" rev-parse --short HEAD)"
