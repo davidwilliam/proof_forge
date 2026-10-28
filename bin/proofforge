@@ -24,7 +24,7 @@ def cmd_check(a):
     t = taskmod.load(a.task)
     cand = pathlib.Path(a.candidate) if a.candidate else t.start
     p = passport.run(cand, t, cases=a.cases, seed=a.seed)
-    p["reproduce"] = f"proofforge verify passport.json --candidate {a.candidate or cand}"
+    p["reproduce"] = f"bin/proofforge verify passport.json --candidate {a.candidate or cand}"
     p["passport_sha256"] = passport.content_hash(p)
     if a.out:
         pathlib.Path(a.out).write_text(json.dumps(p, indent=2) + "\n")
@@ -44,10 +44,15 @@ def cmd_verify(a):
     cand = pathlib.Path(a.candidate)
     new = passport.run(cand, t, cases=old["checks"]["property_tests"]["cases"] - (1 if hasattr(t.oracle, "FLAGSHIP") else 0),
                        seed=old["checks"]["property_tests"].get("seed") or 0)
+    # An executable's hash depends on the CPU architecture it was built for; compare it only
+    # when this machine builds for the Passport's platform. Its test result is always compared.
+    old_platform, new_platform = old["executable"].get("platform"), new["executable"].get("platform")
+    same_platform = old_platform in (None, new_platform)
     checks = [
         ("locked manifest", old["locked"]["manifest_sha256"], new["locked"]["manifest_sha256"]),
         ("solution tree", old["solution"]["solution_tree_sha256"], new["solution"]["solution_tree_sha256"]),
-        ("executable", old["executable"]["sha256"], new["executable"]["sha256"]),
+    ] + ([("executable", old["executable"]["sha256"], new["executable"]["sha256"])] if same_platform else []) + [
+        ("executable tests", old["executable"]["status"], new["executable"]["status"]),
         ("component status", old["status"], new["status"]),
     ] + [(f"{r['id']} status", r["status"], n["status"]) for r, n in zip(old["requirements"], new["requirements"])] \
       + [(f"{r['id']} statement", r["statement_sha256"], n["statement_sha256"]) for r, n in zip(old["requirements"], new["requirements"])]
@@ -56,7 +61,16 @@ def cmd_verify(a):
         ok = x == y
         bad += not ok
         print(f"{'same' if ok else 'DIFFERENT':<9}  {name}: {str(x)[:20]}" + ("" if ok else f" vs {str(y)[:20]}"))
-    print("reproduced" if not bad else f"NOT reproduced: {bad} differences")
+    if not same_platform:
+        print(f"not compared  executable: the Passport's was built for {old_platform}, this machine builds "
+              f"for {new_platform}; it was rebuilt from the same source and re-tested here")
+    elif old_platform is None and old["executable"]["sha256"] != new["executable"]["sha256"]:
+        print(f"note  the Passport does not record its build platform; this machine builds for {new_platform}, "
+              "and an executable built for another CPU architecture has a different hash")
+    if bad:
+        print(f"NOT reproduced: {bad} differences")
+    else:
+        print("reproduced" if same_platform else f"reproduced, except the executable hash ({old_platform} vs {new_platform})")
     return 0 if not bad else 1
 
 

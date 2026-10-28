@@ -212,6 +212,20 @@ def image_id():
     return r.stdout.strip() or "unknown"
 
 
+ARCH = {"x86_64": "amd64", "aarch64": "arm64"}
+
+
+def image_platform():
+    """OS and CPU architecture the judge builds for. Executables built from the same source
+    on different architectures have different hashes, so Passports compare them only within one."""
+    if IN_IMAGE:
+        m = os.uname().machine
+        return f"linux/{ARCH.get(m, m)}"
+    r = subprocess.run(["docker", "image", "inspect", IMAGE, "--format", "{{.Os}}/{{.Architecture}}"],
+                       capture_output=True, text=True)
+    return r.stdout.strip() or "unknown"
+
+
 def in_container(project: pathlib.Path, script: str, timeout=900):
     """Run `script` in the pinned Lean image with `project` as the working directory. Inside
     the image itself (PF_IN_IMAGE=1, as in the verify image and on Linux hosts) it runs

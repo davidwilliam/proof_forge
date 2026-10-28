@@ -101,7 +101,8 @@ def build(task, candidate, j, b, provenance=None):
                       "judge_image": judge.image_id()},
         "solution": {"files": {str(f.name): taskmod.sha256(f) for f in files},
                      "solution_tree_sha256": j["solution_tree_sha256"]},
-        "executable": {"target": task.exe, "sha256": b.get("binary_sha256"), "status": b["status"],
+        "executable": {"target": task.exe, "sha256": b.get("binary_sha256"), "platform": judge.image_platform(),
+                       "status": b["status"],
                        "wrapper": "TESTED_ONLY"},
         "checks": {
             "tree": c["tree"], "impl_scan": c["impl_scan"],
@@ -120,7 +121,7 @@ def build(task, candidate, j, b, provenance=None):
                   f"{task.ns} for all inputs; the executable {task.exe} is built from the same source and "
                   "tested, and its JSON wrapper is not proved."),
         "provenance": provenance,
-        "reproduce": f"python3 harness/passport.py {candidate} --task {task.id}",
+        "reproduce": f"bin/proofforge verify passport.json --candidate {candidate}",
         "timings_ms": {"judge": j["elapsed_ms"], "binary": b.get("elapsed_ms")},
     }
     p["passport_sha256"] = content_hash(p)
@@ -139,7 +140,7 @@ def markdown(p):
             extra = f"witness: {r['witness']['message']}"
         lines.append(f"{r['id']:<{w}}  {r['status']:<10}  {extra}")
     ex = p["executable"]
-    lines += [f"Executable {ex['target']}: sha256:{(ex['sha256'] or 'none')[:16]}  {ex['status']} "
+    lines += [f"Executable {ex['target']} ({ex.get('platform', 'platform not recorded')}): sha256:{(ex['sha256'] or 'none')[:16]}  {ex['status']} "
               f"({p['checks']['property_tests']['cases']} cases + {p['checks']['property_tests']['followup_cases']} follow-ups); wrapper TESTED_ONLY",
               f"Locked manifest sha256:{p['locked']['manifest_sha256'][:16]}  Lean {p['toolchain']['lean'].split(':')[-1]}  "
               f"kernels: {', '.join(p['checks']['comparator_kernels']) or 'none'}",

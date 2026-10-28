@@ -1,5 +1,5 @@
 """Passport serialization and tampering regressions; no model or Docker calls."""
-import copy, hashlib, json, pathlib, runpy, shutil, sys, tempfile, types
+import contextlib, copy, hashlib, io, json, pathlib, runpy, shutil, sys, tempfile, types
 from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -15,8 +15,10 @@ def test_cli_hashes_the_final_serialized_passport():
          "checks": {"tree": {"passed": True, "problems": []},
                     "impl_scan": {"passed": True, "problems": []}}}
     b = {"status": "PASS", "cases": 2001, "followup_cases": 0, "seed": 0, "violations": {}}
-    with patch.object(passport.judge, "image_id", return_value="test-image"):
+    with patch.object(passport.judge, "image_id", return_value="test-image"), \
+            patch.object(passport.judge, "image_platform", return_value="linux/amd64"):
         original = passport.build(task, ROOT / "formal/evidence/muse-repair-002/Solution.lean", j, b)
+    assert original["executable"]["platform"] == "linux/amd64"
     with tempfile.TemporaryDirectory() as tmp:
         dest = pathlib.Path(tmp) / "passport.json"
         args = types.SimpleNamespace(task="payout-flagship", candidate="formal/evidence/muse-repair-002/Solution.lean",
@@ -26,7 +28,7 @@ def test_cli_hashes_the_final_serialized_passport():
         saved = json.loads(dest.read_text())
         digest = saved.pop("passport_sha256")
         assert digest == hashlib.sha256(json.dumps(saved, sort_keys=True).encode()).hexdigest()
-        assert saved["reproduce"].startswith("proofforge verify")
+        assert saved["reproduce"].startswith("bin/proofforge verify")
 
 
 def test_changed_passport_is_refused_before_rechecking():
@@ -39,6 +41,46 @@ def test_changed_passport_is_refused_before_rechecking():
         with patch.object(passport, "run") as judge:
             assert cli["cmd_verify"](types.SimpleNamespace(passport=str(dest), candidate="unused")) == 1
             judge.assert_not_called()
+
+
+def built_passport(platform, exe_sha, binary_status="PASS"):
+    task = passport.taskmod.load()
+    j = {"accepted": True, "elapsed_ms": 0, "solution_tree_sha256": "test-source",
+         "checks": {"tree": {"passed": True, "problems": []}, "impl_scan": {"passed": True, "problems": []}}}
+    b = {"status": binary_status, "cases": 2001, "followup_cases": 0, "seed": 0, "violations": {}, "binary_sha256": exe_sha}
+    if binary_status != "PASS":
+        j["accepted"] = False
+    with patch.object(passport.judge, "image_id", return_value="test-image"), \
+            patch.object(passport.judge, "image_platform", return_value=platform):
+        return passport.build(task, ROOT / "formal/evidence/muse-repair-002/Solution.lean", j, b)
+
+
+def verify_against(issued, rechecked):
+    with tempfile.TemporaryDirectory() as tmp:
+        dest = pathlib.Path(tmp) / "passport.json"
+        dest.write_text(json.dumps(issued))
+        out = io.StringIO()
+        with patch.object(passport, "run", return_value=rechecked), contextlib.redirect_stdout(out):
+            code = cli["cmd_verify"](types.SimpleNamespace(passport=str(dest), candidate="unused"))
+        return code, out.getvalue()
+
+
+def test_executable_hash_is_compared_only_on_the_same_platform():
+    issued = built_passport("linux/amd64", "a" * 64)
+    code, out = verify_against(issued, built_passport("linux/arm64", "b" * 64))
+    assert code == 0 and "not compared  executable" in out and "reproduced, except the executable hash" in out
+    code, out = verify_against(issued, built_passport("linux/amd64", "b" * 64))
+    assert code == 1 and "DIFFERENT  executable:" in out
+    code, out = verify_against(issued, built_passport("linux/arm64", "b" * 64, binary_status="REFUTED"))
+    assert code == 1 and "DIFFERENT  executable tests" in out
+
+
+def test_passport_without_a_platform_still_compares_the_executable():
+    issued = built_passport("linux/amd64", "a" * 64)
+    del issued["executable"]["platform"]
+    issued["passport_sha256"] = passport.content_hash(issued)
+    code, out = verify_against(issued, built_passport("linux/arm64", "b" * 64))
+    assert code == 1 and "does not record its build platform" in out
 
 
 def test_missing_comparator_config_is_a_rejection_not_a_crash():
