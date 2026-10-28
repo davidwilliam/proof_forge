@@ -24,11 +24,11 @@ The 239 good cases are 118 reference-solution checks, 118 generated refactors of
 
 The flagship task is a payout splitter whose bug loses a cent: $1.00 to three recipients pays 33 + 33 + 33. Muse Spark 1.3 repaired it and proved all eight requirements (valid payouts succeed, invalid ones change nothing, fair shares, full-state effects, conservation, nonnegativity, authorization, idempotency); the rebuilt binary pays 34 + 33 + 33. Three accepted repairs are stored with provenance in `formal/evidence/`:
 
-| Evidence | Agent | Cost at list prices | Notes |
-|---|---|---|---|
-| `muse-repair-001` | Spark 1.3 with the harness, Wonder planner | $0.47 | two sessions across a harness fix |
-| `muse-repair-002` | Spark 1.3 with the harness, Wonder planner | $0.34 | single session, 20 minutes |
-| `muse-repair-003` | Spark 1.3, compile-and-retry only | $1.90 | 27 attempts, 26 minutes |
+| Evidence | Agent | Standard list price | Charged (Spark on the Contributor tier) | Notes |
+|---|---|---|---|---|
+| `muse-repair-001` | Spark 1.3 with the harness, Wonder planner | $2.07 | $0.47 | two sessions across a harness fix |
+| `muse-repair-002` | Spark 1.3 with the harness, Wonder planner | $1.31 | $0.34 | single session, 20 minutes |
+| `muse-repair-003` | Spark 1.3, compile-and-retry only | $1.90 | $0.11 | 27 attempts, 26 minutes |
 
 Each is accepted by six kernels in Comparator's paranoid mode (Lean default and paranoid, lean4lean, nanoda, con-leche, con-ron), and its binary passes 2,001 property cases plus resubmission cases.
 
