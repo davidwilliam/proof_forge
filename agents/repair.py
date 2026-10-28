@@ -103,8 +103,9 @@ class Session:
         """One model call inside the budget. Every attempt is reserved at its worst case
         before it is sent and settled to the reported usage only if its full response arrives
         before the deadline. A network failure or timeout leaves the worst case charged (the
-        request may have been processed); an HTTP error response carries no completion and
-        is charged nothing. A response completed after the deadline is discarded."""
+        request may have been processed). HTTP failures also retain their reservation:
+        an error response does not establish that upstream usage was zero.
+        A response completed after the deadline is discarded."""
         payload_bytes = len(json.dumps({"messages": messages, "tools": tools}).encode())
         for i in range(attempts):
             mt, to = self.budget.call_limits(model, payload_bytes, len(messages), max_tokens, timeout)
@@ -117,10 +118,7 @@ class Session:
                 self.budget.stop = "wall"
                 raise BudgetExceeded("wall")
             except APIError as e:
-                if e.status == 0:
-                    self.budget.lost(tok)
-                else:
-                    self.budget.settle(tok, {"prompt_tokens": 0, "completion_tokens": 0, "http_error": e.status})
+                self.budget.lost(tok)
                 if e.status in (0, 429, 500, 502, 503, 504) and i < attempts - 1:
                     self.log(kind="api_error", status=e.status, body=e.body[:300], attempt=i)
                     self.pause(min(60, 5 * 2 ** i))

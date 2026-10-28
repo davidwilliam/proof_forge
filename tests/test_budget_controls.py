@@ -9,6 +9,9 @@ sys.path[:0] = [str(ROOT / "agents"), str(ROOT / "harness"), str(ROOT / "eval")]
 os.environ.setdefault("META_API_KEY", "test-key-not-used")
 import budget, meta_client, repair, task as taskmod  # noqa: E402
 import e1  # noqa: E402
+import freeze  # noqa: E402
+from unittest.mock import patch
+import hashlib, shutil, types
 
 MODEL = "muse-spark-1.3-contributor"
 
@@ -156,6 +159,73 @@ def test_task_admission_reserves_all_remaining_arms():
     cap.done(1.0)                # one run finished at $1
     assert not cap.admit(2)      # 1 spent + 3 reserved + 6 > 8
     assert cap.admit(1)          # 1 + 3 + 3 <= 8
+
+
+def test_http_failures_retain_reservations_before_retry():
+    for status in (400, 429, 500, 502, 503, 504):
+        s = repair.Session.__new__(repair.Session)
+        s.budget = budget.Budget(0.30, None)
+        s.pause = lambda seconds: None
+        s.log = lambda **kwargs: None
+        with patch.object(repair, "chat", side_effect=meta_client.APIError(status, "synthetic error")) as call:
+            try:
+                s.call(MODEL, [{"role": "user", "content": "hello"}], "test-http-error", attempts=3)
+                raise AssertionError("error response was accepted")
+            except (meta_client.APIError, budget.BudgetExceeded):
+                pass
+        assert s.budget.lost_attempts == call.call_count > 0
+        assert 0 < s.budget.usd_list <= 0.30
+        assert s.budget.reserved_open == 0
+
+
+def test_settle_http_error_never_refunds_unknown_usage():
+    b = budget.Budget(1, None)
+    tok = b.reserve(MODEL, 100, 1, 1024)
+    charged = b.usd_list
+    b.settle(tok, {"http_error": 504})
+    assert b.usd_list == charged
+
+
+def test_freeze_rejects_changed_input_approval_and_validation():
+    source = taskmod.all_tasks("test")[0]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp)
+        shutil.copytree(source.root, root / source.id, ignore=shutil.ignore_patterns(".lake", "__pycache__"))
+        t = taskmod.Task(root / source.id)
+        record = {"bases": {freeze.base_of(t.id): {"decision": "approve"}},
+                  "tasks": {t.id: {"files": freeze.task_files(t),
+                                    "manifest_sha256": t.locked()["manifest_sha256"],
+                                    "validation": {"report_sha256": taskmod.sha256(t.root / "validation.json")}}}}
+        record["freeze_sha256"] = hashlib.sha256(json.dumps(record["tasks"], sort_keys=True).encode()).hexdigest()
+        path = root / "freeze.json"
+        path.write_text(json.dumps(record))
+        assert freeze.verify_record(path, [t]) == taskmod.sha256(path)
+        for target in (t.start, t.root / "oracle.py", t.root / "validation.json"):
+            original = target.read_bytes()
+            target.write_bytes(original + b"\n")
+            try:
+                freeze.verify_record(path, [t])
+                raise AssertionError(f"changed {target.name} accepted")
+            except ValueError:
+                pass
+            target.write_bytes(original)
+        record["bases"][freeze.base_of(t.id)]["decision"] = "pending"
+        path.write_text(json.dumps(record))
+        try:
+            freeze.verify_record(path, [t])
+            raise AssertionError("unapproved specification accepted")
+        except ValueError:
+            pass
+
+
+def test_config_binds_approval_record():
+    args = types.SimpleNamespace(model=MODEL, budget_usd=3, budget_wall=3600, parallel=2,
+                                 batch_usd=150, freeze_sha256="first")
+    with patch.object(e1.judge, "image_id", return_value="test-image"):
+        before = e1.frozen_config(args, [], ["A0"])
+        args.freeze_sha256 = "second"
+        after = e1.frozen_config(args, [], ["A0"])
+    assert before["config_sha256"] != after["config_sha256"]
 
 
 if __name__ == "__main__":

@@ -33,7 +33,7 @@ def task_ref(t):
     return str(t.root) if t.root == taskmod.FLAGSHIP else t.id
 
 
-CODE_GLOBS = ["agents/*.py", "harness/*.py", "eval/e1.py", "infra/docker/Dockerfile.lean"]
+CODE_GLOBS = ["agents/*.py", "harness/*.py", "eval/e1.py", "eval/freeze.py", "infra/docker/Dockerfile.lean"]
 
 
 def git(*args):
@@ -54,7 +54,8 @@ def frozen_config(a, tasks, arms):
            "budget_usd_list": a.budget_usd, "budget_wall_s": a.budget_wall, "parallel": a.parallel,
            "eval_cases": EVAL_CASES, "eval_seed": EVAL_SEED, "judge_image": judge.image_id(),
            "container_slots": judge.SLOTS, "code_sha256": code, "task_sha256": task_hashes,
-           "batch_usd_list": a.batch_usd}
+           "batch_usd_list": a.batch_usd,
+           "approved_freeze_sha256": getattr(a, "freeze_sha256", None)}
     cfg["config_sha256"] = hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()
     return cfg
 
@@ -276,12 +277,20 @@ def main():
     ap.add_argument("--report-only", action="store_true")
     ap.add_argument("--batch-usd", type=float, help="cap on the batch total at list prices")
     ap.add_argument("--require-clean", action="store_true", help="refuse to run with uncommitted tracked changes")
+    ap.add_argument("--freeze", type=pathlib.Path, default=ROOT / "results/test-freeze.json",
+                    help="approved freeze record; required when running test tasks")
     a = ap.parse_args()
     arms = a.arms.split(",")
     tasks = [taskmod.load(x) for x in a.tasks.split(",")] if a.tasks else taskmod.all_tasks(a.split)
     out = ROOT / "results" / f"e1-{a.label}"
     out.mkdir(parents=True, exist_ok=True)
     if not a.report_only:
+        if any(t.split == "test" for t in tasks):
+            from freeze import verify_record
+            try:
+                a.freeze_sha256 = verify_record(a.freeze, tasks)
+            except (OSError, ValueError, KeyError) as exc:
+                raise SystemExit(f"test freeze verification failed: {exc}") from exc
         dirty = git("status", "--porcelain", "--untracked-files=no")
         if a.require_clean and dirty:
             raise SystemExit("uncommitted tracked changes:\n" + dirty)

@@ -119,9 +119,7 @@ class Budget:
         self.usd_list -= tok["list"]
         self.usd_actual -= tok["actual"]
         self.reserved_open -= 1
-        if usage and usage.get("http_error"):
-            usage = {}            # an HTTP error response carries no completion
-        elif not usage or not (usage.get("prompt_tokens") or usage.get("completion_tokens")):
+        if not usage or usage.get("http_error") or not (usage.get("prompt_tokens") or usage.get("completion_tokens")):
             self.unknown_usage += 1
             usage = tok["worst"]
         elif usage.get("prompt_tokens", 0) > tok["worst"]["prompt_tokens"]:

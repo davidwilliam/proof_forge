@@ -44,6 +44,23 @@ E1 compares three arms under the same per-task budget (dollars at standard-tier 
 
 Development results (`results/e1-dev-2`, 23 tasks, $3 and 45 minutes per run): A0 completed 19, A1 20, A2 21; the differences are not significant. Every arm completed every rate-limiter and transfer task. Test-set results will be reported here as measured, including a null result.
 
+The final test run requires `results/test-freeze.json`. Before making model calls, the
+runner checks each selected test task and its validation receipt against that approved
+record and binds the record's hash into the run configuration. Existing validation
+receipts identify the committed snapshot with which validation was recorded; generating
+a freeze does not rerun Lean. Resume rejects changes to the experiment configuration.
+
+The approved limits are $3 at standard list prices and 60 minutes per repair run, two
+concurrent runs, and a $150 batch cap. Unknown usage, lost responses, and HTTP failures
+retain conservative request reservations. All remaining arms of a task must fit before
+the task starts; omitted tasks are reported in `coverage.json`. After the repair deadline,
+finalization may select an already-produced compiling version; final judging is outside
+the repair budget for every arm. Run from an isolated checkout and keep its inputs fixed:
+
+```sh
+python3 eval/e1.py --label test-1 --split test --arms A0,A1,A2 --budget-usd 3 --budget-wall 3600 --parallel 2 --batch-usd 150 --require-clean
+```
+
 ## Trust assumptions and limits
 
 Every Passport lists them. A `VERIFIED` requirement relies on the Lean v4.35.0 kernel, compiler and runtime; the protected specification and challenge as reviewed by the owner; Comparator and its sandbox; and the judge image. The JSON wrapper around the proved function is tested, not proved. A requirement says exactly what its Lean statement says; anything it does not state is not covered.
