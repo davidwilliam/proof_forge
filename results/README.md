@@ -8,5 +8,6 @@ Model-written text in these files is verbatim except that em dashes are replaced
 |---|---|---|
 | `e1-dev-1` | E1 on the 23 dev tasks, arms A0, A1, A2, $3 list and 2700 s per run | before the harness fixes in commit f8e0e6d; two runs lost to network timeouts |
 | `e1-dev-2` | the same, after those fixes | used to set the test-run caps |
+| `e1-test-1` | E1 on the 30 frozen test tasks, arms A0, A1, A2, $3 list and 3600 s per run, Muse Spark 1.3 on the Contributor tier | run from an isolated checkout under `results/test-freeze.json`; all 90 runs completed, none set aside |
 | `e2-dev-flagship` | E2 on the flagship task | before the complete-proof attacks were added |
 | `e2-all-1` | E2 on all 59 tasks: 247 seeded bad cases (232 with complete proofs), 239 good cases (references, generated refactors, accepted model repairs) | ordinary checking vs ProofForge on the same artifacts |
