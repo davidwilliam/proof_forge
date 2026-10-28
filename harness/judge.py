@@ -16,7 +16,7 @@ The task (harness/task.py) defaults to the flagship payout component in formal/.
 A bare .lean file is treated as a workspace containing only candidate/Solution.lean.
 Statuses come only from exit codes recorded here; nothing a model writes is trusted.
 """
-import argparse, contextlib, fcntl, hashlib, json, os, pathlib, re, shlex, shutil, subprocess, sys, tempfile, time
+import argparse, contextlib, fcntl, hashlib, json, os, pathlib, re, shlex, shutil, signal, subprocess, sys, tempfile, time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import task as taskmod  # noqa: E402
@@ -42,16 +42,43 @@ def sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
-def run(cmd, timeout=900):
+# Monotonic deadline for every Lean run in this process (set by agents from their budget).
+DEADLINE = None
+TIMEOUT_MARK = "error: run stopped at the time limit"
+
+
+def run(cmd, timeout=900, on_timeout=None):
     t0 = time.monotonic()
-    p = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=timeout)
+    if DEADLINE is not None:
+        timeout = min(timeout, DEADLINE - t0)
+    rec = {"command": cmd if isinstance(cmd, list) else [cmd]}
+    if timeout <= 0:
+        return {**rec, "exit_code": 124, "elapsed_ms": 0, "stdout_sha256": sha256_bytes(b""),
+                "stderr_sha256": sha256_bytes(b""), "output_tail": TIMEOUT_MARK}
+    # Own process group, so a timeout stops every descendant (lake, lean, the docker client).
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace",
+                         start_new_session=True)
+    try:
+        stdout, stderr = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if on_timeout:
+            on_timeout()
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        stdout, stderr = p.communicate()
+        out = stdout + stderr
+        return {**rec, "exit_code": 124, "elapsed_ms": int((time.monotonic() - t0) * 1000),
+                "stdout_sha256": sha256_bytes(stdout.encode()), "stderr_sha256": sha256_bytes(stderr.encode()),
+                "output_tail": out[-3000:] + "\n" + TIMEOUT_MARK}
     return {
-        "command": cmd if isinstance(cmd, list) else [cmd],
+        **rec,
         "exit_code": p.returncode,
         "elapsed_ms": int((time.monotonic() - t0) * 1000),
-        "stdout_sha256": sha256_bytes(p.stdout.encode()),
-        "stderr_sha256": sha256_bytes(p.stderr.encode()),
-        "output_tail": (p.stdout + p.stderr)[-4000:],
+        "stdout_sha256": sha256_bytes(stdout.encode()),
+        "stderr_sha256": sha256_bytes(stderr.encode()),
+        "output_tail": (stdout + stderr)[-4000:],
     }
 
 
@@ -122,7 +149,7 @@ def fresh_project(ws: pathlib.Path, files, task) -> pathlib.Path:
     return d
 
 
-SLOTS = int(os.environ.get("PF_CONTAINER_SLOTS", "4"))
+SLOTS = int(os.environ.get("PF_CONTAINER_SLOTS", "2"))
 SLOT_DIR = pathlib.Path(tempfile.gettempdir()) / "proofforge-slots"
 
 
@@ -166,8 +193,9 @@ def in_container(project: pathlib.Path, script: str, timeout=900):
     if IN_IMAGE:
         with container_slot():
             return run(["bash", "-lc", f"cd {shlex.quote(str(project))} && {script}"], timeout=timeout)
+    name = f"pf-{os.getpid()}-{time.monotonic_ns()}"
     cmd = [
-        "docker", "run", "--rm", "--network", "none",
+        "docker", "run", "--rm", "--name", name, "--network", "none",
         # bubblewrap (Comparator's sandbox) needs user namespaces inside the container.
         "--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined",
         "--security-opt", "systempaths=unconfined", "--cap-add", "SYS_ADMIN",
@@ -175,7 +203,8 @@ def in_container(project: pathlib.Path, script: str, timeout=900):
         "-v", f"{project}:/work", "-w", "/work", IMAGE, "bash", "-lc", script,
     ]
     with container_slot():
-        return run(cmd, timeout=timeout)
+        return run(cmd, timeout=timeout,
+                   on_timeout=lambda: subprocess.run(["docker", "kill", name], capture_output=True))
 
 
 def parse_axioms(output: str, task) -> dict:
