@@ -196,7 +196,7 @@ function ResultCard({ build, run, passportSolutionSha }: { build: Build; run: Ru
               </p>
             ) : (
               <p>
-                <Status value="REFUTED">{summary.discrepancy > 0 ? `${summary.discrepancy} cents lost` : `${-summary.discrepancy} cents created`}</Status> The
+                <Status value="REFUTED">{`${centsWord(Math.abs(summary.discrepancy))} ${summary.discrepancy > 0 ? "lost" : "created"}`}</Status> The
                 source was debited {summary.sourceDebit} cents but recipients received {summary.distributed}.
               </p>
             )
@@ -221,4 +221,8 @@ function ResultCard({ build, run, passportSolutionSha }: { build: Build; run: Ru
       </dl>
     </div>
   );
+}
+
+function centsWord(n: number) {
+  return `${n} ${n === 1 ? "cent" : "cents"}`;
 }
