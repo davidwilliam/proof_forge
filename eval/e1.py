@@ -14,7 +14,7 @@ Usage: e1.py --label NAME [--split dev] [--tasks id,id] [--arms A0,A1,A2]
              [--budget-usd 3] [--budget-wall 2700] [--parallel 3] [--report-only]
 Results: results/e1-<label>/ (per run: summary.json, final.lean, eval.json, events.jsonl).
 """
-import argparse, json, math, pathlib, random, subprocess, sys, time
+import argparse, hashlib, json, math, pathlib, random, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -33,18 +33,79 @@ def task_ref(t):
     return str(t.root) if t.root == taskmod.FLAGSHIP else t.id
 
 
-def run_one(t, arm, a, out):
+CODE_GLOBS = ["agents/*.py", "harness/*.py", "eval/e1.py", "infra/docker/Dockerfile.lean"]
+
+
+def git(*args):
+    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+
+
+def frozen_config(a, tasks, arms):
+    """Everything that determines a run's outcome; its hash keys every stored result."""
+    code = {str(p.relative_to(ROOT)): taskmod.sha256(p) for g in CODE_GLOBS for p in sorted(ROOT.glob(g))}
+    task_hashes = {t.id: {"manifest_sha256": t.locked()["manifest_sha256"],
+                          "task_json": taskmod.sha256(t.root / "task.json"),
+                          "oracle": taskmod.sha256(t.root / "oracle.py"),
+                          "start_candidate": taskmod.sha256(t.start)} for t in tasks}
+    cfg = {"tasks": [t.id for t in tasks], "arms": {arm: ARMS[arm][1:] for arm in arms}, "model": a.model,
+           "budget_usd_list": a.budget_usd, "budget_wall_s": a.budget_wall, "parallel": a.parallel,
+           "eval_cases": EVAL_CASES, "eval_seed": EVAL_SEED, "judge_image": judge.image_id(),
+           "container_slots": judge.SLOTS, "code_sha256": code, "task_sha256": task_hashes,
+           "batch_usd_list": a.batch_usd}
+    cfg["config_sha256"] = hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()
+    return cfg
+
+
+class BatchCap:
+    """Admit a run only if spent + (running + 1) * per-run cap stays within the batch cap,
+    so the batch total never exceeds it."""
+    def __init__(self, cap, per_run):
+        self.cap, self.per_run, self.spent, self.running = cap, per_run, 0.0, 0
+        self.lock = threading.Lock()
+
+    def admit(self):
+        with self.lock:
+            if self.cap is not None and self.spent + (self.running + 1) * self.per_run > self.cap:
+                return False
+            self.running += 1
+            return True
+
+    def add(self, usd):
+        """Count a run completed earlier (resume)."""
+        with self.lock:
+            self.spent += usd or 0.0
+
+    def done(self, usd):
+        with self.lock:
+            self.running -= 1
+            self.spent += usd or 0.0
+
+
+def run_one(t, arm, a, out, cfg, cap):
     d = out / t.id / arm
     if (d / "eval.json").exists():
-        return json.loads((d / "eval.json").read_text())
+        ev = json.loads((d / "eval.json").read_text())
+        if ev.get("config_sha256") != cfg["config_sha256"]:
+            raise SystemExit(f"{d}: stored result has a different configuration; use a new label")
+        cap.add(ev.get("usd_list"))
+        return ev
     d.mkdir(parents=True, exist_ok=True)
     if not (d / "summary.json").exists():
+        if not cap.admit():
+            print(f"[{t.id} {arm}] skipped: batch cap reached", flush=True)
+            return None
         cmd = ARMS[arm] + ["--task", task_ref(t), "--model", a.model, "--out", str(d),
                            "--budget-usd", str(a.budget_usd), "--budget-wall", str(a.budget_wall)]
         with (d / "agent.log").open("w") as log:
-            subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, cwd=ROOT,
-                           timeout=a.budget_wall + 1800)
+            try:
+                subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, cwd=ROOT,
+                               timeout=a.budget_wall + 1800)
+            except subprocess.TimeoutExpired:
+                log.write("\nrunner: agent process exceeded the wall cap plus grace and was stopped\n")
+        s = json.loads((d / "summary.json").read_text()) if (d / "summary.json").exists() else {}
+        cap.done(s.get("budget", {}).get("usd_list", a.budget_usd))
     ev = evaluate(t, d)
+    ev["config_sha256"] = cfg["config_sha256"]
     (d / "eval.json").write_text(json.dumps(ev, indent=2) + "\n")
     print(f"[{t.id} {arm}] completed={ev['completed']} judge={ev['judge']} binary={ev['binary']} "
           f"usd_list={ev['usd_list']} stop={ev['stop']}", flush=True)
@@ -169,20 +230,33 @@ def main():
     ap.add_argument("--budget-wall", type=float, default=2700)
     ap.add_argument("--parallel", type=int, default=3)
     ap.add_argument("--report-only", action="store_true")
+    ap.add_argument("--batch-usd", type=float, help="cap on the batch total at list prices")
+    ap.add_argument("--require-clean", action="store_true", help="refuse to run with uncommitted tracked changes")
     a = ap.parse_args()
     arms = a.arms.split(",")
     tasks = [taskmod.load(x) for x in a.tasks.split(",")] if a.tasks else taskmod.all_tasks(a.split)
     out = ROOT / "results" / f"e1-{a.label}"
     out.mkdir(parents=True, exist_ok=True)
-    cfg = {"label": a.label, "tasks": [t.id for t in tasks], "arms": arms, "model": a.model,
-           "budget_usd": a.budget_usd, "budget_wall_s": a.budget_wall, "eval_cases": EVAL_CASES,
-           "eval_seed": EVAL_SEED, "started": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
     if not a.report_only:
-        (out / "config.json").write_text(json.dumps(cfg, indent=2) + "\n")
+        dirty = git("status", "--porcelain", "--untracked-files=no")
+        if a.require_clean and dirty:
+            raise SystemExit("uncommitted tracked changes:\n" + dirty)
+        cfg = frozen_config(a, tasks, arms)
+        cfg_path = out / "config.json"
+        if cfg_path.exists():
+            old = json.loads(cfg_path.read_text())
+            if old["config_sha256"] != cfg["config_sha256"]:
+                diff = [k for k in cfg if k not in ("config_sha256",) and old.get(k) != cfg.get(k)]
+                raise SystemExit(f"configuration differs from {cfg_path} in {diff}; use a new label")
+        else:
+            cfg.update(label=a.label, git_commit=git("rev-parse", "HEAD"), git_dirty=bool(dirty),
+                       started=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+            cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
+        cap = BatchCap(a.batch_usd, a.budget_usd)
         # Interleave arms so a partial run still yields paired tasks.
         jobs = [(t, arm) for t in tasks for arm in arms]
         with ThreadPoolExecutor(a.parallel) as ex:
-            results = list(ex.map(lambda j: run_one(j[0], j[1], a, out), jobs))
+            results = [r for r in ex.map(lambda j: run_one(j[0], j[1], a, out, cfg, cap), jobs) if r]
     else:
         results = [json.loads(p.read_text()) for p in sorted(out.glob("*/*/eval.json"))]
     report(out, results, arms)
