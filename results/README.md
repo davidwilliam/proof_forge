@@ -2,7 +2,7 @@
 
 Each experiment directory holds the runner configuration, the generated report and, per task and arm, the agent's final candidate (`final.lean`), the shared evaluator's verdict (`eval.json`), the agent summary with budget accounting (`summary.json`), the event log (`events.jsonl`) and the console log (`agent.log`). Intermediate candidate versions are not committed.
 
-Model-written text in these files is verbatim except that em dashes are replaced with semicolons and en dashes with hyphens (`eval/normalize.py`).
+Model-written text in these files is verbatim except that em dashes are replaced with semicolons and en dashes with hyphens, and absolute paths into the checkout that produced a run are written relative to the repository root (`eval/normalize.py`).
 
 | Directory | What | Notes |
 |---|---|---|

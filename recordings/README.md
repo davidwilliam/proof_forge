@@ -7,4 +7,4 @@ Recorded repair sessions replayed by the API (`POST /api/jobs` with `mode: "repl
 | `flagship-a2-run7` | payout-flagship | A2 | muse-spark-1.3-contributor, planner muse-wonder-1.0 | accepted after 1213 s, 54 versions (see `formal/evidence/muse-repair-002`) | earlier format: no `tool` events |
 | `flagship-a2-20261027` | payout-flagship | A2 | muse-spark-1.3-contributor, planner muse-wonder-1.0 | not accepted: 7 of 8 requirements proved, `req_conservation` unresolved after 3235 s, 74 versions | full `tool` and `plan` events |
 
-Model-written text is stored verbatim except that em dashes are replaced with semicolons.
+Model-written text is stored verbatim except that em dashes are replaced with semicolons; absolute paths into the recording checkout are written relative to the repository root (`eval/normalize.py`).
