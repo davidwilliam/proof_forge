@@ -228,7 +228,7 @@ def main():
     ap.add_argument("--model", default="muse-spark-1.3-contributor")
     ap.add_argument("--budget-usd", type=float, default=3.0)
     ap.add_argument("--budget-wall", type=float, default=2700)
-    ap.add_argument("--parallel", type=int, default=3)
+    ap.add_argument("--parallel", type=int, default=2)
     ap.add_argument("--report-only", action="store_true")
     ap.add_argument("--batch-usd", type=float, help="cap on the batch total at list prices")
     ap.add_argument("--require-clean", action="store_true", help="refuse to run with uncommitted tracked changes")
