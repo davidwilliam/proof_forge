@@ -4,7 +4,7 @@ Reads META_API_KEY from the environment or the repository's .env file. Every cal
 logged to runs/model_calls.jsonl with model, purpose, token usage and latency; the key
 and message contents are never logged.
 """
-import http.client, json, os, pathlib, socket, time, urllib.error, urllib.request
+import http.client, json, os, pathlib, socket, threading, time, urllib.error, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 BASE_URL = os.environ.get("META_API_BASE", "https://api.meta.ai/v1")
@@ -32,39 +32,67 @@ TRANSIENT = (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionErro
              http.client.RemoteDisconnected, http.client.IncompleteRead)
 
 
+class DeadlineReached(APIError):
+    """The request did not complete before the caller's deadline; any later response is discarded."""
+    def __init__(self, detail="deadline reached"):
+        super().__init__(0, detail)
+
+
+def _attempt(data, limit):
+    """One HTTP request in a worker thread, waited for at most `limit` seconds in total.
+    Returns (status, body, error); a request still running at the limit is abandoned and
+    its eventual response is never used."""
+    box = {}
+
+    def work():
+        req = urllib.request.Request(
+            f"{BASE_URL}/chat/completions", data=data,
+            headers={"Authorization": f"Bearer {api_key()}", "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=limit) as resp:
+                box["result"] = (resp.status, json.loads(resp.read()), None)
+        except urllib.error.HTTPError as e:
+            box["result"] = (e.code, None, APIError(e.code, e.read().decode(errors="replace")))
+        except TRANSIENT as e:
+            box["result"] = (0, None, APIError(0, f"network error: {type(e).__name__}: {e}"))
+        except Exception as e:  # malformed body and similar: transient for the caller
+            box["result"] = (0, None, APIError(0, f"error: {type(e).__name__}: {e}"))
+
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    t.join(limit)
+    if t.is_alive() or "result" not in box:
+        return 0, None, DeadlineReached(f"no complete response within {limit:.1f} s")
+    return box["result"]
+
+
 def chat(model, messages, purpose, tools=None, max_tokens=2048, timeout=180, retries=4, deadline=None, **extra):
-    """One chat completion. Network failures are retried with backoff; after the last
-    retry they raise APIError with status 0, which callers treat as transient. With a
-    monotonic `deadline`, no attempt or backoff extends past it."""
+    """One chat completion. Each attempt has an absolute time limit: min(timeout, time to
+    `deadline`), covering connection, upload and the whole response body. Transient failures
+    are retried with backoff (retries=0 for callers that account for each attempt); after
+    the last one they raise APIError with status 0. A response that would arrive after the
+    deadline is never returned."""
     payload = {"model": model, "messages": messages, "max_tokens": max_tokens, **extra}
     if tools:
         payload["tools"] = tools
     data = json.dumps(payload).encode()
     for attempt in range(retries + 1):
-        req = urllib.request.Request(
-            f"{BASE_URL}/chat/completions", data=data,
-            headers={"Authorization": f"Bearer {api_key()}", "Content-Type": "application/json"})
         t0 = time.monotonic()
         limit = timeout if deadline is None else min(timeout, deadline - t0)
         if limit < 1:
-            raise APIError(0, "deadline reached")
-        try:
-            with urllib.request.urlopen(req, timeout=limit) as resp:
-                body = json.loads(resp.read())
-            _log(model, purpose, resp.status, int((time.monotonic() - t0) * 1000), body)
+            raise DeadlineReached()
+        status, body, err = _attempt(data, limit)
+        _log(model, purpose, status, int((time.monotonic() - t0) * 1000), body)
+        if err is None:
+            if deadline is not None and time.monotonic() > deadline:
+                raise DeadlineReached("response completed after the deadline")
             return body
-        except urllib.error.HTTPError as e:
-            text = e.read().decode(errors="replace")
-            _log(model, purpose, e.code, int((time.monotonic() - t0) * 1000), None)
-            raise APIError(e.code, text) from None
-        except TRANSIENT as e:
-            _log(model, purpose, 0, int((time.monotonic() - t0) * 1000), None)
-            if attempt == retries:
-                raise APIError(0, f"network error: {type(e).__name__}: {e}") from None
-            pause = min(60, 5 * 2 ** attempt)
-            if deadline is not None:
-                pause = min(pause, max(0.0, deadline - time.monotonic()))
-            time.sleep(pause)
+        if isinstance(err, DeadlineReached) or err.status not in (0,) or attempt == retries:
+            raise err
+        pause = min(60, 5 * 2 ** attempt)
+        if deadline is not None:
+            pause = min(pause, max(0.0, deadline - time.monotonic()))
+        time.sleep(pause)
 
 
 def _log(model, purpose, status, ms, body):
