@@ -152,7 +152,7 @@ export interface Passport {
   locked: { manifest_sha256: string; files: Record<string, string> };
   toolchain: { lean: string; judge_image: string | null };
   solution: { files: Record<string, string>; solution_tree_sha256: string };
-  executable: { target: string; sha256: string | null; status: string; wrapper: string };
+  executable: { target: string; sha256: string | null; platform?: string; status: string; wrapper: string };
   checks: {
     tree: { passed: boolean; problems: string[] };
     impl_scan: { passed: boolean; problems: string[] };
@@ -175,6 +175,14 @@ export interface Passport {
   reproduce: string;
   timings_ms?: Record<string, number | null>;
   passport_sha256: string;
+}
+
+/** The candidate source a Passport checked, as stored by the API. */
+export interface PassportCandidate {
+  filename: string;
+  source: string;
+  sha256: string;
+  reproduce: string;
 }
 
 export interface PayoutState {

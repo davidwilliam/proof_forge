@@ -1,11 +1,11 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { ApiError, apiUrl, getJson, type CheckRecord, type Passport } from "@/lib/api";
+import { ApiError, apiUrl, getJson, type CheckRecord, type Passport, type PassportCandidate } from "@/lib/api";
 import { commandText, formatDuration, formatInt, formatMs, formatUsd, innerCommand, prettyJson, requirementText, shortHash } from "@/lib/format";
 import { Code, ErrorBox, Hash, Status } from "@/components/ui";
 import { Markdown } from "@/components/Markdown";
-import { CopyText, DownloadJson } from "@/components/DownloadJson";
+import { CopyText, DownloadJson, DownloadText } from "@/components/DownloadJson";
 
 export const dynamic = "force-dynamic";
 
@@ -60,8 +60,10 @@ export default async function PassportPage({ params }: { params: Promise<{ sha: 
   const { sha } = await params;
   let p: Passport;
   let comment: string | null = null;
+  let candidate: PassportCandidate | null = null;
   try {
     p = await getJson<Passport>(`/api/passports/${encodeURIComponent(sha)}`);
+    candidate = await getJson<PassportCandidate>(`/api/passports/${encodeURIComponent(sha)}/candidate`).catch(() => null);
     comment = (await getJson<{ markdown: string }>(`/api/passports/${encodeURIComponent(sha)}/comment`).catch(() => null))?.markdown ?? null;
   } catch (e) {
     const notFound = e instanceof ApiError && e.status === 404;
@@ -216,6 +218,8 @@ export default async function PassportPage({ params }: { params: Promise<{ sha: 
           <dd>
             <Hash value={p.executable.sha256} full />
           </dd>
+          <dt>Built for</dt>
+          <dd className="mono">{p.executable.platform ?? "not recorded"}</dd>
           <dt>Property tests</dt>
           <dd>
             <Status value={p.executable.status} />
@@ -315,8 +319,28 @@ export default async function PassportPage({ params }: { params: Promise<{ sha: 
 
       <section>
         <h2>Reproduce</h2>
-        <Code text={p.reproduce} wrap />
-        <CopyText text={p.reproduce} label="Copy command" />
+        {candidate ? (
+          <>
+            <p>
+              Download the Passport and the candidate source it checked, then, in a clone of the repository with the pinned Lean image built as its README
+              describes, run the command below. It re-runs every check and compares each hash and status. A machine with a different CPU architecture
+              {p.executable.platform ? ` from ${p.executable.platform}` : ""} builds an executable with a different hash; the command then re-tests the
+              executable and says that its hash was not compared.
+            </p>
+            <div className="row">
+              <DownloadJson data={p} filename="passport.json" label="Download passport.json" />
+              <DownloadText text={candidate.source} type="text/plain" filename={candidate.filename} label={`Download ${candidate.filename}`} />
+            </div>
+            <Code text={candidate.reproduce} wrap />
+            <CopyText text={candidate.reproduce} label="Copy command" />
+          </>
+        ) : (
+          <>
+            <p className="muted">The candidate source for this Passport is not stored on the server; the recorded command needs the file it names.</p>
+            <Code text={p.reproduce} wrap />
+            <CopyText text={p.reproduce} label="Copy command" />
+          </>
+        )}
       </section>
 
       {comment ? (
