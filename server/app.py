@@ -15,7 +15,7 @@ Environment (admission, quotas and spending are documented in server/controls.py
   PF_PREWARM=1            build sidecars and hidden variants at startup
   PF_DATA=runs            jobs, Passports, builds and server.db
 """
-import asyncio, json, os, pathlib, shutil, signal, subprocess, sys, tempfile, threading, time, uuid
+import asyncio, json, os, pathlib, shutil, signal, subprocess, sys, tempfile, threading, time, traceback, uuid
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,6 +36,18 @@ for d in (JOBS, PASSPORTS, BUILDS):
     d.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="ProofForge API", version="0.1")
+
+
+@app.middleware("http")
+async def record_errors(request: Request, call_next):
+    """Unhandled errors go to PF_DATA/errors.log as well, since host log buffers are short."""
+    try:
+        return await call_next(request)
+    except Exception:
+        with (DATA / "errors.log").open("a") as f:
+            f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {request.method} "
+                    f"{request.url.path}\n{traceback.format_exc()}\n")
+        raise
 app.add_middleware(CORSMiddleware, allow_origins=os.environ.get("PF_CORS", "*").split(","),
                    allow_methods=["GET", "POST"], allow_headers=["*"])
 
