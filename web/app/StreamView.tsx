@@ -261,18 +261,20 @@ function CheckLine({ e }: { e: RawEvent }) {
         Full check of version {s(e.version)}: {e.errors ? <Status value="ERROR">does not compile</Status> : "compiles"} ({formatMs(n(e.ms))})
       </div>
       {Object.keys(status).length ? (
-        <table className="small" style={{ marginTop: 6 }}>
-          <tbody>
-            {Object.entries(status).map(([k, v]) => (
-              <tr key={k}>
-                <td className="mono">{k}</td>
-                <td>
-                  <Status value={v} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="table-scroll">
+          <table className="small" style={{ marginTop: 6 }}>
+            <tbody>
+              {Object.entries(status).map(([k, v]) => (
+                <tr key={k}>
+                  <td className="mono">{k}</td>
+                  <td>
+                    <Status value={v} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : null}
       {scan.length ? <Code text={scan.join("\n")} wrap /> : null}
     </div>
@@ -314,18 +316,20 @@ function PassportLine({ e }: { e: RawEvent }) {
       <div style={{ fontWeight: 650 }}>
         Passport from the fresh check: component <Status value={s(e.status)} />
       </div>
-      <table className="small" style={{ margin: "6px 0" }}>
-        <tbody>
-          {Object.entries(reqs).map(([k, v]) => (
-            <tr key={k}>
-              <td className="mono">{k}</td>
-              <td>
-                <Status value={v} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="table-scroll">
+        <table className="small" style={{ margin: "6px 0" }}>
+          <tbody>
+            {Object.entries(reqs).map(([k, v]) => (
+              <tr key={k}>
+                <td className="mono">{k}</td>
+                <td>
+                  <Status value={v} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       {sha ? <Link href={`/passport/${sha}`}>Open Passport {shortHash(sha)}</Link> : null}
     </div>
   );

@@ -161,29 +161,31 @@ function ResultCard({ build, run, passportSolutionSha }: { build: Build; run: Ru
             Outcome <Status value={summary.outcome === "ok" ? "OK" : "REJECTED"}>{summary.outcome}</Status> for {formatCents(input.request.amount)} dollars (
             {input.request.amount} cents)
           </p>
-          <table>
-            <thead>
-              <tr>
-                <th>Recipient</th>
-                <th className="num">Received (cents)</th>
-                <th className="num">Dollars</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary.shares.map((s) => (
-                <tr key={s.account}>
-                  <td className="mono">account {s.account}</td>
-                  <td className="num mono">{s.cents}</td>
-                  <td className="num mono">{formatCents(s.cents)}</td>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Recipient</th>
+                  <th className="num">Received (cents)</th>
+                  <th className="num">Dollars</th>
                 </tr>
-              ))}
-              <tr>
-                <th>Total received</th>
-                <th className="num mono">{summary.distributed}</th>
-                <th className="num mono">{formatCents(summary.distributed)}</th>
-              </tr>
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {summary.shares.map((s) => (
+                  <tr key={s.account}>
+                    <td className="mono">account {s.account}</td>
+                    <td className="num mono">{s.cents}</td>
+                    <td className="num mono">{formatCents(s.cents)}</td>
+                  </tr>
+                ))}
+                <tr>
+                  <th>Total received</th>
+                  <th className="num mono">{summary.distributed}</th>
+                  <th className="num mono">{formatCents(summary.distributed)}</th>
+                </tr>
+              </tbody>
+            </table>
+          </div>
           <p className="big-total" style={{ marginTop: 10 }}>
             {summary.shares.map((s) => s.cents).join(" + ")} = {summary.distributed}
           </p>

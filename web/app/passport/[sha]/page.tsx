@@ -105,84 +105,88 @@ export default async function PassportPage({ params }: { params: Promise<{ sha: 
 
       <section>
         <h2>Requirements</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Requirement</th>
-              <th>Statement</th>
-              <th>Status</th>
-              <th>Axioms used</th>
-            </tr>
-          </thead>
-          <tbody>
-            {p.requirements.map((r) => (
-              <tr key={r.id}>
-                <td>
-                  <div className="mono" style={{ fontWeight: 700 }}>
-                    {r.id}
-                  </div>
-                  <div>{requirementText(r.text, r.id)}</div>
-                  {r.witness ? (
-                    <details open>
-                      <summary>Witness: {r.witness.message}</summary>
-                      <div className="small muted">Input</div>
-                      <Code text={prettyJson(r.witness.input)} />
-                      <div className="small muted">Output of the rebuilt binary</div>
-                      <Code text={prettyJson(r.witness.output)} />
-                    </details>
-                  ) : null}
-                </td>
-                <td>
-                  <code>
-                    theorem {r.theorem} : {r.statement}
-                  </code>
-                  <div className="small muted">
-                    sha256 <Hash value={r.statement_sha256} />
-                  </div>
-                </td>
-                <td>
-                  <Status value={r.status} />
-                  {r.binary_violations ? <div className="small">{formatInt(r.binary_violations)} binary violations</div> : null}
-                </td>
-                <td className="mono small">{r.axioms_used?.length ? r.axioms_used.join(", ") : r.axioms_used ? "none" : "not audited"}</td>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Requirement</th>
+                <th>Statement</th>
+                <th>Status</th>
+                <th>Axioms used</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {p.requirements.map((r) => (
+                <tr key={r.id}>
+                  <td>
+                    <div className="mono" style={{ fontWeight: 700 }}>
+                      {r.id}
+                    </div>
+                    <div>{requirementText(r.text, r.id)}</div>
+                    {r.witness ? (
+                      <details open>
+                        <summary>Witness: {r.witness.message}</summary>
+                        <div className="small muted">Input</div>
+                        <Code text={prettyJson(r.witness.input)} />
+                        <div className="small muted">Output of the rebuilt binary</div>
+                        <Code text={prettyJson(r.witness.output)} />
+                      </details>
+                    ) : null}
+                  </td>
+                  <td>
+                    <code>
+                      theorem {r.theorem} : {r.statement}
+                    </code>
+                    <div className="small muted">
+                      sha256 <Hash value={r.statement_sha256} />
+                    </div>
+                  </td>
+                  <td>
+                    <Status value={r.status} />
+                    {r.binary_violations ? <div className="small">{formatInt(r.binary_violations)} binary violations</div> : null}
+                  </td>
+                  <td className="mono small">{r.axioms_used?.length ? r.axioms_used.join(", ") : r.axioms_used ? "none" : "not audited"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <p className="small muted">Permitted axioms: {p.permitted_axioms.join(", ")}.</p>
       </section>
 
       <section>
         <h2>Checks</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Check</th>
-              <th>Command</th>
-              <th className="num">Exit</th>
-              <th className="num">Time</th>
-              <th>Output hashes</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Tree check</td>
-              <td colSpan={4}>
-                <Status value={p.checks.tree.passed ? "PASS" : "FAILED"} /> {p.checks.tree.problems.join("; ")}
-              </td>
-            </tr>
-            <tr>
-              <td>Implementation scan</td>
-              <td colSpan={4}>
-                <Status value={p.checks.impl_scan.passed ? "PASS" : "FAILED"} /> {p.checks.impl_scan.problems.join("; ")}
-              </td>
-            </tr>
-            <CheckRow name="Comparator" r={p.checks.comparator} what="locked challenge against the solution in a fresh sandbox" />
-            <CheckRow name="leanchecker" r={p.checks.leanchecker} what="replays the environment in the kernel" />
-            <CheckRow name="Axiom audit" r={p.checks.axiom_audit} what="#print axioms for each requirement" />
-            <CheckRow name="Binary build" r={pt.build} what="executable from the same source" />
-          </tbody>
-        </table>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Check</th>
+                <th>Command</th>
+                <th className="num">Exit</th>
+                <th className="num">Time</th>
+                <th>Output hashes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Tree check</td>
+                <td colSpan={4}>
+                  <Status value={p.checks.tree.passed ? "PASS" : "FAILED"} /> {p.checks.tree.problems.join("; ")}
+                </td>
+              </tr>
+              <tr>
+                <td>Implementation scan</td>
+                <td colSpan={4}>
+                  <Status value={p.checks.impl_scan.passed ? "PASS" : "FAILED"} /> {p.checks.impl_scan.problems.join("; ")}
+                </td>
+              </tr>
+              <CheckRow name="Comparator" r={p.checks.comparator} what="locked challenge against the solution in a fresh sandbox" />
+              <CheckRow name="leanchecker" r={p.checks.leanchecker} what="replays the environment in the kernel" />
+              <CheckRow name="Axiom audit" r={p.checks.axiom_audit} what="#print axioms for each requirement" />
+              <CheckRow name="Binary build" r={pt.build} what="executable from the same source" />
+            </tbody>
+          </table>
+        </div>
         <h3 style={{ marginTop: 16 }}>Comparator kernels</h3>
         {p.checks.comparator_kernels.length ? (
           <p>
@@ -244,24 +248,26 @@ export default async function PassportPage({ params }: { params: Promise<{ sha: 
             <Hash value={p.toolchain.judge_image} full />
           </dd>
         </dl>
-        <table style={{ marginTop: 12 }}>
-          <thead>
-            <tr>
-              <th>Locked file</th>
-              <th>sha256</th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(p.locked.files).map(([f, h]) => (
-              <tr key={f}>
-                <td className="mono">{f}</td>
-                <td>
-                  <Hash value={h} full />
-                </td>
+        <div className="table-scroll">
+          <table style={{ marginTop: 12 }}>
+            <thead>
+              <tr>
+                <th>Locked file</th>
+                <th>sha256</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {Object.entries(p.locked.files).map(([f, h]) => (
+                <tr key={f}>
+                  <td className="mono">{f}</td>
+                  <td>
+                    <Hash value={h} full />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section>
