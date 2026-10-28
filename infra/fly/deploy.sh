@@ -17,9 +17,15 @@ LABEL="api-$(git -C "$ROOT" rev-parse --short HEAD)"
 fly deploy "$STAGE" -a "$APP" -c "$STAGE/infra/fly/fly.toml" --build-only --push \
   --dockerfile "$STAGE/infra/docker/Dockerfile.api" --build-arg LEAN_IMAGE="$LEAN" --image-label "$LABEL"
 # Passports record the judge image by registry digest, not by tag.
-DIGEST=$(curl -sS -o /dev/null -D - -u "x:$(fly auth token)" \
-  -H "Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json" \
-  "https://registry.fly.io/v2/$APP/manifests/$LABEL" | tr -d '\r' | sed -n 's/^docker-content-digest: //Ip')
+TOKEN=$(fly auth token 2>/dev/null)
+DIGEST=
+for attempt in 1 2 3 4 5; do
+  DIGEST=$(curl -sS --retry 3 -o /dev/null -D - -u "x:$TOKEN" \
+    -H "Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json" \
+    "https://registry.fly.io/v2/$APP/manifests/$LABEL" | tr -d '\r' | sed -n 's/^docker-content-digest: //Ip') || true
+  case "$DIGEST" in sha256:*) break ;; esac
+  sleep 10
+done
 case "$DIGEST" in sha256:*) ;; *) echo "no digest for $LABEL" >&2; exit 1 ;; esac
 fly deploy -a "$APP" -c "$STAGE/infra/fly/fly.toml" --image "registry.fly.io/$APP:$LABEL" \
   --env PF_IMAGE_ID="registry.fly.io/$APP@$DIGEST"
