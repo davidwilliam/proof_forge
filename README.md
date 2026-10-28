@@ -61,8 +61,6 @@ the repair budget for every arm. Run from an isolated checkout and keep its inpu
 python3 eval/e1.py --label test-1 --split test --arms A0,A1,A2 --budget-usd 3 --budget-wall 3600 --parallel 2 --batch-usd 150 --require-clean
 ```
 
-## Trust assumptions and limits
-
 The PR gate has been exercised on GitHub: [PR #1](https://github.com/davidwilliam/proof_forge/pull/1)
 first rejected the seeded bulk-rounding candidate, then accepted its replacement with the
 stored Muse-authored repair. [PR #2](https://github.com/davidwilliam/proof_forge/pull/2)
@@ -71,6 +69,8 @@ rejects a protected-specification-only edit. Accepted Passports were reproduced 
 fresh check. [Recorded outcomes and artifacts](reports/pr-integration/summary.json) include
 the exact trusted checker revisions and valid Passport content hashes. These are automated
 integration checks; an independent human developer trial remains to be completed.
+
+## Trust assumptions and limits
 
 Every Passport lists them. A `VERIFIED` requirement relies on the Lean v4.35.0 kernel, compiler and runtime; the protected specification and challenge as reviewed by the owner; Comparator and its sandbox; and the judge image. The JSON wrapper around the proved function is tested, not proved. A requirement says exactly what its Lean statement says; anything it does not state is not covered.
 
