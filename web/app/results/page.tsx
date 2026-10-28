@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import { getJson } from "@/lib/api";
 import { aggregateE2, e2ArmLabels, isE1, isE2, pairText, type E1Summary, type E2Data, type Rate } from "@/lib/results";
 import { formatUsd, prettyJson, shortHash } from "@/lib/format";
@@ -8,6 +9,12 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Results, ProofForge" };
 
 const rate = (r: Rate) => `${r.count}/${r.of}`;
+
+// Result sets kept for the record but replaced by a later run; listed collapsed after the current ones.
+const SUPERSEDED: Record<string, string> = {
+  "e1-dev-1": "Before the harness fixes in commit f8e0e6d; two runs were lost to network timeouts. Replaced by e1-dev-2.",
+  "e2-dev-flagship": "Flagship task only, before the complete-proof attacks were added. Replaced by e2-all-1.",
+};
 
 export default async function ResultsPage() {
   let data: Record<string, unknown>;
@@ -25,6 +32,10 @@ export default async function ResultsPage() {
   const e1 = entries.filter(([k, v]) => k.startsWith("e1") && isE1(v)) as [string, E1Summary][];
   const e2 = entries.filter(([k, v]) => k.startsWith("e2") && isE2(v)) as [string, E2Data][];
   const other = entries.filter(([k]) => !e1.some(([x]) => x === k) && !e2.some(([x]) => x === k));
+  const earlier: [string, ReactNode][] = [
+    ...e1.filter(([key]) => key in SUPERSEDED).map(([key, s]): [string, ReactNode] => [key, <E1Section key={key} name={key} s={s} />]),
+    ...e2.filter(([key]) => key in SUPERSEDED).map(([key, d]): [string, ReactNode] => [key, <E2Section key={key} name={key} d={d} />]),
+  ];
 
   return (
     <main className="page">
@@ -38,12 +49,29 @@ export default async function ResultsPage() {
         <div className="notice">No result sets have been published yet. They appear here when the evaluation writes results under results/.</div>
       ) : null}
 
-      {e1.map(([key, s]) => (
-        <E1Section key={key} name={key} s={s} />
-      ))}
-      {e2.map(([key, d]) => (
-        <E2Section key={key} name={key} d={d} />
-      ))}
+      {e1
+        .filter(([key]) => !(key in SUPERSEDED))
+        .map(([key, s]) => (
+          <E1Section key={key} name={key} s={s} />
+        ))}
+      {e2
+        .filter(([key]) => !(key in SUPERSEDED))
+        .map(([key, d]) => (
+          <E2Section key={key} name={key} d={d} />
+        ))}
+      {earlier.length ? (
+        <details style={{ marginTop: 24 }}>
+          <summary>Earlier runs ({earlier.map(([key]) => key).join(", ")})</summary>
+          {earlier.map(([key, node]) => (
+            <div key={key}>
+              <p className="muted" style={{ marginTop: 16 }}>
+                {key}: {SUPERSEDED[key]}
+              </p>
+              {node}
+            </div>
+          ))}
+        </details>
+      ) : null}
       {other.map(([key, v]) => (
         <section key={key}>
           <h2>{key}</h2>
@@ -190,7 +218,7 @@ function E2Section({ name, d }: { name: string; d: E2Data }) {
           </tbody>
         </table>
       </div>
-      <details style={{ marginTop: 12 }} open>
+      <details style={{ marginTop: 12 }}>
         <summary>All cases</summary>
         <div className="table-scroll">
           <table className="small">
