@@ -14,7 +14,7 @@ import argparse, json, pathlib, re, sys, time
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "agents"))
 sys.path.insert(0, str(ROOT / "harness"))
-from meta_client import chat, APIError  # noqa: E402
+from meta_client import APIError  # noqa: E402
 from budget import Budget, BudgetExceeded  # noqa: E402
 import repair, task as taskmod  # noqa: E402
 
@@ -53,17 +53,14 @@ def run(s, a, state="current, buggy"):
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     extra = {} if a.effort == "default" else {"reasoning_effort": a.effort}
     for turn in range(a.max_turns):
-        s.budget.check()
         try:
-            r = chat(a.model, messages, f"baseline:{s.task.id}:turn{turn}", max_tokens=32000, timeout=600, **extra)
+            r, u = s.call(a.model, messages, f"baseline:{s.task.id}:turn{turn}", **extra)
         except APIError as e:
             s.log(kind="api_error", status=e.status, body=e.body[:300])
             if e.status in (0, 429, 500, 502, 503, 504):
-                time.sleep(20)
+                s.pause(20)
                 continue
             return
-        u = r.get("usage") or {}
-        s.budget.charge(a.model, u)
         text = r["choices"][0]["message"].get("content") or ""
         messages.append({"role": "assistant", "content": text})
         m = re.findall(r"```lean\s*\n(.*?)```", text, re.S)

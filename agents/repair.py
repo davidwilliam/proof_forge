@@ -83,6 +83,7 @@ class Session:
         self.ns, self.theorems = task.ns, task.theorems
         self.end = f"end {task.ns}"
         self.budget = budget or Budget()
+        judge.DEADLINE = self.budget.deadline()   # every Lean run in this process stops at the deadline
         self.ws = pathlib.Path(tempfile.mkdtemp(prefix="pf-repair-"))
         for rel in taskmod.PROJECT_FILES:
             src = task.root / rel
@@ -97,6 +98,22 @@ class Session:
         self.events = []
         # Declaration boundary: the next top-level item or the namespace end.
         self.boundary = rf"(?:@\[|/--|private |protected |theorem |lemma |def |instance |abbrev |{re.escape(self.end)})"
+
+    def call(self, model, messages, purpose, tools=None, max_tokens=32000, timeout=600, **extra):
+        """One model call inside the budget: limits come from the remaining dollars and
+        time, and a response without usage is charged its worst case."""
+        chars = len(json.dumps(messages)) + (len(json.dumps(tools)) if tools else 0)
+        mt, to = self.budget.call_limits(model, chars, max_tokens, timeout)
+        r = chat(model, messages, purpose, tools=tools, max_tokens=mt, timeout=to,
+                 deadline=self.budget.deadline(), **extra)
+        u = r.get("usage") or {}
+        self.budget.charge(model, u, worst_case=(chars, mt))
+        return r, u
+
+    def pause(self, seconds):
+        """Back off after a transient error, never past the deadline."""
+        left = self.budget.remaining_wall()
+        time.sleep(seconds if left is None else max(0.0, min(seconds, left)))
 
     def log(self, **kw):
         kw["t"] = round(time.time(), 3)
@@ -332,18 +349,14 @@ def dialog(s, model, effort, system, user, tool_names, max_turns, done, label):
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     extra = {} if effort == "default" else {"reasoning_effort": effort}
     for turn in range(max_turns):
-        s.budget.check()
         try:
-            r = chat(model, messages, f"repair:{s.task.id}:{label}:turn{turn}", tools=tools, max_tokens=32000,
-                     timeout=600, **extra)
+            r, u = s.call(model, messages, f"repair:{s.task.id}:{label}:turn{turn}", tools=tools, **extra)
         except APIError as e:
             s.log(kind="api_error", status=e.status, body=e.body[:300])
             if e.status in (0, 429, 500, 502, 503, 504):
-                time.sleep(20)
+                s.pause(20)
                 continue
             return False, messages
-        u = r.get("usage") or {}
-        s.budget.charge(model, u)
         msg = r["choices"][0]["message"]
         assistant = {"role": "assistant", "content": msg.get("content") or ""}
         if msg.get("tool_calls"):
@@ -518,15 +531,13 @@ def plan(s, a, spec, t, attempt):
             f"{attempt}_` and no `?` or `!` in names.")
     extra = {} if a.planner_effort == "default" else {"reasoning_effort": a.planner_effort}
     for tries in range(3):
-        s.budget.check()
         try:
-            r = chat(a.planner, [{"role": "system", "content": PLANNER_SYSTEM}, {"role": "user", "content": user}],
-                     f"plan:{s.task.id}:{t}:{attempt}", max_tokens=32000, timeout=900, **extra)
+            r, _ = s.call(a.planner, [{"role": "system", "content": PLANNER_SYSTEM}, {"role": "user", "content": user}],
+                          f"plan:{s.task.id}:{t}:{attempt}", timeout=900, **extra)
         except APIError as e:
             s.log(kind="api_error", status=e.status, body=e.body[:300])
-            time.sleep(20)
+            s.pause(20)
             continue
-        s.budget.charge(a.planner, r.get("usage") or {})
         text = r["choices"][0]["message"].get("content") or ""
         m = re.search(r"```lean\s*\n(.*?)```", text, re.S)
         if not m:
@@ -583,7 +594,9 @@ def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
 
 def finish(s, out, arm, extra):
     """Write summary.json and the final candidate; final judging is done by the evaluator.
-    A final file that does not compile is replaced by the newest version that did."""
+    A final file that does not compile is replaced by the newest version that did; this
+    selection among already produced versions happens after the deadline."""
+    judge.DEADLINE = None
     if "error:" in s.compile(2000)["output_tail"] and s.last_good is not None:
         s._save(s.last_good, "restore last compiling version")
     shutil.copy(s.ws / "candidate/Solution.lean", out / "final.lean")
