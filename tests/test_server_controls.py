@@ -125,7 +125,8 @@ def test_timed_out_check_gives_an_unresolved_passport_with_the_reason():
          "checks": {"tree": {"passed": True, "problems": []}, "impl_scan": {"passed": True, "problems": []},
                     "comparator": stopped}}
     b = {"status": "TIMEOUT", "cases": 0, "followup_cases": 0, "violations": {}}
-    with patch.object(judge, "image_id", return_value="test-image"):
+    with patch.object(judge, "image_id", return_value="test-image"), \
+            patch.object(judge, "image_platform", return_value="linux/amd64"):
         p = passport.build(t, ROOT / "formal/candidate/Solution.lean", j, b)
     assert p["status"] == "UNRESOLVED"
     assert all(r["status"] == "UNRESOLVED" for r in p["requirements"])
@@ -278,6 +279,39 @@ def test_concurrent_job_updates_are_not_lost():
         th.join()
     j = json.loads((d / "job.json").read_text())
     assert all(j[f"k{k}"] == 199 for k in range(4)), j
+
+
+def accepted_passport(source):
+    j = {"accepted": True, "elapsed_ms": 1, "solution_tree_sha256": "x",
+         "checks": {"tree": {"passed": True, "problems": []}, "impl_scan": {"passed": True, "problems": []}}}
+    b = {"status": "PASS", "cases": 2001, "followup_cases": 0, "violations": {}, "binary_sha256": "e" * 64}
+    with patch.object(judge, "image_id", return_value="test-image"), \
+            patch.object(judge, "image_platform", return_value="linux/amd64"):
+        return passport.build(taskmod.load(), source, j, b)
+
+
+def test_issued_passports_serve_the_checked_source_and_a_working_command():
+    src = ROOT / "formal/evidence/muse-repair-002/Solution.lean"
+    p = api.issue_passport(accepted_passport(src), src)
+    assert p["passport_sha256"] == passport.content_hash(p) and p["reproduce"] == api.REPRODUCE
+    assert api.get_passport(p["passport_sha256"]) == p
+    c = api.passport_candidate(p["passport_sha256"])
+    assert c["source"] == src.read_text() and c["sha256"] in p["solution"]["files"].values()
+    assert c["reproduce"].startswith("bin/proofforge verify passport.json --candidate Solution.lean")
+    raises(404, api.passport_candidate, "0" * 64)
+
+
+def test_sources_of_earlier_passports_are_recovered_from_their_jobs():
+    src = ROOT / "formal/evidence/muse-repair-002/Solution.lean"
+    p = accepted_passport(src)
+    api.write_json(api.PASSPORTS / f"{p['passport_sha256']}.json", p)
+    raises(404, api.passport_candidate, p["passport_sha256"])
+    d = api.JOBS / "backfill-test"
+    d.mkdir()
+    (d / "final.lean").write_text(src.read_text())
+    api.write_json(d / "job.json", {"state": "COMPLETE", "passport_sha256": p["passport_sha256"]})
+    api.backfill_passport_sources()
+    assert api.passport_candidate(p["passport_sha256"])["source"] == src.read_text()
 
 
 def test_unhandled_errors_are_recorded_on_the_data_volume():

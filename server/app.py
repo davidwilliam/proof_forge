@@ -135,6 +135,35 @@ def write_json(path, obj):
     os.replace(tmp, path)
 
 
+REPRODUCE = "bin/proofforge verify passport.json --candidate Solution.lean"
+
+
+def issue_passport(p, source):
+    """Store a Passport with the exact candidate source it checked, so that anyone can download
+    both and reproduce it from a clone of the repository with REPRODUCE."""
+    p["reproduce"] = REPRODUCE
+    p["passport_sha256"] = passport.content_hash(p)
+    sha = p["passport_sha256"]
+    tmp = PASSPORTS / f".{sha}.lean.{uuid.uuid4().hex}.tmp"
+    shutil.copy(source, tmp)
+    os.replace(tmp, PASSPORTS / f"{sha}.lean")
+    write_json(PASSPORTS / f"{sha}.json", p)
+    return p
+
+
+def backfill_passport_sources():
+    """Passports issued before sources were stored: recover the source from the job that issued
+    it when the job's final candidate is the file the Passport hashed."""
+    for f in JOBS.glob("*/job.json"):
+        sha = json.loads(f.read_text()).get("passport_sha256")
+        final = f.parent / "final.lean"
+        pp = PASSPORTS / f"{sha}.json"
+        if not sha or not final.exists() or not pp.exists() or (PASSPORTS / f"{sha}.lean").exists():
+            continue
+        if taskmod.sha256(final) in json.loads(pp.read_text()).get("solution", {}).get("files", {}).values():
+            shutil.copy(final, PASSPORTS / f"{sha}.lean")
+
+
 def set_job(d, **kw):
     with _job_lock:
         j = json.loads((d / "job.json").read_text())
@@ -163,10 +192,9 @@ def verify_job(d, t, label):
         emit(d, kind="job", state="QUEUED", reason="waiting for a check slot")
         CTRL.checks.acquire(wait=3600)
     try:
-        p = passport.run(final, t, cases=2000, seed=0, provenance=prov)
+        p = issue_passport(passport.run(final, t, cases=2000, seed=0, provenance=prov), final)
     finally:
         CTRL.checks.release()
-    write_json(PASSPORTS / f"{p['passport_sha256']}.json", p)
     state = "COMPLETE" if p["status"] == "VERIFIED" else "PARTIAL"
     if prov and prov.get("budget", {}).get("stop") and state != "COMPLETE":
         state = "BUDGET_STOP"
@@ -331,6 +359,7 @@ def recover_jobs():
 
 
 recover_jobs()
+backfill_passport_sources()
 
 
 @app.get("/api/jobs/{job_id}/events")
@@ -390,8 +419,7 @@ def verify(body: VerifyRequest, request: Request):
                 judge.time_limit(seconds("PF_VERIFY_DEADLINE_S", 240)):
             f = pathlib.Path(tmp) / "Solution.lean"
             f.write_text(body.source)
-            p = passport.run(f, t, cases=1000, seed=0)
-    write_json(PASSPORTS / f"{p['passport_sha256']}.json", p)
+            p = issue_passport(passport.run(f, t, cases=1000, seed=0), f)
     return p
 
 
@@ -401,6 +429,16 @@ def get_passport(sha: str):
     if not all(c in "0123456789abcdef" for c in sha) or not f.exists():
         raise HTTPException(404, "no such passport")
     return json.loads(f.read_text())
+
+
+@app.get("/api/passports/{sha}/candidate")
+def passport_candidate(sha: str):
+    """The candidate source a Passport checked, for reproducing it with REPRODUCE."""
+    get_passport(sha)
+    f = PASSPORTS / f"{sha}.lean"
+    if not f.exists():
+        raise HTTPException(404, "the candidate source was not stored for this passport")
+    return {"filename": "Solution.lean", "source": f.read_text(), "sha256": taskmod.sha256(f), "reproduce": REPRODUCE}
 
 
 @app.get("/api/passports/{sha}/comment")
