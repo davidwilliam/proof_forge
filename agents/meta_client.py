@@ -32,9 +32,10 @@ TRANSIENT = (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionErro
              http.client.RemoteDisconnected, http.client.IncompleteRead)
 
 
-def chat(model, messages, purpose, tools=None, max_tokens=2048, timeout=180, retries=4, **extra):
+def chat(model, messages, purpose, tools=None, max_tokens=2048, timeout=180, retries=4, deadline=None, **extra):
     """One chat completion. Network failures are retried with backoff; after the last
-    retry they raise APIError with status 0, which callers treat as transient."""
+    retry they raise APIError with status 0, which callers treat as transient. With a
+    monotonic `deadline`, no attempt or backoff extends past it."""
     payload = {"model": model, "messages": messages, "max_tokens": max_tokens, **extra}
     if tools:
         payload["tools"] = tools
@@ -44,8 +45,11 @@ def chat(model, messages, purpose, tools=None, max_tokens=2048, timeout=180, ret
             f"{BASE_URL}/chat/completions", data=data,
             headers={"Authorization": f"Bearer {api_key()}", "Content-Type": "application/json"})
         t0 = time.monotonic()
+        limit = timeout if deadline is None else min(timeout, deadline - t0)
+        if limit < 1:
+            raise APIError(0, "deadline reached")
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with urllib.request.urlopen(req, timeout=limit) as resp:
                 body = json.loads(resp.read())
             _log(model, purpose, resp.status, int((time.monotonic() - t0) * 1000), body)
             return body
@@ -57,7 +61,10 @@ def chat(model, messages, purpose, tools=None, max_tokens=2048, timeout=180, ret
             _log(model, purpose, 0, int((time.monotonic() - t0) * 1000), None)
             if attempt == retries:
                 raise APIError(0, f"network error: {type(e).__name__}: {e}") from None
-            time.sleep(min(60, 5 * 2 ** attempt))
+            pause = min(60, 5 * 2 ** attempt)
+            if deadline is not None:
+                pause = min(pause, max(0.0, deadline - time.monotonic()))
+            time.sleep(pause)
 
 
 def _log(model, purpose, status, ms, body):
