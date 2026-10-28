@@ -122,3 +122,5 @@ def Idempotent (step : Impl) : Prop :=
     step (step s r).2 r = (.rejected, (step s r).2)
 
 end Payout
+
+-- Integration fixture: protected-file-only edit without an approved lock amendment.
