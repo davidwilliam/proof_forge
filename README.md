@@ -4,18 +4,21 @@ ProofForge lets Meta's coding agents repair critical software and ship machine-c
 
 A component's requirements are written once as Lean 4 predicates over its implementation and locked by hash. A Muse model fixes the buggy code and proves every requirement. The repair counts only if the official checker accepts it in a fresh sandbox and the executable rebuilt from the same source passes property tests derived from the same requirements. The result is a Proof Passport: per-requirement statuses, hashes, commands, axioms, trust assumptions and a one-command reproduction.
 
-## Why not just compile the proofs
+## What the protected pipeline adds
 
-A repository that keeps proofs next to the code accepts whatever its own build accepts. A repair can restate a requirement more weakly under the same name, ship a modified specification, or compile different code from the code that was proved, and the build stays green. ProofForge judges every candidate against a locked challenge with Lean's `lake comparator` in a bubblewrap sandbox, replays it with `leanchecker`, rejects code-override constructs, and tests the rebuilt binary.
+A repository that keeps proofs next to the code accepts whatever its own build accepts. A repair can prove a weaker statement under a required theorem's name, ship a modified specification, or compile different code from the code that was proved, and the build stays green; Lean checks each of those proofs correctly, but they are proofs of something else. ProofForge judges every candidate against a locked challenge with Lean's `lake comparator` in a bubblewrap sandbox, replays it with `leanchecker`, rejects code-override constructs, and tests the executable rebuilt from the locked project.
 
-E2 measures exactly this, on the same artifacts (`results/e2-all-1`):
+E2 compares three ways of checking the same artifacts (`results/e2-all-1`; every bad case is a seeded test written by the build team, so this describes this suite, not repairs in general):
 
 | Checking | Seeded bad repairs accepted | Correct repairs rejected |
 |---|---|---|
-| Ordinary checking (project builds, theorem names present, axiom audit clean) | 232 of 246 | 0 of 239 |
-| ProofForge | 0 of 246 | 0 of 239 |
+| Ordinary checking: the project builds, theorem names are present, the axiom audit is clean | 233 of 247 | 0 of 239 |
+| Rebuild and property tests only | 1 of 247 | 0 of 239 |
+| ProofForge | 0 of 247 | 0 of 239 |
 
-Of the bad repairs, 231 prove every requirement name without `sorry`; ordinary checking accepts all 231 and ProofForge rejects all 231. The good cases are two reference solutions per task, generated refactors of them, and accepted model repairs. All bad cases are seeded tests written by the build team; none was observed naturally (in 138 development repair runs, every failed candidate was an honest failure).
+The rebuild and its tests already reject almost every seeded attack: 229 change behavior on inputs the generator produces, and 17 do not build against the locked specification. The one that passes is `formal/attacks/g2_bulk_rounding.lean`: payouts to seven or more recipients drop the remainder, the test generator never produces more than five recipients, and the attack proves `req_fair_shares`, `req_effects` and `req_conservation` restated for fewer than seven recipients. Comparator rejects the restated statement; the counterexample ($1.00 to seven recipients pays 14 cents each and loses 2 cents) is in `formal/attacks/g2_bulk_rounding.counterexample.json`. A proof covers every input; tests cover the inputs someone thought to generate.
+
+The 239 good cases are 118 reference-solution checks, 118 generated refactors of them (helpers renamed, comments added) and 3 accepted model repairs; tasks that share a base specification reuse files, so they come from 67 distinct sources. No specification-weakening attempt was observed in 138 development repair runs; every bad case here is seeded.
 
 ## Meta models writing verified repairs
 
