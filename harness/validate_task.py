@@ -28,8 +28,8 @@ def metadata(t):
     missing = KEYS - set(t.meta)
     if missing:
         p.append(f"task.json missing keys: {sorted(missing)}")
-    if t.split not in ("dev", "val", "test", "hidden"):
-        p.append(f"split must be dev, val, test or hidden: {t.split}")
+    if t.split not in ("dev", "val", "test", "hidden", "realworld"):
+        p.append(f"split must be dev, val, test, hidden or realworld: {t.split}")
     if t.family not in FAMILIES:
         p.append(f"unknown family {t.family}")
     if t.root.name != t.id and t.root.name != "formal":
