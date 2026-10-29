@@ -28,7 +28,7 @@ def test_cli_hashes_the_final_serialized_passport():
         saved = json.loads(dest.read_text())
         digest = saved.pop("passport_sha256")
         assert digest == hashlib.sha256(json.dumps(saved, sort_keys=True).encode()).hexdigest()
-        assert saved["reproduce"].startswith("bin/proofforge verify")
+        assert saved["reproduce"].startswith(f"bin/proofforge verify {dest} --candidate")
 
 
 def test_changed_passport_is_refused_before_rechecking():
