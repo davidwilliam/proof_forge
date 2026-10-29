@@ -40,7 +40,12 @@ fails.
    `formal/spec/Payout/Spec.lean`). Weaken any statement in the copied specification, then run
    `bin/proofforge check --candidate <scratch directory>`.
    Expected: rejected as a protected-file change.
-6. Open `repair.json` and answer, in your own words:
+6. Open any Passport on the live demo (for example from the replay on its home page), use
+   "Download passport.json" and "Download Solution.lean", put both files in the repository
+   root and run `bin/proofforge verify passport.json --candidate Solution.lean`.
+   Expected: `reproduced`, or, on a machine whose CPU architecture differs from the
+   Passport's `linux/amd64`, `reproduced, except the executable hash`.
+7. Open `repair.json` and answer, in your own words:
    - Which requirements are verified, and what does each one state?
    - What does the result rely on (the trust assumptions)?
    - Which part of the executable is tested but not proved?
