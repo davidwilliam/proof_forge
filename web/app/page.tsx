@@ -1,37 +1,78 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { Pipeline } from "@/components/Pipeline";
 import { Status } from "@/components/ui";
 import { E1, E2 } from "@/lib/evidence";
-import { readRealworld, readRepairedPassport } from "@/lib/generated";
+import {
+  BENCHMARK,
+  FEATURED,
+  FLAGSHIPS,
+  HEADLINE,
+  IMPLEMENTS,
+  SUMMARY,
+  githubFile,
+  incidentsSentence,
+  repairCosts,
+  requirementCount,
+  verifiedCount,
+  type Flagship,
+  type PassportRef,
+  type RealCodeRow,
+} from "@/lib/flagships";
+import { readRealworld } from "@/lib/generated";
 import { EXPECTED_PROJECTS, describeInput, listWords, pendingProjects, type RwProject, type RwVersion } from "@/lib/realworld";
 
 const fmt = (n: number) => n.toLocaleString("en-US");
+const usd = (n: number) => `$${n < 0.1 ? n.toFixed(n < 0.045 ? 3 : 2) : n.toFixed(2)}`;
+const words = ["no", "one", "two", "three", "four", "five", "six"];
+const count = (n: number) => words[n] ?? String(n);
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
+const metaDescription = `Meta's Muse Spark repaired the logic behind the ${incidentsSentence()} exploits and proved every locked requirement in Lean 4; ProofForge rechecked each proof in a fresh sandbox and issued a Passport.`;
+
+export const metadata: Metadata = {
+  title: `ProofForge: ${HEADLINE.replace(/\.$/, "")}`,
+  description: metaDescription,
+  openGraph: {
+    type: "website",
+    siteName: "ProofForge",
+    title: HEADLINE,
+    description: metaDescription,
+  },
+  twitter: { card: "summary", title: HEADLINE, description: metaDescription },
+  alternates: { types: { "application/json": "/evidence.json", "text/plain": "/llms.txt" } },
+};
 
 // formal/task.json (issue): the flagship's buggy split; "The existing unit tests pass, but ... cents disappear."
 const BUGGY_SPLIT = [33, 33, 33];
 // formal/evidence/muse-repair-002/provenance.json: "$1.00 to 3 recipients -> 34 + 33 + 33"
 const REPAIRED_SPLIT = [34, 33, 33];
-const TOTAL = 100;
 
 export default function Home() {
-  const passport = readRepairedPassport();
   const rw = readRealworld();
+  const costs = repairCosts();
   return (
     <main className="page home">
-      <section className="home-hero" aria-labelledby="home-title">
-        <div className="home-hero-text">
-          <h1 id="home-title">AI repairs to payment code, accepted only with a Lean proof</h1>
-          <p className="home-problem">
-            Code that splits money can lose a cent while every share looks right, and the usual checks still pass.
+      <section className="hero" aria-labelledby="home-title">
+        <h1 id="home-title">{HEADLINE}</h1>
+        <p className="hero-sub">{SUMMARY.replace("Lean 4", "Lean\u00a04")}</p>
+        <ul className="scoreboard" aria-label={`${capital(count(FLAGSHIPS.length))} exploits, repaired and proved`}>
+          {FLAGSHIPS.map((f) => (
+            <ScoreCard key={f.key} f={f} />
+          ))}
+        </ul>
+        <div className="hero-foot">
+          <p>
+            Muse Spark 1.3 produced each repair{FLAGSHIPS.every((f) => f.repair.attempt === 1) ? " on its first attempt" : ""}, for{" "}
+            {usd(costs.minList)} to {usd(costs.maxList)} at list prices. Lean proves the ports and the repairs, not the real Solidity and
+            Move code: <a href="#claims">what is and is not proved</a>.
           </p>
-          <p className="home-sub">
-            A Meta Muse Spark agent repairs Lean 4 payment and accounting code and proves each locked requirement. ProofForge checks the
-            result in a fresh sandbox and issues a Passport: <Status value="VERIFIED" />, <Status value="REFUTED" /> or{" "}
-            <Status value="UNRESOLVED" />.
-          </p>
-          <KeyFigures />
-          <div className="home-actions">
-            <Link className="btn btn-primary" href="/forge">
+          <div className="hero-actions">
+            <a className="btn btn-primary" href={githubFile(FEATURED.repair.passport.path)}>
+              Open the {FEATURED.incident} Passport
+            </a>
+            <Link className="btn" href="/forge">
               Open the live forge session
             </Link>
             <Link className="btn" href="/results">
@@ -39,31 +80,50 @@ export default function Home() {
             </Link>
           </div>
         </div>
-        <SplitExample />
       </section>
 
-      <section className="home-band" aria-labelledby="home-steps">
-        <div className="home-steps card">
-          <div className="home-steps-intro">
-            <h2 id="home-steps">How a repair counts</h2>
-            <p>The agent writes the repair and its proofs. It never decides whether the repair is accepted.</p>
-          </div>
-          <div className="home-steps-body">
-            <Pipeline className="pipeline-lg" />
-            <p className="home-steps-detail">
-              The check runs a tree check, an implementation scan, a fresh project, <code>lake comparator --paranoid</code> with six
-              kernels, leanchecker and an axiom audit, then rebuilds the executable and runs property tests.
-            </p>
-          </div>
+      <FeaturedCase f={FEATURED} />
+
+      <section className="home-section" aria-labelledby="home-cases">
+        <h2 id="home-cases">{listWords(FLAGSHIPS.filter((f) => f !== FEATURED).map((f) => f.incident))}, step by step</h2>
+        <div className="cases">
+          {FLAGSHIPS.filter((f) => f !== FEATURED).map((f) => (
+            <CaseCard key={f.key} f={f} />
+          ))}
         </div>
       </section>
 
-      <section className="home-section" aria-labelledby="home-evidence">
-        <h2 id="home-evidence">What the measurements show</h2>
+      <Claims />
+
+      <section className="home-section" aria-labelledby="home-breadth">
+        <h2 id="home-breadth">
+          The benchmark: {BENCHMARK.tasks} repair tasks in {count(BENCHMARK.families.length)} areas
+        </h2>
+        <p className="home-section-lead">
+          Beyond the incidents, the benchmark has {BENCHMARK.splits.dev} development, {BENCHMARK.splits.val} validation and{" "}
+          {BENCHMARK.splits.test} test tasks. The test areas never appear in development or in any prompt used to build the agents. Every
+          task has two reference solutions, a buggy start candidate and seeded attacks.
+        </p>
+        <ul className="families">
+          {BENCHMARK.families.map((x) => (
+            <li key={x.key}>
+              <strong>{x.tasks}</strong> {x.label.toLowerCase()}
+            </li>
+          ))}
+          {IMPLEMENTS ? (
+            <li>
+              <strong>
+                {IMPLEMENTS.value} of {IMPLEMENTS.of}
+              </strong>{" "}
+              {IMPLEMENTS.label}
+            </li>
+          ) : null}
+        </ul>
         <div className="home-evidence">
           <E2Card />
           <E1Card />
         </div>
+        <SplitExample />
       </section>
 
       <RealWorld projects={rw.projects} pending={pendingProjects(rw)} />
@@ -71,56 +131,344 @@ export default function Home() {
       <section className="home-section" aria-labelledby="home-next">
         <h2 id="home-next">Check the evidence yourself</h2>
         <div className="home-ctas">
+          <a className="home-cta" href={githubFile(FEATURED.repair.passport.path)}>
+            <strong>Open the {FEATURED.incident} Passport</strong>
+            <span>
+              Statuses for all {requirementCount(FEATURED.repair.passport)} requirements, hashes, kernels, axioms and the command that
+              reproduces it. sha256 <span className="hash">{FEATURED.repair.passport.sha256.slice(0, 16)}</span>
+            </span>
+          </a>
           <Link className="home-cta" href="/forge">
             <strong>Open the live forge session</strong>
             <span>Replay a recorded Muse Spark repair, then watch a fresh check of its final candidate assign every status.</span>
-          </Link>
-          <Link className="home-cta" href={passport ? `/passport/${passport.passport_sha256}` : "/forge"}>
-            <strong>Open a Passport</strong>
-            <span>
-              {passport
-                ? "The Passport for the stored Muse Spark repair of the payout splitter: statuses, hashes, kernels, axioms and the command that reproduces it."
-                : "Run the forge session to the end; its Passport lists statuses, hashes, kernels, axioms and the command that reproduces it."}
-            </span>
           </Link>
           <Link className="home-cta" href="/results">
             <strong>Read the results</strong>
             <span>E1 and E2 per arm, per task family and per case, with the seeded attacks named.</span>
           </Link>
         </div>
+        <div className="reproduce card">
+          <h3>Reproduce a Passport</h3>
+          <p className="muted small">
+            From a clone of the repository with the pinned Lean image built (see the README). <code>verify</code> rebuilds the project,
+            reruns every check and compares each hash and status.
+          </p>
+          <pre>
+            <code>{FLAGSHIPS.map((f) => f.repair.passport.reproduce).join("\n")}</code>
+          </pre>
+          <p className="muted small" style={{ margin: 0 }}>
+            For agents: <a href="/llms.txt">llms.txt</a> and <a href="/evidence.json">evidence.json</a> list every claim, figure, Passport
+            hash, source file and command on this page.
+          </p>
+        </div>
       </section>
     </main>
   );
 }
 
-/** Three headline figures, each restated with its context in the evidence section below. */
-function KeyFigures() {
-  const arm = (k: string) => E2.arms.find((a) => a.key === k)!;
-  const harness = E1.arms.find((a) => a.key === "A1")!;
+function PassportLink({ p, label }: { p: PassportRef; label?: string }) {
   return (
-    <dl className="key-figures">
-      <div>
-        <dt>
-          {arm("ordinary").badAccepted} <span>of {E2.bad}</span>
-        </dt>
-        <dd>seeded bad repairs pass ordinary checking</dd>
-      </div>
-      <div>
-        <dt>
-          {arm("proofforge").badAccepted} <span>of {E2.bad}</span>
-        </dt>
-        <dd>
-          pass ProofForge; it rejects {arm("proofforge").goodRejected} of {E2.good} correct ones
-        </dd>
-      </div>
-      <div>
-        <dt>
-          {harness.completed} <span>of {E1.tasks}</span>
-        </dt>
-        <dd>frozen test tasks repaired by Muse Spark with the harness</dd>
-      </div>
-    </dl>
+    <a className="passport-link" href={githubFile(p.path)}>
+      {label ?? "Passport"} <span className="hash">{p.sha256.slice(0, 12)}</span>
+    </a>
   );
+}
+
+function ScoreCard({ f }: { f: Flagship }) {
+  const p = f.repair.passport;
+  return (
+    <li className="score">
+      <h2 className="score-title">
+        <a href={`#case-${f.key}`}>
+          {f.incident}, {f.year}
+        </a>
+      </h2>
+      <p className="score-loss">
+        <strong>{capital(f.loss.amount)}</strong> {f.loss.short}
+      </p>
+      <p className="score-prop">
+        <span className="score-prop-lead">Proved for all inputs: </span>
+        {f.property}
+      </p>
+      <dl className="score-verdicts">
+        <div className="sv" data-verdict={f.vulnerable.verdict}>
+          <dt>Vulnerable code</dt>
+          <dd>
+            <Status value={f.vulnerable.verdict} />
+            <span className="sv-note">kernel-checked counterexample</span>
+          </dd>
+        </div>
+        <svg className="sv-arrow" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M3 8h9M8.5 4.5L12 8l-3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <div className="sv" data-verdict={f.repair.verdict}>
+          <dt>Muse Spark repair</dt>
+          <dd>
+            <Status value={f.repair.verdict} />
+            <span className="sv-note">
+              {verifiedCount(p)} of {requirementCount(p)} requirements
+            </span>
+          </dd>
+        </div>
+      </dl>
+      <p className="score-real">
+        {capital(f.realCode.short)}: {f.realCode.result}.
+      </p>
+      <p className="score-foot">
+        <PassportLink p={p} />
+      </p>
+    </li>
+  );
+}
+
+function minutesBetween(a: string, b: string) {
+  return (Date.parse(b) - Date.parse(a)) / 60000;
+}
+
+function FeaturedCase({ f }: { f: Flagship }) {
+  const merged = f.timeline.filter((v) => v.merged);
+  const gap = merged.length >= 2 ? Math.round(minutesBetween(merged[0]!.merged!, merged[merged.length - 1]!.merged!) / 10) * 10 : null;
+  return (
+    <section className="home-section featured" id={`case-${f.key}`} aria-labelledby="featured-title">
+      <h2 id="featured-title">
+        {f.incident}, {f.year}: four versions of one function, one locked statement
+      </h2>
+      <p className="home-section-lead">
+        On {longDate(f.date)} an attacker drained the {f.system}: {f.loss.amount} {f.loss.basis}. {f.bug} {f.incident} merged a hotfix
+        that day and a final fix {gap ? `about ${gap} minutes later` : "later"}. ProofForge checked all three, and an independent Muse
+        Spark repair of the original, against the same locked Lean statement.
+      </p>
+      <ol className="timeline">
+        {f.timeline.map((v) => (
+          <li key={v.key} className="tl" data-verdict={v.verdict} data-author={v.commit ? "upstream" : "muse"}>
+            <div className="tl-head">
+              <h3>{v.title}</h3>
+              <Status value={v.verdict} />
+            </div>
+            <p className="tl-detail">{v.detail}</p>
+            <pre className="tl-code">
+              <code>{v.code.join("\n")}</code>
+            </pre>
+            <p className="tl-finding">{v.finding}</p>
+            <p className="tl-foot">
+              <PassportLink p={v.passport} />
+              <span className="hash muted">{v.commit ? `commit ${v.commit.slice(0, 7)}` : `run ${f.repair.run.split("/").pop()}`}</span>
+            </p>
+          </li>
+        ))}
+      </ol>
+      <div className="featured-grid">
+        <RealCode f={f} />
+        <RepairFacts f={f} />
+      </div>
+    </section>
+  );
+}
+
+function RepairFacts({ f }: { f: Flagship }) {
+  const r = f.repair;
+  return (
+    <div className="card facts">
+      <h3>The Muse repair run</h3>
+      <dl className="facts-list">
+        <div>
+          <dt>Model</dt>
+          <dd>
+            {r.model}, {r.tier} tier, harness without a planner
+          </dd>
+        </div>
+        <div>
+          <dt>Accepted</dt>
+          <dd>
+            attempt {r.attempt}, {fmt(r.seconds)} s, {r.calls} model calls
+          </dd>
+        </div>
+        <div>
+          <dt>Cost</dt>
+          <dd>
+            {usd(r.usdList)} at list prices, {usd(r.usdCharged)} charged
+          </dd>
+        </div>
+        <div>
+          <dt>Check</dt>
+          <dd>
+            {r.kernels} kernels in Comparator, leanchecker, {fmt(r.propertyCases)} property cases on the rebuilt executable
+          </dd>
+        </div>
+      </dl>
+      {f.equivalence ? (
+        <div className="equivalence">
+          <p className="small">Proved separately: the repair and the final fix agree on every input.</p>
+          <pre>
+            <code>{f.equivalence.theorem}</code>
+          </pre>
+          <p className="small muted">
+            Axioms: {f.equivalence.axioms}. <a href={githubFile(f.equivalence.file)}>Equivalence.lean</a>
+          </p>
+        </div>
+      ) : null}
+      <p className="small muted" style={{ margin: 0 }}>
+        <code>bin/proofforge verify</code> reproduced every hash and status. <PassportLink p={r.passport} label="Open the Passport" />
+      </p>
+    </div>
+  );
+}
+
+function RealCode({ f }: { f: Flagship }) {
+  const rc = f.realCode;
+  const allMatch = rc.rows.every((r) => r.sameAsPort === null || r.sameAsPort === rc.total);
+  return (
+    <div className="card realcode">
+      <h3>Against the real {f.language} code</h3>
+      <p className="small muted">{rc.how}</p>
+      <ul className="bars">
+        {rc.rows.map((row) => (
+          <RealBar key={row.label} row={row} total={rc.total} unit={rc.unit} />
+        ))}
+      </ul>
+      <p className="small muted" style={{ margin: "14px 0 0" }}>
+        {allMatch && rc.rows.some((r) => r.sameAsPort !== null) ? (
+          <>The real code&apos;s output equals its Lean port&apos;s on every one of the {fmt(rc.total)} {rc.unit}. </>
+        ) : null}
+        Recorded violations restated as Lean goals and checked in the kernel: {rc.confirmedInLean.checked} of {rc.confirmedInLean.goals}.{" "}
+        <a href={githubFile(rc.report)}>Report</a>
+      </p>
+    </div>
+  );
+}
+
+function RealBar({ row, total, unit }: { row: RealCodeRow; total: number; unit: string }) {
+  const pct = total ? (100 * row.violating) / total : 0;
+  return (
+    <li className="bar-row">
+      <div className="bar-label">
+        <span>{row.label}</span>
+        <span className="bar-detail">{row.note}</span>
+      </div>
+      <div className="bar-figure">
+        <span className="bar-track" aria-hidden="true">
+          <span className="bar-fill" data-tone="bad" style={{ width: `${Math.max(pct, row.violating ? 1 : 0)}%` }} />
+        </span>
+        <span className="bar-count">
+          <strong>{fmt(row.violating)}</strong> of {fmt(total)}
+        </span>
+      </div>
+      <span className="sr-only">
+        {fmt(row.violating)} of {fmt(total)} {unit} break a requirement
+      </span>
+    </li>
+  );
+}
+
+function CaseCard({ f }: { f: Flagship }) {
+  return (
+    <article className="card case" id={`case-${f.key}`}>
+      <h3>
+        {f.incident}, {f.year}
+      </h3>
+      <p className="case-loss">
+        <strong>{capital(f.loss.amount)}</strong> {f.loss.basis}.{" "}
+        {f.loss.citations.map((c, i) => (
+          <span key={c.url}>
+            {i ? ", " : null}
+            <a href={c.url}>{c.label}</a>
+          </span>
+        ))}
+      </p>
+      <p className="case-bug">{f.bug}</p>
+      <h4>The attack, with the state after each step</h4>
+      <ol className="attack">
+        {f.attack.map((s, i) => (
+          <li key={i}>
+            <span>{s.text}</span>
+            {s.after ? <span className="attack-after">{s.after}</span> : null}
+          </li>
+        ))}
+      </ol>
+      <div className="verdict-box" data-verdict="REFUTED">
+        <div className="verdict-head">
+          <Status value="REFUTED" />
+          <span>{f.vulnerable.label}</span>
+        </div>
+        <p>{f.outcome}</p>
+        <p className="small">
+          <a href={githubFile(f.vulnerable.witness)}>Kernel-checked counterexample</a>
+          {f.vulnerable.passport ? (
+            <>
+              {" "}
+              and <PassportLink p={f.vulnerable.passport} />
+            </>
+          ) : null}
+        </p>
+      </div>
+      <div className="verdict-box" data-verdict="VERIFIED">
+        <div className="verdict-head">
+          <Status value="VERIFIED" />
+          <span>Muse Spark 1.3 repair</span>
+        </div>
+        <p>
+          The repair {f.repair.change}. It proves all {requirementCount(f.repair.passport)} requirements, among them that{" "}
+          {lowerFirst(f.property)} Attempt {f.repair.attempt}, {fmt(f.repair.seconds)} s, {usd(f.repair.usdList)} at list prices.
+        </p>
+        <p className="small">
+          <PassportLink p={f.repair.passport} />
+        </p>
+      </div>
+      <RealCode f={f} />
+    </article>
+  );
+}
+
+function Claims() {
+  const reconstruction = FLAGSHIPS.map((f) => f.reconstruction).filter((x): x is string => !!x);
+  return (
+    <section className="home-section" id="claims" aria-labelledby="home-claims">
+      <h2 id="home-claims">What is proved, and what is not</h2>
+      <div className="claims-grid">
+        <div className="card claims-col">
+          <h3>Proved</h3>
+          <ul>
+            <li>
+              Each requirement is a Lean 4 statement about the Lean port of the vulnerable logic, locked by hash. A VERIFIED requirement
+              holds for every input, not a sample.
+            </li>
+            <li>
+              A VERIFIED status comes only from ProofForge&apos;s own check: <code>lake comparator --paranoid</code> with six kernels in a
+              fresh sandbox, leanchecker, an axiom audit, and property tests on the executable rebuilt from the same source.
+            </li>
+            <li>Each REFUTED port has a counterexample checked by the Lean kernel.</li>
+          </ul>
+        </div>
+        <div className="card claims-col">
+          <h3>Not proved</h3>
+          <ul>
+            <li>The Solidity and Move code are not themselves proved.</li>
+            <li>
+              The Lean ports are reviewed hand translations. They are tested against the real code on the stated inputs (
+              {listWords(FLAGSHIPS.map((f) => `${fmt(f.realCode.total)} ${f.realCode.unit} for ${f.incident}`))}); the translation is not
+              machine-checked.
+            </li>
+            <li>
+              Each port models only the logic its task README names: for example, Euler has one asset and no interest, and Hundred&apos;s
+              borrowing is not modeled.
+            </li>
+            {reconstruction.map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+            <li>Loss figures are quoted from the sources each task README cites.</li>
+          </ul>
+        </div>
+      </div>
+      <div className="card claims-steps">
+        <h3>How a repair counts</h3>
+        <Pipeline className="pipeline-lg" />
+      </div>
+    </section>
+  );
+}
+
+function longDate(iso: string) {
+  return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 }
 
 function Shares({ values, highlight }: { values: readonly number[]; highlight?: number }) {
@@ -136,31 +484,24 @@ function Shares({ values, highlight }: { values: readonly number[]; highlight?: 
 }
 
 function SplitExample() {
-  const buggyTotal = BUGGY_SPLIT.reduce((a, b) => a + b, 0);
+  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
   return (
-    <figure className="home-split card" aria-labelledby="split-caption">
-      <figcaption id="split-caption">Splitting {TOTAL} cents among 3 parties</figcaption>
-      <div className="split-row" data-outcome="bad">
-        <div className="split-label">Code under repair</div>
-        <div className="split-values">
+    <figure className="split-mini card" aria-labelledby="split-caption">
+      <figcaption id="split-caption">
+        The smallest task: a payout splitter pays 100 cents to three recipients. The code under repair loses a cent while each share
+        looks right; Muse Spark&apos;s proved repair conserves the total.
+      </figcaption>
+      <div className="split-mini-rows">
+        <div className="split-values" data-outcome="bad">
           <Shares values={BUGGY_SPLIT} />
-          <span className="split-total">= {buggyTotal}</span>
-          <span className="split-verdict">
-            ProofForge <Status value="REFUTED" />
-          </span>
+          <span className="split-total">= {sum(BUGGY_SPLIT)}</span>
+          <Status value="REFUTED" />
         </div>
-        <p className="split-note">One cent is lost. Each share is within a cent of a third, and the existing unit tests pass.</p>
-      </div>
-      <div className="split-row" data-outcome="ok">
-        <div className="split-label">Muse Spark 1.3 repair</div>
-        <div className="split-values">
+        <div className="split-values" data-outcome="ok">
           <Shares values={REPAIRED_SPLIT} highlight={0} />
-          <span className="split-total">= {REPAIRED_SPLIT.reduce((a, b) => a + b, 0)}</span>
-          <span className="split-verdict">
-            ProofForge <Status value="VERIFIED" />
-          </span>
+          <span className="split-total">= {sum(REPAIRED_SPLIT)}</span>
+          <Status value="VERIFIED" />
         </div>
-        <p className="split-note">The proved specification requires shares that add up to the total and differ by at most one.</p>
       </div>
     </figure>
   );
@@ -236,8 +577,8 @@ function RealWorld({ projects, pending }: { projects: RwProject[]; pending: stri
         code was tested against the proved reference; it was not itself proved.
       </p>
       {projects.length === 0 ? (
-        <div className="notice">
-          These results are still being produced. This section fills in when <code>web/scripts/realworld.mjs</code> has read{" "}
+        <div className="notice small muted">
+          These results are not in this build yet. They appear here when <code>web/scripts/realworld.mjs</code> has read{" "}
           <code>results/realworld-1/summary.json</code>.
         </div>
       ) : (
