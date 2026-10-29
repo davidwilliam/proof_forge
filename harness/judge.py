@@ -141,10 +141,12 @@ def candidate_files(ws: pathlib.Path):
 
 def impl_scan(files, task) -> dict:
     problems = []
+    declared = ""
     for f in files:
         text = f.read_text()
         code = re.sub(r"/-.*?-/", "", text, flags=re.S)   # strip block comments
         code = re.sub(r"--[^\n]*", "", code)              # strip line comments
+        declared += code
         for pat in FORBIDDEN:
             for m in re.finditer(pat, code):
                 line = code[: m.start()].count("\n") + 1
@@ -152,6 +154,10 @@ def impl_scan(files, task) -> dict:
         for m in re.finditer(r"^\s*import\s+(\S+)", code, flags=re.M):
             if not allowed_imports(task).match(m.group(1)):
                 problems.append(f"{f.name}: import not allowed: {m.group(1)}")
+    # Comparator also rejects a missing theorem, but only by crashing; name it here instead.
+    for t in task.theorems:
+        if files and not re.search(rf"\btheorem\s+(?:[\w.]+\.)?{re.escape(t)}\b", declared):
+            problems.append(f"required theorem missing: {t}")
     return {"passed": not problems, "problems": problems}
 
 
