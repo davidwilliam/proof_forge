@@ -6,6 +6,7 @@ import { getJson, postJson, type Job, type Passport } from "@/lib/api";
 import { claimWord, initialState, reduce, type ForgeState, type StreamEvent } from "@/lib/events";
 import { formatDuration, formatInt, formatUsd, modelInfo, shortHash } from "@/lib/format";
 import { openJobStream, type ConnectionState } from "@/lib/stream";
+import { Pipeline } from "@/components/Pipeline";
 import { Status, ErrorBox } from "@/components/ui";
 import { StreamView } from "./StreamView";
 
@@ -196,24 +197,7 @@ export function ForgeSession(props: {
           </h1>
           <p>{task.issue}</p>
         </div>
-        <ol className="pipeline" aria-label="How a repair counts">
-          <li>
-            <strong>Lock</strong>
-            The owner&apos;s requirements, hashed.
-          </li>
-          <li>
-            <strong>Repair</strong>
-            A Muse model fixes the code and proves each one.
-          </li>
-          <li>
-            <strong>Check</strong>
-            Fresh Comparator, kernel replay and property tests.
-          </li>
-          <li>
-            <strong>Passport</strong>
-            Statuses come only from that check.
-          </li>
-        </ol>
+        <Pipeline />
       </div>
 
       <aside className="col col-left" aria-label="Locked requirements">
