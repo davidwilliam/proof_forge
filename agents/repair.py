@@ -7,7 +7,14 @@ compile it, and run binary property tests. Acceptance is decided only by harness
 
 Arms (E1): A1 is `--planner none`; A2 adds the planner model. A0 is agents/baseline.py.
 
+Modes: `--mode repair` (default) starts from the task's buggy candidate and gives the issue
+report. `--mode implement` starts from a stub generated from the locked challenge (every
+required definition keeps its signature, its body is a neutral placeholder, every required
+theorem is `sorry`) and asks for an implementation from the specification; the issue report,
+the buggy candidate and the reference solutions are not used. Judging is identical.
+
 Usage: repair.py [--task T] [--model muse-spark-1.3-contributor] [--planner muse-wonder-1.0|none]
+                 [--mode repair|implement] [--loop orchestrated|free]
                  [--budget-usd X] [--budget-wall S] [--out DIR] [--start FILE]
 """
 import argparse, json, pathlib, re, shutil, sys, tempfile, time
@@ -23,8 +30,9 @@ FORBIDDEN_TEXT = ("sorry, axiom, opaque, implemented_by, extern, unsafe, export,
                   "initialize, #eval, run_cmd, native_decide, set_option")
 
 
-def task_brief(task):
-    """Task description and rules shared by every arm."""
+def task_brief(task, mode="repair"):
+    """Task description and rules shared by every arm. In implement mode the issue report is
+    replaced by a request to implement the definitions from the specification."""
     defs = ", ".join(f"`{task.ns}.{d}`" for d in task.definitions)
     n = len(task.theorems)
     lemmas = ""
@@ -33,12 +41,21 @@ def task_brief(task):
         names = re.findall(r"^(?:@\[[^\]]*\]\s*)?theorem\s+(\S+)", lp.read_text(), re.M)
         lemmas = (f"\n- {task.lib}.Lemmas contains proved helper lemmas you may use "
                   f"({', '.join(names)}).")
-    return f"""You are a software repair agent working in Lean 4 (v4.35.0, core library only, no Mathlib).
+    if mode == "implement":
+        intro = f"""You are a software implementation agent working in Lean 4 (v4.35.0, core library only, no Mathlib).
+
+Request: implement {defs} from its specification. {task.spec_dir}/Spec.lean is the source of truth: it defines the types and every locked requirement. The current body of {defs} in candidate/Solution.lean is a placeholder that compiles but does not meet the requirements; replace it with a real implementation.
+
+Your job:
+1. Implement {defs} in candidate/Solution.lean so it satisfies the locked requirements in {task.spec_dir}/Spec.lean."""
+    else:
+        intro = f"""You are a software repair agent working in Lean 4 (v4.35.0, core library only, no Mathlib).
 
 Issue report: {task.issue}
 
 Your job:
-1. Fix {defs} in candidate/Solution.lean so it satisfies the locked requirements in {task.spec_dir}/Spec.lean.
+1. Fix {defs} in candidate/Solution.lean so it satisfies the locked requirements in {task.spec_dir}/Spec.lean."""
+    return intro + f"""
 2. Prove all {n} theorems of {task.spec_dir}/Challenge.lean in candidate/Solution.lean, with exactly the same names and statements, and no `sorry`.
 
 Rules (enforced by an independent judge; violations are rejected):
@@ -47,6 +64,101 @@ Rules (enforced by an independent judge; violations are rejected):
 - Allowed imports: {task.lib}.Spec, {task.lib}.Lemmas, Init.*, Std.*.
 - Forbidden: {FORBIDDEN_TEXT}.
 - Weakening or restating a theorem differently is rejected. Changing behavior to avoid hard inputs cannot satisfy requirements that demand success on valid inputs.{lemmas}"""
+
+
+# Implement mode: the starting candidate is generated from the locked challenge only.
+STUB_PREFER = ("rejected", "denied", "invalid", "error", "none")
+
+
+def _top_split(text, sep):
+    """Split `text` at occurrences of `sep` outside parentheses, brackets and braces."""
+    parts, depth, cur, i = [], 0, "", 0
+    while i < len(text):
+        ch = text[i]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if depth == 0 and text.startswith(sep, i):
+            parts.append(cur)
+            cur, i = "", i + len(sep)
+            continue
+        cur += ch
+        i += 1
+    return [p.strip() for p in parts + [cur]]
+
+
+def _unparen(ty):
+    ty = ty.strip()
+    while ty.startswith("(") and ty.endswith(")") and len(_top_split(ty[1:-1], ")")) == 1:
+        ty = ty[1:-1].strip()
+    return ty
+
+
+def neutral_value(spec, ty):
+    """A value of type `ty` that carries no task logic: a nullary constructor of an inductive
+    declared in the spec (a rejection when there is one), or a standard default."""
+    ty = _unparen(ty)
+    m = re.search(rf"^inductive\s+{re.escape(ty)}\s+where\s*\n((?:[ \t]*(?:\|[^\n]*|--[^\n]*)?\n)+)", spec, re.M)
+    if m:
+        ctors = re.findall(r"^\s*\|\s*([A-Za-z_][\w']*)\s*(?:--.*)?$", m.group(1), re.M)
+        if ctors:
+            pick = next((c for p in STUB_PREFER for c in ctors if c == p), ctors[0])
+            return f"{ty}.{pick}"
+    simple = {"Nat": "0", "Int": "0", "Bool": "false", "String": '""', "Unit": "()"}
+    if ty in simple:
+        return simple[ty]
+    if re.match(r"^(List|Array)\b", ty):
+        return "[]" if ty.startswith("List") else "#[]"
+    if re.match(r"^Option\b", ty):
+        return "none"
+    return "default"
+
+
+def stub_body(spec, ty):
+    """Body for a definition of type `ty`: a function returning its first argument (the input
+    state) unchanged, paired with a neutral outcome when the result is `Outcome × State`."""
+    ty = ty.strip()
+    alias = re.search(rf"^(?:abbrev|def)\s+{re.escape(ty)}\s*(?::\s*Type\s*)?:=\s*([^\n]+)$", spec, re.M) \
+        if re.fullmatch(r"[\w.']+", ty) else None
+    full = alias.group(1).strip() if alias else ty
+    parts = _top_split(full, "→")
+    if len(parts) == 1:
+        return neutral_value(spec, full)
+    args, ret = parts[:-1], _unparen(parts[-1])
+    state = _unparen(args[0])
+    binders = " ".join(["s"] + ["_"] * (len(args) - 1))
+    prod = _top_split(ret, "×")
+    if len(prod) == 2 and _unparen(prod[1]) == state:
+        return f"fun {binders} => ({neutral_value(spec, prod[0])}, s)"
+    if ret == state:
+        return f"fun {binders} => s"
+    return f"fun {' '.join('_' for _ in args)} => {neutral_value(spec, ret)}"
+
+
+def stub_candidate(task):
+    """Starting candidate for implement mode, built from the locked challenge and the spec only:
+    the challenge's imports (plus the protected Lemmas module when the task has one), every
+    required definition with its exact signature and a neutral placeholder body, and every
+    required theorem with its exact statement proved by `sorry`. Nothing is read from the
+    task's candidate/, reference/ or attacks/ directories."""
+    root = task.root / task.spec_dir
+    challenge = (root / "Challenge.lean").read_text()
+    spec = (root / "Spec.lean").read_text()
+    text = re.sub(r"/-!.*?-/[ \t]*\n?", "", challenge, flags=re.S)
+    for d in task.definitions:
+        pat = re.compile(rf"^def\s+{re.escape(d)}\s*:\s*([^\n]+?)\s*:=\s*sorry[ \t]*$", re.M)
+        m = pat.search(text)
+        if not m:
+            raise ValueError(f"{task.id}: no definition hole `def {d} : ... := sorry` in Challenge.lean")
+        line = (f"-- Placeholder body; replace it with an implementation that meets the spec.\n"
+                f"def {d} : {m.group(1)} := {stub_body(spec, m.group(1))}")
+        text = text[:m.start()] + line + text[m.end():]
+    if (root / "Lemmas.lean").exists() and f"import {task.lib}.Lemmas" not in text:
+        text = re.sub(rf"^import {re.escape(task.lib)}\.Spec[ \t]*$", f"import {task.lib}.Spec\nimport {task.lib}.Lemmas",
+                      text, count=1, flags=re.M)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip("\n") + "\n"
+    return text
 
 
 WORKFLOW = """
@@ -78,8 +190,8 @@ def tools_for(task):
 
 
 class Session:
-    def __init__(self, task, model, start, out, budget=None):
-        self.task, self.model, self.out = task, model, out
+    def __init__(self, task, model, start, out, budget=None, mode="repair"):
+        self.task, self.model, self.out, self.mode = task, model, out, mode
         self.ns, self.theorems = task.ns, task.theorems
         self.end = f"end {task.ns}"
         self.budget = budget or Budget()
@@ -421,8 +533,9 @@ def spec_text(s):
 
 
 def orchestrate(s, a):
-    system = task_brief(s.task) + WORKFLOW
+    system = task_brief(s.task, s.mode) + WORKFLOW
     spec = spec_text(s)
+    impl = s.mode == "implement"
     defs = ", ".join(f"`{s.ns}.{d}`" for d in s.task.definitions)
     # Phase 0: behavior first. The binary must pass the requirement-derived tests.
     tests_ok = {"v": False}
@@ -435,8 +548,8 @@ def orchestrate(s, a):
     if orig_run_tests().startswith('{"status": "PASS"'):
         s.log(kind="phase", phase="implement", ok=True, skipped="start candidate already passes tests")
         tests_ok["v"] = True
-    user0 = (f"{spec}\n\n=== candidate/Solution.lean (current, buggy) ===\n{s._source()}\n\n"
-             f"Phase 1 of 2: fix {defs} so it meets the requirements. Keep every required theorem in the file "
+    user0 = (f"{spec}\n\n=== candidate/Solution.lean (current, {'placeholder' if impl else 'buggy'}) ===\n{s._source()}\n\n"
+             f"Phase 1 of 2: {'implement' if impl else 'fix'} {defs} so it meets the requirements. Keep every required theorem in the file "
              "(use `sorry` proofs for now). Write the file with write_solution, then call run_tests until it reports PASS.")
     ok0 = tests_ok["v"] or dialog(s, a.model, a.effort, system, user0, {"write_solution", "run_tests", "read_file"},
                                   a.phase0_turns, lambda: tests_ok["v"], "implement")[0]
@@ -449,7 +562,7 @@ def orchestrate(s, a):
         import baseline
         s.log(kind="phase", phase="whole-file")
         baseline.run(s, argparse.Namespace(model=a.model, effort=a.effort, max_turns=200),
-                     state="current, partly repaired")
+                     state="current, partly implemented" if impl else "current, partly repaired")
 
 
 def structured(s, a, system, spec):
@@ -640,7 +753,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", help="task id or directory (default: flagship)")
     ap.add_argument("--model", default="muse-spark-1.3-contributor")
-    ap.add_argument("--mode", default="orchestrated", choices=["orchestrated", "free"])
+    ap.add_argument("--mode", default="repair", choices=["repair", "implement", "orchestrated", "free"],
+                    help="repair (default): start from the task's buggy candidate with its issue report; "
+                         "implement: start from a stub generated from the locked challenge and implement "
+                         "the definitions from the spec. 'orchestrated' and 'free' are kept for "
+                         "compatibility and mean --mode repair with that --loop")
+    ap.add_argument("--loop", default="orchestrated", choices=["orchestrated", "free"])
     ap.add_argument("--max-turns", type=int, default=40, help="free mode only")
     ap.add_argument("--phase0-turns", type=int, default=12)
     ap.add_argument("--obligation-turns", type=int, default=12)
@@ -654,24 +772,33 @@ def main():
     ap.add_argument("--budget-wall", type=float, help="wall-clock cap in seconds")
     ap.add_argument("--out", help="run directory (default: runs/repair-<time>-<task>-<arm>)")
     a = ap.parse_args()
+    if a.mode in ("orchestrated", "free"):
+        a.loop, a.mode = a.mode, "repair"
+    if a.mode == "implement" and a.start:
+        ap.error("--start cannot be combined with --mode implement (the start is generated)")
     task = taskmod.load(a.task)
     arm = "A1" if a.planner == "none" else "A2"
+    kind = "implement" if a.mode == "implement" else "repair"
     out = pathlib.Path(a.out) if a.out else \
-        ROOT / "runs" / f"repair-{time.strftime('%Y%m%d-%H%M%S')}-{task.id}-{arm}"
+        ROOT / "runs" / f"{kind}-{time.strftime('%Y%m%d-%H%M%S')}-{task.id}-{arm}"
     out.mkdir(parents=True, exist_ok=True)
-    s = Session(task, a.model, a.start or task.start, out, Budget(a.budget_usd, a.budget_wall))
+    start = a.start or task.start
+    if a.mode == "implement":
+        start = out / "start.lean"
+        start.write_text(stub_candidate(task))
+    s = Session(task, a.model, start, out, Budget(a.budget_usd, a.budget_wall), mode=a.mode)
     s.log(kind="start", arm=arm, **vars(a))
     try:
-        if a.mode == "orchestrated":
+        if a.loop == "orchestrated":
             orchestrate(s, a)
         else:
-            dialog(s, a.model, a.effort, task_brief(task) + WORKFLOW,
+            dialog(s, a.model, a.effort, task_brief(task, a.mode) + WORKFLOW,
                    "Begin. The current candidate is candidate/Solution.lean.",
                    {t["function"]["name"] for t in tools_for(task)}, a.max_turns, lambda: s.accepted, "free")
     except BudgetExceeded as e:
         s.log(kind="budget_stop", reason=str(e))
         print(f"budget exhausted: {e}", flush=True)
-    summary = finish(s, out, arm, {"mode": a.mode, "effort": a.effort, "planner": a.planner})
+    summary = finish(s, out, arm, {"mode": a.loop, "task_mode": a.mode, "effort": a.effort, "planner": a.planner})
     print(json.dumps(summary))
 
 
