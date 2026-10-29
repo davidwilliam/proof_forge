@@ -54,6 +54,10 @@ The Lean statements are in `spec/OrderRouter/Spec.lean`; `spec/OrderRouter/Chall
 - `witnesses/restore_cum_count.lean` refutes the obvious repair (`attacks/restore_cum_count.lean`): if execution reports advance the Power Peg count again but Power Peg still decides from executions, two routing opportunities before any report send 200 shares for a 100-share order. Counting executions bounds what is executed only after it is reported; the shares sent are bounded only by counting what was sent.
 - `attacks/rlp_only_proof.lean` proves every requirement for the rlp build only. Ordinary checking accepts it (every theorem name exists, no `sorry`, clean axioms); the judge rejects it because the statements differ from the locked ones, and its executable is refuted on the legacy build.
 
+## Muse repairs
+
+`results/knight-1` holds four runs of `agents/repair.py` with Muse Spark 1.3 on the Contributor tier and a $10 cap at list prices per run. Without a planner (A1), two runs proved only REQ-NORMAL-ORDER-ROUTED. With Muse Wonder 1.0 as planner (A2), the first run proved five of the six requirements before reaching its dollar cap, and the second was VERIFIED: $4.96 at list prices, $0.98 charged, Passport `98cfed64ae1ec596e517299b422a5fb0beac571cdce89c18ea2e5660845bc178`, reproduced with `bin/proofforge verify`. The accepted repair removes the Power Peg path. The results README has the per-run figures.
+
 ## What is not claimed
 
 - The order does not describe Knight's code. How the cumulative quantity function was moved and why Power Peg stopped seeing executions is not stated; the start candidate models the outcome the order reports (paragraph 16) with one choice of mechanism: execution reports do not advance the count that the Power Peg stop check reads. Other mechanisms with the same outcome are possible.
