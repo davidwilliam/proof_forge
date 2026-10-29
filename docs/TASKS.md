@@ -42,7 +42,7 @@ Each task is a self-contained Lean project in `tasks/<id>/`:
 ```
 
 - `id` equals the directory name. Convention: `<family>-<base>-<variant>`.
-- `family` is one of `payouts`, `transfers`, `rate-limiters`, `ledgers`, `permissions`, `queues`, `fixed-point`.
+- `family` is one of `payouts`, `transfers`, `rate-limiters`, `ledgers`, `permissions`, `queues`, `fixed-point`, `lending` (`fixed-point` and `lending` are used by the real-world tasks `rw-cetus-shlw` and `rw-euler-donate`).
 - `split` is `dev`, `val` or `test`. Test families never appear in dev or val.
 - `requirements` lists `[REQ-ID, theorem]` pairs in the order agents attempt them (simplest first).
 - `lib` and `namespace` are the same CamelCase identifier.
