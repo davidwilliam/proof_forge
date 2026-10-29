@@ -1,40 +1,70 @@
 # ProofForge
 
-ProofForge lets Meta's coding agents repair critical software and ship machine-checked evidence that the repair meets locked requirements.
+AI-written financial code that ships with a proof.
 
-A component's requirements are written once as Lean 4 predicates over its implementation and locked by hash. A Muse model fixes the buggy code and proves every requirement. The repair counts only if the official checker accepts it in a fresh sandbox and the executable rebuilt from the same source passes property tests derived from the same requirements. The result is a Proof Passport: per-requirement statuses, hashes, commands, axioms, trust assumptions and a one-command reproduction.
+Meta's Muse Spark writes and repairs the logic behind real exploits and proves every locked requirement in Lean 4. ProofForge rechecks each proof in a fresh sandbox (Lean's Comparator with six kernels, `leanchecker`, an axiom audit, and property tests on the executable rebuilt from the same source) and issues a Proof Passport. No proof, no merge.
 
-## What the protected pipeline adds
+Live site: https://proofforge-nu.vercel.app. Machine-readable summaries generated from the committed results: [/llms.txt](https://proofforge-nu.vercel.app/llms.txt) and [/evidence.json](https://proofforge-nu.vercel.app/evidence.json).
 
-A repository that keeps proofs next to the code accepts whatever its own build accepts. A repair can prove a weaker statement under a required theorem's name, ship a modified specification, or compile different code from the code that was proved, and the build stays green; Lean checks each of those proofs correctly, but they are proofs of something else. ProofForge judges every candidate against a locked challenge with Lean's `lake comparator` in a bubblewrap sandbox, replays it with `leanchecker`, rejects code-override constructs, and tests the executable rebuilt from the locked project. Every step, with its exact command, is described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+## Three real exploits
 
-E2 compares three ways of checking the same artifacts (`results/e2-all-1`; every bad case is a seeded test written by the build team, so this describes this suite, not repairs in general):
+Each task is a Lean 4 port of the code behind a real exploit and a locked specification of the property the attack broke. Muse Spark 1.3 on the Contributor tier (arm A1: the ProofForge harness, no planner) repaired each port on its first attempt. In implement mode it also wrote each implementation from the locked specification alone, without seeing the vulnerable code, the issue report or a reference solution. Every VERIFIED Passport below records acceptance by Comparator's six kernels and `leanchecker`, a clean axiom audit and 2,001 property cases on the rebuilt executable. Costs are at standard list prices, then as charged on the Contributor tier.
 
-| Checking | Seeded bad repairs accepted | Correct repairs rejected |
-|---|---|---|
-| Ordinary checking: the project builds, theorem names are present, the axiom audit is clean | 233 of 247 | 0 of 239 |
-| Rebuild and property tests only | 1 of 247 | 0 of 239 |
-| ProofForge | 0 of 247 | 0 of 239 |
+| Incident | Loss, as sourced | Property proved in Lean 4 | Vulnerable code | Muse repair | Implemented from the specification alone | Real code, unmodified |
+|---|---|---|---|---|---|---|
+| Cetus (Sui), 2025-05-22 | about $223 million taken (The Block, from Cetus's incident report) | REQ-DELTA-A-COVERS: the overflow check never loses a bit, so a deposit is always charged at least the exact amount it owes | REFUTED: the attack deposit is charged 1 unit of token A; the exact amount owed, rounded up, is 31572840708638430117170542. Passport [`b79e965381258ef8`](results/cetus-1/passports/original-port.json) | VERIFIED, 5 of 5 requirements, first attempt, 428 s, $0.1871 list, $0.0111 charged. Passport [`9131dfdfd3e27da8`](results/cetus-1/repair-A1-1/passport.json) | VERIFIED, 5 of 5, 122 s, $0.12 list, $0.008 charged. Passport [`b2cf6c2de4f91b8e`](results/implement-flagships-1/rw-cetus-shlw/passport.json) | Move at 3 pinned commits, 2,007 inputs, Sui CLI 1.83.0: 658 break a requirement on the original, 0 on the final fix |
+| Euler Finance v1, 2023-03-13 | about $197 million in net profit to the attacker (Cyfrin); CoinDesk later reported that all recoverable funds were returned | REQ-NO-BAD-DEBT: no sequence of operations leaves any account with more debt than its risk-adjusted collateral | REFUTED: the attack sequence leaves 134,000,000 of debt with no collateral behind it. Passport [`cec7d847f1d0b6a6`](results/euler-1/rw-euler-donate/passports/port.json) | VERIFIED, 6 of 6, first attempt, 1,682 s, $0.8324 list, $0.0489 charged. Passport [`6de7bb94c38cf23a`](results/euler-1/rw-euler-donate/repair-A1-1/passport.json) | VERIFIED, 6 of 6, 1,324 s, $1.22 list, $0.066 charged. Passport [`27d4ec2838e9bbfc`](results/implement-flagships-1/rw-euler-donate/passport.json) | Solidity at b1ee326 in Foundry, 1,004 sequences: 57 break a requirement; 0 with `checkLiquidity(account)` added (a local copy, not an upstream release) |
+| Hundred Finance (Optimism), 2023-04-15 | about $7 million in reported losses (rekt.news gives $7.4M; not checked here) | REQ-SHARE-VALUE: no sequence of operations, donations included, lowers the value of a share while shares are outstanding | REFUTED: after the attack's own amounts, the last share unit is backed by 2 satoshi. [Kernel-checked witness](realworld/tasks/rw-hundred-vault/witnesses/hundred_attack.lean) | VERIFIED, 10 of 10, first attempt, 1,200 s, $0.6513 list, $0.037 charged. Passport [`08fe86f17f27c49d`](results/vault-1/repair-A1-1/passport.json) | VERIFIED, 10 of 10, 663 s, $0.60 list, $0.033 charged. Passport [`eee7e2cdbedf658d`](results/implement-flagships-1/rw-hundred-vault/passport.json) | deployed hWBTC bytecode on an Optimism fork, 501 sequences: identical to the Lean port on all 501; 292 break a requirement; the Muse repair breaks none |
 
-The rebuild and its tests already reject almost every seeded attack: 229 change behavior on inputs the generator produces, and 17 do not build against the locked specification. The one that passes is `formal/attacks/g2_bulk_rounding.lean`: payouts to seven or more recipients drop the remainder, the test generator never produces more than five recipients, and the attack proves `req_fair_shares`, `req_effects` and `req_conservation` restated for fewer than seven recipients. Comparator rejects the restated statement; the counterexample ($1.00 to seven recipients pays 14 cents each and loses 2 cents) is in `formal/attacks/g2_bulk_rounding.counterexample.json`. A proof covers every input; tests cover the inputs someone thought to generate.
+Each vulnerable port is refuted by a counterexample checked in the Lean kernel (the `witnesses/` directory of each task). The Hundred port has no stored Passport; the judge rejects it and its executable is REFUTED on generated cases (`harness/validate_task.py`). Task details: [Cetus](realworld/tasks/rw-cetus-shlw/README.md), [Euler](realworld/tasks/rw-euler-donate/README.md), [Hundred](realworld/tasks/rw-hundred-vault/README.md); runs: `results/cetus-1`, `results/euler-1`, `results/vault-1`, `results/implement-flagships-1`.
 
-The 239 good cases are 118 reference-solution checks, 118 generated refactors of them (helpers renamed, comments added) and 3 accepted model repairs; tasks that share a base specification reuse files, so they come from 67 distinct sources. No specification-weakening attempt was observed in 138 development repair runs; every bad case here is seeded.
+**The Cetus hotfix.** Cetus merged two fixes on the day of the attack; the first, pull request 6 (14:37 UTC), refuses the attack deposit but is REFUTED: `checkedShlw(2^192) = (0, false)`, so a deposit with liquidity × price difference = 2^192 is charged 0 (Passport [`d489c01595c30739`](results/cetus-1/passports/pr6-port.json)). Pull request 7 (16:09 UTC) changed the test from `n > mask` to `n >= mask` and is VERIFIED for every 256-bit input and every `u128` price and liquidity (Passport [`37d236fb45a80f41`](results/cetus-1/passports/pr7-port.json)). Muse's repair, written from the original code, is proved equal to pull request 7 on every 256-bit input (`muse_eq_pr7` in `results/cetus-1/repair-A1-1/Equivalence.lean`, axioms `propext` and `Quot.sound`), and the real pull request 7 Move code returned the same output as the proved repair on all 2,007 inputs.
 
-## Meta models writing verified repairs
+## Reproduce the Passports
 
-The flagship task is a payout splitter whose bug loses a cent: $1.00 to three recipients pays 33 + 33 + 33. Muse Spark 1.3 repaired it and proved all eight requirements (valid payouts succeed, invalid ones change nothing, fair shares, full-state effects, conservation, nonnegativity, authorization, idempotency); the rebuilt binary pays 34 + 33 + 33. Three accepted repairs are stored with provenance in `formal/evidence/`:
+Prerequisites: Docker (judging runs in Linux containers), Python 3.12 or later, git, and the pinned Lean image.
 
-| Evidence | Agent | Standard list price | Charged (Spark on the Contributor tier) | Notes |
-|---|---|---|---|---|
-| `muse-repair-001` | Spark 1.3 with the harness, Wonder planner | $2.07 | $0.47 | two sessions across a harness fix |
-| `muse-repair-002` | Spark 1.3 with the harness, Wonder planner | $1.31 | $0.34 | single session, 20 minutes |
-| `muse-repair-003` | Spark 1.3, compile-and-retry only | $1.90 | $0.11 | 27 attempts, 26 minutes |
+```sh
+git clone https://github.com/davidwilliam/proof_forge && cd proof_forge
+docker build -t proofforge-lean:4.35.0 -f infra/docker/Dockerfile.lean infra/docker   # pinned Lean image
 
-Each is accepted by six kernels in Comparator's paranoid mode (Lean default and paranoid, lean4lean, nanoda, con-leche, con-ron), and its binary passes 2,001 property cases plus resubmission cases.
+# Cetus: original port, Muse repair, pull request 6, pull request 7
+bin/proofforge verify results/cetus-1/passports/original-port.json --candidate realworld/tasks/rw-cetus-shlw/attacks/buggy_original.lean
+bin/proofforge verify results/cetus-1/repair-A1-1/passport.json --candidate results/cetus-1/repair-A1-1/final.lean
+bin/proofforge verify results/cetus-1/passports/pr6-port.json --candidate realworld/tasks/rw-cetus-shlw/attacks/pr6_mask_only.lean
+bin/proofforge verify results/cetus-1/passports/pr7-port.json --candidate realworld/tasks/rw-cetus-shlw/reference/SolutionA.lean
 
-## Benchmark
+# Euler: vulnerable port, Muse repair
+bin/proofforge verify results/euler-1/rw-euler-donate/passports/port.json --candidate realworld/tasks/rw-euler-donate/candidate/Solution.lean
+bin/proofforge verify results/euler-1/rw-euler-donate/repair-A1-1/passport.json --candidate results/euler-1/rw-euler-donate/repair-A1-1/final.lean
 
-59 repair tasks in six families (`tasks/`, contract in `docs/TASKS.md`): 23 development, 6 validation and 30 test tasks. The test families (ledgers, permissions, queues) never appear in development or in any prompt used to build the agents. Every task has two reference solutions, a buggy start candidate refuted on its binary, and seeded attacks; `harness/validate_task.py` checks all of it.
+# Hundred: Muse repair
+bin/proofforge verify results/vault-1/repair-A1-1/passport.json --candidate results/vault-1/repair-A1-1/final.lean
+
+# Implemented from the specification alone
+bin/proofforge verify results/implement-flagships-1/rw-cetus-shlw/passport.json --candidate results/implement-flagships-1/rw-cetus-shlw/final.lean
+bin/proofforge verify results/implement-flagships-1/rw-euler-donate/passport.json --candidate results/implement-flagships-1/rw-euler-donate/final.lean
+bin/proofforge verify results/implement-flagships-1/rw-hundred-vault/passport.json --candidate results/implement-flagships-1/rw-hundred-vault/final.lean
+```
+
+`verify` re-runs the full pipeline on the candidate and compares every recorded hash and status with the Passport; exit code 0 means reproduced. The executable hash is compared only on the CPU architecture that issued the Passport, after the executable is rebuilt and re-tested.
+
+## What is proved and what is not
+
+- Proved: the Lean 4 implementation accepted by the judge meets every locked requirement for every input in the stated domain. For Cetus that is every 256-bit `n` and every `u128` pair of sqrt prices and `u128` liquidity; for Euler, every state reachable from the empty market by any sequence of operations; for Hundred, any history and any further sequence of operations by any actors.
+- The requirements are formal Lean statements, not prose. A requirement covers exactly what its Lean statement says.
+- Not proved: the Solidity and Move code. Each port is a reviewed hand translation, tested against the real code on the stated inputs (2,007 inputs for Cetus, 1,004 sequences for Euler, 501 for Hundred); the translation is not machine-checked.
+- Each port models only the logic named in its task README. Cetus: `get_delta_b`, the tick math and the rest of the pool (positions, swaps, fees) are not specified, and whether a deposit with liquidity × price difference = 2^192 was reachable through the pool's entry points under pull request 6 is not claimed. Euler: one asset priced at 1, an eToken exchange rate fixed at 1 and no interest; flash loans, sub-accounts and multiple collateral assets are not modeled. Hundred: only share accounting is modeled; the comptroller, borrowing, liquidation, interest and reserves are not, and the specification does not prevent the first-depositor inflation attack.
+- Implement mode turns a precise formal specification into executable code. It does not measure writing code from an informal description. The real-code comparisons were run against the repairs, not against the implementations.
+- Loss figures are quoted from the sources each task README cites.
+- The JSON wrapper around each proved function is tested, not proved.
+- Trust assumptions, listed in every Passport: a VERIFIED requirement relies on the Lean v4.35.0 kernel, compiler and runtime; the protected specification and challenge as reviewed by the owner; Comparator and its sandbox; and the judge image, recorded by digest.
+
+## Breadth
+
+### Benchmark and E1
+
+59 repair tasks in six families (`tasks/`, contract in `docs/TASKS.md`): payouts (9), ledgers (10), transfer batches (10), permissions (10), rate limiters (10), queues (10). 23 are development, 6 validation and 30 test tasks. The test families (ledgers, permissions, queues) never appear in development or in any prompt used to build the agents. Every task has two reference solutions, a buggy start candidate refuted on its binary, and seeded attacks; `harness/validate_task.py` checks all of it.
 
 E1 compares three arms under the same per-task budget (dollars at standard-tier list prices and wall-clock time), scored by one shared evaluator:
 
@@ -54,44 +84,89 @@ Test results (`results/e1-test-1`, the 30 frozen test tasks, $3 and 60 minutes p
 
 The test tasks do not separate the arms. A1 and A2 each complete two tasks that A0 does not and none that A0 completes alone (McNemar exact p = 0.50); A1 and A2 complete the same tasks. Both A0 failures are ledger-reversal tasks on which compile-and-retry reached the dollar cap with a final candidate that does not build. Under these budgets Muse Spark completes almost every test task with or without the harness, and the Wonder planner adds cost without a measured completion gain. The 90 runs cost $70.09 at list prices; the amount charged on the Contributor tier was $6.38.
 
-The final test run requires `results/test-freeze.json`. Before making model calls, the
-runner checks each selected test task and its validation receipt against that approved
-record and binds the record's hash into the run configuration. Existing validation
-receipts identify the committed snapshot with which validation was recorded; generating
-a freeze does not rerun Lean. Resume rejects changes to the experiment configuration.
+The final test run requires `results/test-freeze.json`. Before making model calls, the runner checks each selected test task and its validation receipt against that approved record and binds the record's hash into the run configuration. Existing validation receipts identify the committed snapshot with which validation was recorded; generating a freeze does not rerun Lean. Resume rejects changes to the experiment configuration.
 
-The approved limits are $3 at standard list prices and 60 minutes per repair run, two
-concurrent runs, and a $150 batch cap. Unknown usage, lost responses, and HTTP failures
-retain conservative request reservations. All remaining arms of a task must fit before
-the task starts; omitted tasks are reported in `coverage.json`. After the repair deadline,
-finalization may select an already-produced compiling version; final judging is outside
-the repair budget for every arm. Run from an isolated checkout and keep its inputs fixed:
+The approved limits are $3 at standard list prices and 60 minutes per repair run, two concurrent runs, and a $150 batch cap. Unknown usage, lost responses, and HTTP failures retain conservative request reservations. All remaining arms of a task must fit before the task starts; omitted tasks are reported in `coverage.json`. After the repair deadline, finalization may select an already-produced compiling version; final judging is outside the repair budget for every arm. Run from an isolated checkout and keep its inputs fixed:
 
 ```sh
 python3 eval/e1.py --label test-1 --split test --arms A0,A1,A2 --budget-usd 3 --budget-wall 3600 --parallel 2 --batch-usd 150 --require-clean
 ```
 
-The PR gate has been exercised on GitHub: [PR #1](https://github.com/davidwilliam/proof_forge/pull/1)
-first rejected the seeded bulk-rounding candidate, then accepted its replacement with the
-stored Muse-authored repair. [PR #2](https://github.com/davidwilliam/proof_forge/pull/2)
-checks the accepted repair separately; [PR #3](https://github.com/davidwilliam/proof_forge/pull/3)
-rejects a protected-specification-only edit. Accepted Passports were reproduced by a second
-fresh check. [Recorded outcomes and artifacts](reports/pr-integration/summary.json) include
-the exact trusted checker revisions and valid Passport content hashes. These are automated
-integration checks; an independent human developer trial remains to be completed, following
-[the trial protocol](docs/TRIAL.md).
+### E2: what the protected pipeline adds
 
-## Trust assumptions and limits
+A repository that keeps proofs next to the code accepts whatever its own build accepts. A repair can prove a weaker statement under a required theorem's name, ship a modified specification, or compile different code from the code that was proved, and the build stays green; Lean checks each of those proofs correctly, but they are proofs of something else.
 
-Every Passport lists them. A `VERIFIED` requirement relies on the Lean v4.35.0 kernel, compiler and runtime; the protected specification and challenge as reviewed by the owner; Comparator and its sandbox; and the judge image. The JSON wrapper around the proved function is tested, not proved. A requirement says exactly what its Lean statement says; anything it does not state is not covered.
+E2 compares three ways of checking the same artifacts (`results/e2-all-1`; every bad case is a seeded test written by the build team, so this describes this suite, not repairs in general):
 
-## Running it
+| Checking | Seeded bad repairs accepted | Correct repairs rejected |
+|---|---|---|
+| Ordinary checking: the project builds, theorem names are present, the axiom audit is clean | 233 of 247 | 0 of 239 |
+| Rebuild and property tests only | 1 of 247 | 0 of 239 |
+| ProofForge | 0 of 247 | 0 of 239 |
+
+The rebuild and its tests already reject almost every seeded attack: 229 change behavior on inputs the generator produces, and 17 do not build against the locked specification. The one that passes is `formal/attacks/g2_bulk_rounding.lean`: payouts to seven or more recipients drop the remainder, the test generator never produces more than five recipients, and the attack proves `req_fair_shares`, `req_effects` and `req_conservation` restated for fewer than seven recipients. Comparator rejects the restated statement; the counterexample ($1.00 to seven recipients pays 14 cents each and loses 2 cents) is in `formal/attacks/g2_bulk_rounding.counterexample.json`. A proof covers every input; tests cover the inputs someone thought to generate.
+
+The 239 good cases are 118 reference-solution checks, 118 generated refactors of them (helpers renamed, comments added) and 3 accepted model repairs; tasks that share a base specification reuse files, so they come from 67 distinct sources. No specification-weakening attempt was observed in 138 development repair runs; every bad case here is seeded.
+
+### Implement mode on the benchmark
+
+`results/implement-1`: the A1 configuration with `--mode implement` on the 30 frozen test tasks, each run starting from a stub generated from the locked challenge (required definitions keep their signatures with placeholder bodies, every required theorem is `sorry`), $3 at list prices and 3,600 s per run, one run per task. 30 of 30 were accepted by the judge with the binary passing 2,000 property cases; the batch cost $24.99 at list prices and $1.39 charged. Caveat: the 30 tasks are 9 base specifications with 3 or 4 variants each, and the variants differ only in code implement mode never sees, so they are repeated trials of 9 problems, not 30 independent problems. In repair mode the same arm also completed 30 of 30 (McNemar exact p = 1.0000).
+
+### Released bugs in open-source money libraries
+
+`results/realworld-1`: Spliit, go-money and moneyphp each have a ProofForge task (`realworld/tasks/`) whose start candidate and attacks are Lean ports of buggy releases. The real code of each project, unmodified at the commit of every listed release, was run on 2,000 generated inputs plus the inputs documented in its issues, and checked against the same requirements and a proved component; RubyMoney was checked as real code only. Each recorded violation is restated as a `decide` goal and checked in the Lean kernel (35 goals); each port's refutation on its documented input is a kernel-checked theorem (6 ports).
+
+| Project | Buggy release | Real code | Fix |
+|---|---|---|---|
+| Spliit `getBalances` | 1.21.0 | 977 inputs break REQ-CONSERVATION (439 lose cents, 538 create cents); 100 cents split three ways gives 33 + 33 + 33 | 1.22.0 meets every requirement on 2,001 inputs |
+| go-money `Money.Split` | v1.0.3, v1.0.5 | v1.0.3 panics on 750 valid inputs; v1.0.5 gives 110 inputs shares of the wrong sign that do not add up | v1.0.6 identical to the proved component on all 2,002 inputs |
+| moneyphp `Money::allocate` | v3.0.9, v3.1.0, v3.2.0 | v3.0.9 breaks requirements on 1,344 inputs; v3.1.0 throws on 8 valid inputs; v3.2.0 assigns leftovers in list order on 1,312 | v3.2.1 meets every requirement on 2,003 inputs |
+
+Muse repairs (Muse Spark 1.3 on the Contributor tier with the Muse Wonder 1.0 planner, arm A2):
+
+- go-money: VERIFIED, all 6 requirements, within the E1 caps ($0.97 list, $0.22 charged); its behavior matches the fixed v1.0.6 on all 2,002 inputs.
+- Spliit: VERIFIED, all 8 requirements, on the third run. The first run stopped at the wall cap with 3 of 8 proved, the second at a $10 dollar cap with 7 of 8, and the third, started from the second's final candidate, was accepted; the second and third runs together cost $12.17 at list prices ($2.53 charged).
+- moneyphp: UNRESOLVED. Two runs ($3 and $10 caps) each proved 3 of 8 requirements; Muse did not complete the repair. Its proved reference component was written by the build team.
+
+### Natural failures in Muse-written candidates
+
+`results/natural-1` classifies every intermediate candidate the Muse agents saved in E1 and the payout development runs: 5,860 versions from 234 runs on 53 tasks, with no model calls and no edits by the build team. The 293 distinct implementations were each run on 62,001 generated cases (the standard suite, 20 further seeds and a stretched generator); none passes the standard tests while violating a requirement on a confirmed witness, and the same search finds 338 violating cases in the seeded bulk-rounding attack used as a control. No candidate changed a required theorem statement, redefined a protected definition or declared an axiom. 51 candidates in 2 runs used `native_decide` and 30 in 10 runs lacked a required theorem; the judge rejected a representative of each of the 15 flagged groups. The witnesses are defined by the task oracle, the inputs are generated only, and the corpus covers one model under this harness, which never asked the agents to evade the checks.
+
+### Pull-request gate
+
+The PR gate has been exercised on GitHub: [PR #1](https://github.com/davidwilliam/proof_forge/pull/1) first rejected the seeded bulk-rounding candidate, then accepted its replacement with the stored Muse-authored repair. [PR #2](https://github.com/davidwilliam/proof_forge/pull/2) checks the accepted repair separately; [PR #3](https://github.com/davidwilliam/proof_forge/pull/3) rejects a protected-specification-only edit. Accepted Passports were reproduced by a second fresh check. [Recorded outcomes and artifacts](reports/pr-integration/summary.json) include the exact trusted checker revisions and valid Passport content hashes. These are automated integration checks; an independent human developer trial remains to be completed, following [the trial protocol](docs/TRIAL.md).
+
+## How it works
+
+A component's requirements are written once as Lean 4 predicates over its implementation and locked by hash. A Muse model fixes the buggy code, or writes it from a stub, and proves every requirement. The candidate counts only if the official checker accepts it in a fresh sandbox and the executable rebuilt from the same source passes property tests derived from the same requirements. ProofForge judges every candidate against the locked challenge with Lean's `lake comparator` in a bubblewrap sandbox (six kernels in paranoid mode: Lean default and paranoid, lean4lean, nanoda, con-leche, con-ron), replays it with `leanchecker`, audits its axioms, rejects code-override constructs, and tests the executable rebuilt from the locked project. Each requirement gets a status: VERIFIED, REFUTED with a concrete witness, or UNRESOLVED. The result is a Proof Passport: per-requirement statuses, hashes, commands, axioms, trust assumptions and a one-command reproduction. Every step, with its exact command, is described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+### Meta models and their roles
+
+All model calls go through the Meta Model API (`agents/`).
+
+- Muse Spark 1.3 (`muse-spark-1.3-contributor`) is the repairer, implementer and prover. It fixes behavior against the binary tests first, then proves each requirement through tools: compile a snippet, bank proved lemmas, check per-theorem status, run tests on the compiled binary.
+- Muse Wonder 1.0 (`muse-wonder-1.0`) is the lemma planner in arm A2: when an obligation resists direct proof, it proposes helper lemma statements that Spark then proves. On the E1 test tasks it did not change completion and added cost; the flagship exploit repairs and implementations used no planner.
+- Costs are tracked at two prices (`agents/budget.py`): Muse Spark 1.3 at standard list prices ($1.25 input, $0.15 cached input, $4.25 output per million tokens), which the per-run dollar caps use, and as charged on the Contributor tier ($0.10, $0.002 and $0.20).
+
+### The payout task
+
+The task in `formal/` is a payout splitter whose bug loses a cent: $1.00 to three recipients pays 33 + 33 + 33. Muse Spark 1.3 repaired it and proved all eight requirements (valid payouts succeed, invalid ones change nothing, fair shares, full-state effects, conservation, nonnegativity, authorization, idempotency); the rebuilt binary pays 34 + 33 + 33. Three accepted repairs are stored with provenance in `formal/evidence/`:
+
+| Evidence | Agent | Standard list price | Charged (Spark on the Contributor tier) | Notes |
+|---|---|---|---|---|
+| `muse-repair-001` | Spark 1.3 with the harness, Wonder planner | $2.07 | $0.47 | two sessions across a harness fix |
+| `muse-repair-002` | Spark 1.3 with the harness, Wonder planner | $1.31 | $0.34 | single session, 20 minutes |
+| `muse-repair-003` | Spark 1.3, compile-and-retry only | $1.90 | $0.11 | 27 attempts, 26 minutes |
+
+Each is accepted by six kernels in Comparator's paranoid mode, and its binary passes 2,001 property cases plus resubmission cases.
+
+### Running it
 
 Requirements: Docker (judging runs in Linux containers), Python 3.12 or later, Node 20 for the web front end.
 
 ```
 docker build -t proofforge-lean:4.35.0 -f infra/docker/Dockerfile.lean infra/docker   # pinned Lean image
-python3 harness/validate_task.py formal                            # check the flagship task end to end
+python3 harness/validate_task.py formal                            # check the payout task end to end
 bin/proofforge check --candidate formal/evidence/muse-repair-002/Solution.lean --out passport.json
 bin/proofforge verify passport.json --candidate formal/evidence/muse-repair-002/Solution.lean
 ```
@@ -100,6 +175,7 @@ Repair agents need `META_API_KEY` in the environment or in `.env`:
 
 ```
 python3 agents/repair.py --task payout-flagship                    # A2; add --planner none for A1
+python3 agents/repair.py --task payout-flagship --mode implement   # implement from the locked challenge
 python3 agents/baseline.py --task payout-flagship                  # A0
 python3 eval/e1.py --label dev --split dev                         # E1
 python3 eval/e2.py --label all                                     # E2 (no model calls)
@@ -113,11 +189,11 @@ python3 -m venv .venv && .venv/bin/pip install -r server/requirements.txt
 cd web && pnpm install && pnpm dev
 ```
 
-## Deployment
+### Deployment
 
 The API and judge run on a Fly.io Machine (performance-4x, 8 GB, region iad), the front end on Vercel. Fly Machines are microVMs with their own Linux kernel, so Comparator's bubblewrap sandbox runs unchanged as an unprivileged user. Both deploy scripts build from the committed tree only (`infra/fly/deploy.sh`, `infra/vercel/deploy.sh`); Passports record the judge image by registry digest.
 
-Live jobs run Muse Spark 1.3 on its Contributor tier (every task here is synthetic) with Muse Wonder as planner. Controls (`server/controls.py`): per-client daily quotas and a daily live spending cap at the prices actually charged, stored on the data volume, a per-job dollar cap at standard list prices and a wall-clock cap, concurrency limits that answer 503 with Retry-After, request-wide deadlines on checks (a check stopped by its deadline is UNRESOLVED, never REFUTED), and an operator switch to replay-only mode that can also stop running live agents.
+Live jobs run Muse Spark 1.3 on its Contributor tier, on synthetic tasks only, with Muse Wonder as planner. Controls (`server/controls.py`): per-client daily quotas and a daily live spending cap at the prices actually charged, stored on the data volume, a per-job dollar cap at standard list prices and a wall-clock cap, concurrency limits that answer 503 with Retry-After, request-wide deadlines on checks (a check stopped by its deadline is UNRESOLVED, never REFUTED), and an operator switch to replay-only mode that can also stop running live agents.
 
 Measured on the deployed host:
 
@@ -128,16 +204,18 @@ Measured on the deployed host:
 - [Failure drills](reports/drills/fly-1.json) (`infra/drills.py`): a Lean syntax error, a required proof left as `sorry`, an empty file and an `implemented_by` override are UNRESOLVED; the buggy candidate with a comment telling the checker to report VERIFIED is REFUTED, and a correct repair with the same comment is VERIFIED; malformed or out-of-bounds requests get 4xx answers. On the local judge ([report](reports/drills/local-1.json), `infra/drills_local.py`), a Passport edited after issue, a stale Passport from an earlier lock and a source file changed after the check (by one comment, or back to the buggy code) are not reproduced, and a missing or widened Comparator configuration, in the checker checkout or shipped with the candidate, is a stated rejection. Model API failures (rate limiting, server errors, malformed bodies, a rejected key, malformed tool arguments) are drilled against a local stand-in in `tests/test_model_failures.py`: retried and charged at their worst case, a persistent outage ends at the budget cap.
 - [Browser walk-through](reports/browser-walk/vercel-1.json) (`infra/browser-walk.js`, Chromium): the replay reaches a VERIFIED Passport in 33 s at 80x, the hidden challenge and both payout builds answer, and all five pages render at 1440 px and 390 px in light and dark with no console errors, failed requests or horizontal scrolling. Its first pass found the results and Passport pages scrolling sideways on a phone; fixed before this run.
 
-## Layout
+### Layout
 
 | Path | Contents |
 |---|---|
-| `formal/` | flagship task: locked spec and challenge, executable wrapper, oracle, references, attacks, evidence |
+| `realworld/` | real-world tasks (Cetus, Euler, Hundred, Spliit, go-money, moneyphp) and the adapters that run the real code |
+| `formal/` | payout task: locked spec and challenge, executable wrapper, oracle, references, attacks, evidence |
 | `tasks/` | benchmark tasks |
-| `hidden/` | hidden live-challenge variants of the flagship |
+| `hidden/` | hidden live-challenge variants of the payout task |
 | `harness/` | judge, binary check, ordinary checking, lock, validator, Passport |
+| `bin/proofforge` | `check`, `verify` and `tasks` commands |
 | `agents/` | Meta Model API client, budget, repair agent, compile-and-retry baseline |
-| `eval/` | E1 and E2 runners |
+| `eval/` | E1, E2, implement-mode, real-code and natural-failure runners |
 | `server/`, `web/` | API and front end |
 | `infra/` | images, deployment, host smoke test and reliability check |
 | `.github/workflows/` | proof-carrying PR check |
