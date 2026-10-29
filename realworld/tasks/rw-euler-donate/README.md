@@ -42,6 +42,10 @@ Euler's own unit tests for the function, `test/reservesDonate.js` at the same co
 
 Two further seeded wrong candidates are rejected: `attacks/solvent_not_risk_adjusted.lean` refuses a donation only when debt would exceed collateral (not 95% of it), and `attacks/donate_disabled.lean` refuses every donation (REQ-ALLOWED-SUCCEEDS).
 
+## Muse repair
+
+`agents/repair.py` with Muse Spark 1.3 on the Contributor tier and no planner (arm A1), from the vulnerable port, under a cap of $10 at standard list prices and 7,200 s, repaired the task in its first attempt (`results/euler-1/rw-euler-donate/repair-A1-1`). The repair adds `Healthy a` to the donation guard, the same check as the reference, and proves all six requirements. It used 40 model calls, $0.83 at list prices and $0.05 charged, in 1,682 s. `bin/proofforge check` issued a VERIFIED Passport (sha256 `6de7bb94c38cf23a31ba08174d7505b4b8d54dddc9ffbd6d177dde4981b82002`: Comparator's six kernels, leanchecker, axioms `propext` and `Quot.sound` only, 2,001 property cases), and `bin/proofforge verify` reproduced every hash and status. Arm A2 (Wonder planner) was not run, since A1 succeeded. The real-code comparison below uses this repair as the proved component.
+
 ## How the model maps to Euler's contracts
 
 | Model | Euler v1 at b1ee326 |
