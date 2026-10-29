@@ -35,11 +35,22 @@ fails.
    Expected: property tests pass, the proof check rejects `req_fair_shares`, and the status
    is `UNRESOLVED`. This candidate is a seeded example written for the demonstration; its
    counterexample is in `formal/attacks/g2_bulk_rounding.counterexample.json`.
-5. Make a scratch directory holding `candidate/Solution.lean` (a copy of
-   `formal/evidence/muse-repair-002/Solution.lean`) and `spec/Payout/Spec.lean` (a copy of
-   `formal/spec/Payout/Spec.lean`). Weaken any statement in the copied specification, then run
-   `bin/proofforge check --candidate <scratch directory>`.
-   Expected: rejected as a protected-file change.
+5. Submit a correct repair together with a weakened copy of the specification. These
+   commands change the conservation requirement from "total money is unchanged" (`=`) to
+   "total money does not grow" (`≤`), which the one-cent bug satisfies:
+
+   ```
+   S=$(mktemp -d)
+   mkdir -p "$S/candidate" "$S/spec/Payout"
+   cp formal/evidence/muse-repair-002/Solution.lean "$S/candidate/"
+   cp formal/spec/Payout/Spec.lean "$S/spec/Payout/"
+   perl -pi -e 's/total \(step s r\)\.2 = total s/total (step s r).2 ≤ total s/' "$S/spec/Payout/Spec.lean"
+   diff formal/spec/Payout/Spec.lean "$S/spec/Payout/Spec.lean"
+   bin/proofforge check --candidate "$S"
+   ```
+
+   Expected: `diff` shows the one changed line, and the check exits 1 with
+   `protected file modified: spec/Payout/Spec.lean`.
 6. Open any Passport on the live demo (for example from the replay on its home page), use
    "Download passport.json" and "Download Solution.lean", put both files in the repository
    root and run `bin/proofforge verify passport.json --candidate Solution.lean`.
