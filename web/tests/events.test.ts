@@ -192,6 +192,7 @@ describe("flagship-a2-run7 specifics", () => {
 describe("real job log from runs/jobs (local only)", () => {
   const jobs = path.join(ROOT, "runs", "jobs");
   const dirs = fs.existsSync(jobs) ? fs.readdirSync(jobs).filter((d) => fs.existsSync(path.join(jobs, d, "events.jsonl"))) : [];
+  if (dirs.length === 0) it.skip("no job logs in runs/jobs on this machine", () => {});
   for (const d of dirs) {
     it(`job ${d} reduces without unknown kinds`, () => {
       const events = parseJsonl(fs.readFileSync(path.join(jobs, d, "events.jsonl"), "utf8"));
