@@ -1,8 +1,9 @@
-// Reads files written by the test run and by scripts/repaired-passport.mjs.
+// Reads files written by the test run, scripts/repaired-passport.mjs and scripts/realworld.mjs.
 // Server only: uses the filesystem at request time so the page always shows the latest run.
 
 import fs from "node:fs";
 import path from "node:path";
+import { normalizeRealworld } from "./realworld";
 
 export interface PropertyTestReport {
   suite: string;
@@ -31,3 +32,5 @@ function readJson<T>(name: string): T | null {
 
 export const readPropertyTests = () => readJson<PropertyTestReport>("property-tests.json");
 export const readRepairedPassport = () => readJson<RepairedPassportRef>("repaired-passport.json");
+/** Released real-world bugs (scripts/realworld.mjs); no projects when the file is absent. */
+export const readRealworld = () => normalizeRealworld(readJson<unknown>("realworld.json"));
