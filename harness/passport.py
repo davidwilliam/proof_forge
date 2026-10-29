@@ -26,6 +26,13 @@ TRUST = [
 ]
 
 
+def reconstruction(task):
+    """The note a task reconstructed from published findings (because the original code is not
+    public) puts on every Passport, from task.json `source.passport_note`; None otherwise."""
+    src = task.meta.get("source") or {}
+    return src.get("passport_note") if src.get("reconstructed") else None
+
+
 def statement(task, theorem):
     text = (task.root / task.spec_dir / "Challenge.lean").read_text()
     m = re.search(rf"^theorem\s+{re.escape(theorem)}\s*:\s*(.*?)\s*:= sorry$", text, re.M)
@@ -124,13 +131,20 @@ def build(task, candidate, j, b, provenance=None):
         "reproduce": f"bin/proofforge verify passport.json --candidate {candidate}",
         "timings_ms": {"judge": j["elapsed_ms"], "binary": b.get("elapsed_ms")},
     }
+    note = reconstruction(task)
+    if note:
+        p["reconstruction"] = note
+        p["trust_assumptions"] = TRUST + [note]
     p["passport_sha256"] = content_hash(p)
     return p
 
 
 def markdown(p):
     """PR comment / terminal summary."""
-    lines = [f"**ProofForge: {p['task']['id']} {p['status']}**", "", "```"]
+    lines = [f"**ProofForge: {p['task']['id']} {p['status']}**", ""]
+    if p.get("reconstruction"):
+        lines += [p["reconstruction"], ""]
+    lines += ["```"]
     w = max(len(r["id"]) for r in p["requirements"])
     for r in p["requirements"]:
         extra = ""

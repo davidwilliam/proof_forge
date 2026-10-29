@@ -95,6 +95,32 @@ def test_missing_comparator_config_is_a_rejection_not_a_crash():
         assert passport.permitted_axioms(task) == []
 
 
+def test_realworld_task_loads_by_id_for_verify():
+    assert passport.taskmod.load("rw-gomoney-split").root == ROOT / "realworld/tasks/rw-gomoney-split"
+
+
+def test_reconstructed_task_note_is_on_every_passport_and_only_there():
+    plain = built_passport("linux/amd64", "a" * 64)
+    assert "reconstruction" not in plain and plain["trust_assumptions"] == passport.TRUST
+    note = "Reconstructed from published findings; not the original code."
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp) / "formal"
+        shutil.copytree(ROOT / "formal", root, ignore=shutil.ignore_patterns(".lake", "__pycache__"))
+        meta = json.loads((root / "task.json").read_text())
+        meta["source"] = {"reconstructed": True, "passport_note": note}
+        (root / "task.json").write_text(json.dumps(meta))
+        task = passport.taskmod.load(str(root))
+        j = {"accepted": False, "elapsed_ms": 0, "solution_tree_sha256": "test-source",
+             "checks": {"tree": {"passed": True, "problems": []}, "impl_scan": {"passed": True, "problems": []}}}
+        b = {"status": "REFUTED", "cases": 2001, "followup_cases": 0, "seed": 0, "violations": {}}
+        with patch.object(passport.judge, "image_id", return_value="test-image"), \
+                patch.object(passport.judge, "image_platform", return_value="linux/amd64"):
+            p = passport.build(task, root / "candidate/Solution.lean", j, b)
+    assert p["reconstruction"] == note and p["trust_assumptions"] == passport.TRUST + [note]
+    assert p["passport_sha256"] == passport.content_hash(p)
+    assert note in passport.markdown(p)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

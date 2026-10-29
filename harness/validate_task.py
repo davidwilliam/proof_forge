@@ -20,7 +20,7 @@ import binary_check, judge, lock, ordinary, task as taskmod  # noqa: E402
 KEYS = {"schema_version", "id", "family", "split", "lib", "namespace", "definitions",
         "requirements", "exe", "issue"}
 FAMILIES = {"payouts", "transfers", "ledgers", "rate-limiters", "permissions", "queues", "fixed-point",
-            "lending"}
+            "lending", "order-routing"}
 BANNED = [("\u2014", "em dash"), ("\u2013", "en dash")]
 
 
