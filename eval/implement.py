@@ -72,6 +72,8 @@ def report(out, tasks):
                "elapsed_s": ev["elapsed_s"], "stop": ev["stop"], "versions": s.get("versions"),
                "accepted_in_session": s.get("accepted_in_session"), "final_status": s.get("final_status"),
                "repair_mode_A1_completed": repair_done}
+        row["tests_calls"] = sum(e.get("kind") == "tests" for e in events)
+        row["whole_file_phase"] = any(e.get("kind") == "phase" and e.get("phase") == "whole-file" for e in events)
         if not ev["completed"]:
             row["failure"] = failure_reason(ev, s, events)
         rows.append(row)
@@ -105,6 +107,15 @@ def report(out, tasks):
                                      "mcnemar_p": e1.mcnemar_exact(impl_only, rep_only)}
     stops = {k: sum(r["stop"] == k for r in rows) for k in ("usd", "wall")}
     summary["budget_stops"] = stops
+    rep_cfg = json.loads((REPAIR_RESULTS / "config.json").read_text())
+    rep_secs = [json.loads((REPAIR_RESULTS / r["task"] / ARM / "eval.json").read_text())["elapsed_s"] for r in rep_rows]
+    secs = [r["elapsed_s"] or 0 for r in rows]
+    first_pass = sum(r["tests_calls"] <= 2 for r in rows)
+    whole = [r["task"] for r in rows if r["whole_file_phase"]]
+    summary.update(mean_elapsed_s=round(sum(secs) / max(1, n), 1), max_elapsed_s=max(secs, default=0),
+                   max_usd_list=max((r["usd_list"] or 0 for r in rows), default=0),
+                   implementation_passed_tests_on_first_write=first_pass, whole_file_phase_runs=whole,
+                   repair_mode_A1_mean_elapsed_s=round(sum(rep_secs) / max(1, len(rep_secs)), 1))
     L = ["# Implement mode on the E1 test tasks", "",
          f"Arm: the E1 A1 configuration ({cfg.get('model', 'muse-spark-1.3-contributor')}, no planner) with `--mode implement`. "
          "Each run starts from a stub generated from the locked challenge: the required definition keeps its exact "
@@ -116,7 +127,10 @@ def report(out, tasks):
          f"{e1.EVAL_CASES} property cases (seed {e1.EVAL_SEED}), the E1 evaluator unchanged. One run per task, no reruns.", "",
          "The 30 tasks are 9 base specifications with 3 or 4 variants each. Variants differ only in their buggy candidate "
          "and issue report, so in implement mode they share the starting stub and the prompt: the variants of a base are "
-         "repeated trials of the same problem, not independent problems.", "",
+         "repeated trials of the same problem, not independent problems. Every specification states its validity "
+         "condition and the required effect on the state as Lean predicates, so implementing from it means turning a "
+         "precise formal specification into executable code; this does not measure writing code from an informal "
+         "description.", "",
          f"Accepted: {acc} of {n}.", "",
          f"Repair mode, same arm, same tasks (`results/e1-test-1`, A1): {rep_acc} of {len(rep_rows)}. "
          f"Paired: {both} accepted in both modes, {impl_only} only in implement mode, {rep_only} only in repair mode "
@@ -126,7 +140,17 @@ def report(out, tasks):
          f"| Total at standard list prices | ${usd_l:.2f} | ${rep_usd:.2f} |",
          f"| Total charged (Contributor tier) | ${usd_a:.2f} | ${rep_usd_a:.2f} |",
          f"| List $ per accepted run | {f'{usd_l / acc:.2f}' if acc else 'n/a'} | {f'{rep_usd / rep_acc:.2f}' if rep_acc else 'n/a'} |",
-         f"| Budget stops (dollars / wall clock) | {stops['usd']} / {stops['wall']} | |", "",
+         f"| Budget stops (dollars / wall clock) | {stops['usd']} / {stops['wall']} | |",
+         f"| Mean seconds per run | {summary['mean_elapsed_s']:.0f} | {summary['repair_mode_A1_mean_elapsed_s']:.0f} |", "",
+         f"The most expensive run used ${summary['max_usd_list']:.2f} of the $3 cap and the longest {summary['max_elapsed_s']:.0f} s of "
+         f"{cfg.get('budget_wall_s', 3600):g} s. In {first_pass} of {n} runs the model's first call of the property tests "
+         "passed (the harness's own test call on the stub is not counted); in "
+         f"{len(whole)} runs the per-obligation proof phases did not finish every theorem and the closing whole-file phase "
+         "completed the proofs" + (f" ({', '.join(whole)})" if whole else "") + ".", "",
+         "Conditions that differ from the repair run: the judge image is the current pinned build "
+         f"(`{cfg.get('judge_image', 'unknown')}`), not the one E1 used (`{rep_cfg.get('judge_image')}`); the Lean "
+         "toolchain is the same v4.35.0. The batch ran in the main checkout, where other work could use the host's "
+         "shared container slots, so Lean calls may have waited longer than in E1; no run reached either cap.", "",
          "## Per family", "", "| Family | Implement accepted | Repair (E1 A1) completed | List $ | Charged $ |", "|---|---|---|---|---|"]
     for fam, v in summary["families"].items():
         L.append(f"| {fam} | {v['accepted']} of {v['n']} | {v['repair_mode_A1_completed']} of {v['n']} | {v['usd_list']:.2f} | {v['usd_actual']:.2f} |")
