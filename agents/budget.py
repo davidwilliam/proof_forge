@@ -26,6 +26,9 @@ STANDARD = {
     "muse-spark-1.2": (1.25, 0.15, 4.25),
     "muse-spark-1.1": (1.25, 0.15, 4.25),
     "muse-wonder-1.0": (4.00, 0.20, 20.00),
+    # Open-weight Muse Spark Open on Baseten Model APIs; Baseten list price as published
+    # on 2026-10-23. Confirm against the Baseten dashboard before a measured run.
+    "meta-models/muse-spark-open-1026": (1.25, 0.15, 4.25),
 }
 CONTRIBUTOR = {
     "muse-spark-1.3-contributor": ((0.10, 0.002, 0.20), "muse-spark-1.3"),

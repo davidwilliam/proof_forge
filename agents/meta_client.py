@@ -1,25 +1,39 @@
-"""Minimal Meta Model API client (OpenAI-compatible Chat Completions), stdlib only.
+"""Minimal client for Meta models over OpenAI-compatible Chat Completions, stdlib only.
 
-Reads META_API_KEY from the environment or the repository's .env file. Every call is
-logged to runs/model_calls.jsonl with model, purpose, token usage and latency; the key
-and message contents are never logged.
+Model IDs under `meta-models/` (Meta open-weight models such as Muse Spark Open) are served
+by Baseten Model APIs with BASETEN_API_KEY; every other ID goes to the Meta Model API with
+META_API_KEY. Keys come from the environment or the repository's .env file. Every call is
+logged to runs/model_calls.jsonl with provider, model, purpose, token usage and latency;
+keys and message contents are never logged.
 """
 import http.client, json, os, pathlib, socket, threading, time, urllib.error, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 BASE_URL = os.environ.get("META_API_BASE", "https://api.meta.ai/v1")
+BASETEN_URL = os.environ.get("BASETEN_API_BASE", "https://inference.baseten.co/v1")
 LOG = ROOT / "runs" / "model_calls.jsonl"
 
 
-def api_key() -> str:
-    if os.environ.get("META_API_KEY"):
-        return os.environ["META_API_KEY"]
+def provider(model) -> str:
+    return "baseten" if model.startswith("meta-models/") else "meta"
+
+
+def api_key(name="META_API_KEY") -> str:
+    if os.environ.get(name):
+        return os.environ[name]
     env = ROOT / ".env"
     if env.exists():
         for line in env.read_text().splitlines():
-            if line.strip().startswith("META_API_KEY="):
+            if line.strip().startswith(name + "="):
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
-    raise RuntimeError("META_API_KEY not set")
+    raise RuntimeError(f"{name} not set")
+
+
+def endpoint(model):
+    """(base URL, key) for the provider that serves `model`."""
+    if provider(model) == "baseten":
+        return BASETEN_URL, api_key("BASETEN_API_KEY")
+    return BASE_URL, api_key()
 
 
 class APIError(Exception):
@@ -38,16 +52,17 @@ class DeadlineReached(APIError):
         super().__init__(0, detail)
 
 
-def _attempt(data, limit):
+def _attempt(model, data, limit):
     """One HTTP request in a worker thread, waited for at most `limit` seconds in total.
     Returns (status, body, error); a request still running at the limit is abandoned and
     its eventual response is never used."""
     box = {}
+    base, key = endpoint(model)   # a missing key raises here, before any retry
 
     def work():
         req = urllib.request.Request(
-            f"{BASE_URL}/chat/completions", data=data,
-            headers={"Authorization": f"Bearer {api_key()}", "Content-Type": "application/json"})
+            f"{base}/chat/completions", data=data,
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=limit) as resp:
                 box["result"] = (resp.status, json.loads(resp.read()), None)
@@ -81,7 +96,7 @@ def chat(model, messages, purpose, tools=None, max_tokens=2048, timeout=180, ret
         limit = timeout if deadline is None else min(timeout, deadline - t0)
         if limit < 1:
             raise DeadlineReached()
-        status, body, err = _attempt(data, limit)
+        status, body, err = _attempt(model, data, limit)
         _log(model, purpose, status, int((time.monotonic() - t0) * 1000), body)
         if err is None:
             if deadline is not None and time.monotonic() > deadline:
@@ -97,7 +112,7 @@ def chat(model, messages, purpose, tools=None, max_tokens=2048, timeout=180, ret
 
 def _log(model, purpose, status, ms, body):
     LOG.parent.mkdir(exist_ok=True)
-    rec = {"ts": time.time(), "model": model, "purpose": purpose, "status": status,
+    rec = {"ts": time.time(), "provider": provider(model), "model": model, "purpose": purpose, "status": status,
            "latency_ms": ms, "returned_model": (body or {}).get("model"),
            "usage": (body or {}).get("usage")}
     with LOG.open("a") as f:
