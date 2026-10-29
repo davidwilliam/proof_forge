@@ -71,7 +71,16 @@ The reference adds the check that the other balance-lowering functions perform: 
 
 ## Real contracts
 
-`eval/realworld_euler.py` fetches the contracts at the pinned commit, checks each file it relies on against the commit's git blob hashes, deploys the modules unmodified in a local Foundry test (`realworld/adapters/euler`), and runs the attack sequence (amounts times 1e18), Euler's three donate tests and generated sequences on both the unmodified contracts and a local copy with the one-line check added. Results are in `results/euler-1/rw-euler-donate/real-code/report.json`.
+`eval/realworld_euler.py` fetches the contracts at the pinned commit, checks each file it relies on against the commit's git blob hashes, deploys the modules unmodified in a local Foundry test (`realworld/adapters/euler`, solc 0.8.10 with the optimizer settings of the repository's `hardhat.config.js`), and runs the attack sequence (amounts times 1e18), Euler's three donate test scenarios and 1,000 generated sequences on both the unmodified contracts and a local copy with the one-line check added. After every operation it compares the contracts' state with the task's requirements, with Euler's own liquidity computation (`Exec.liquidity`) and with the proved component's output on the same sequence. Results are in `results/euler-1/rw-euler-donate/real-code/report.json`:
+
+| Contracts | Sequences violating a requirement | Sequences with Euler's collateralValue < liabilityValue | Sequences identical to the proved component after every operation |
+|---|---|---|---|
+| b1ee326, unmodified | 57 of 1,004 (REQ-ACTOR-HEALTHY, REQ-STAYS-HEALTHY, REQ-NO-BAD-DEBT) | 57 | 947 |
+| b1ee326 with `checkLiquidity(account)` in donateToReserves (local copy, not an upstream release) | 0 | 0 | 1,004 |
+
+On the unmodified contracts the attack runs to the same final state as the Lean witness, times 1e18: the violator owes 134,000,000e18 with no collateral, the liquidator holds 281,095,493e18 against 261,120,000e18, the reserves hold 105,120,000e18 and the pool is empty. On the patched copy the donation reverts with `e/collateral-violation`. Euler's three donate test scenarios give the outcomes `test/reservesDonate.js` expects on both. The solvency witnesses found in the real contracts are confirmed in the Lean kernel as `¬ Healthy ⟨e, d⟩` goals (`real-code/Confirm.lean`).
+
+Harness details: the driver sends 1e6 wei of the asset to the Euler contract after activating the market, so the pool holds as many units as the `INITIAL_RESERVES` eTokens and the exchange rate is exactly 1; it liquidates with the largest repay `checkLiquidation` offers and a minimum yield of 0 (with `minYield` equal to `checkLiquidation`'s yield, rounding makes some liquidations of small positions revert with `e/liq/min-yield`); `hardhat/console.sol`, imported by Euler's test token, is replaced by a no-op logging stub. Euler's no-op successes (a zero-amount transfer, a liquidation without opportunity) are counted separately and compared by state.
 
 ## Sources
 
