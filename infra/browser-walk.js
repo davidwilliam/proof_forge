@@ -56,7 +56,7 @@ async function newPage(browser, view, scheme) {
 }
 
 async function pages(browser, passportSha) {
-  const paths = ["/", "/results", "/app", "/challenge"];
+  const paths = ["/", "/forge", "/results", "/app", "/challenge"];
   if (passportSha) paths.push(`/passport/${passportSha}`);
   for (const view of VIEWS) {
     for (const scheme of SCHEMES) {
@@ -81,7 +81,7 @@ async function pages(browser, passportSha) {
 async function replayFlow(browser) {
   const { ctx, page, log } = await newPage(browser, VIEWS[0], "light");
   const t0 = Date.now();
-  await page.goto(WEB + "/", { waitUntil: "networkidle" });
+  await page.goto(WEB + "/forge", { waitUntil: "networkidle" });
   await page.getByLabel("Recording").selectOption("flagship-a2-run7");
   await page.getByLabel("Speed").selectOption("80");
   await page.getByRole("button", { name: "Start replay" }).click();

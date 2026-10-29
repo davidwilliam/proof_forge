@@ -14,7 +14,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import smoke  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-PAGES = ["/", "/results", "/app", "/challenge"]
+PAGES = ["/", "/forge", "/results", "/app", "/challenge"]
 STATE = {"balances": [[1, 100], [2, 0], [3, 0], [4, 0]], "auth": [[1, 1]], "applied": []}
 REQ = {"txId": 1, "requester": 1, "source": 1, "recipients": [2, 3, 4], "amount": 100}
 

@@ -5,7 +5,8 @@ import { usePathname } from "next/navigation";
 import { ThemeToggle } from "./ThemeToggle";
 
 const LINKS = [
-  { href: "/", label: "Forge session" },
+  { href: "/", label: "Overview" },
+  { href: "/forge", label: "Forge session" },
   { href: "/challenge", label: "Challenge" },
   { href: "/app", label: "Payouts app" },
   { href: "/results", label: "Results" },

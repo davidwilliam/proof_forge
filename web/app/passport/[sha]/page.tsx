@@ -409,7 +409,7 @@ export default async function PassportPage({ params }: { params: Promise<{ sha: 
       ) : null}
 
       <p style={{ marginTop: 32 }}>
-        <Link href="/">Back to the forge session</Link>. Passport {shortHash(p.passport_sha256)}.
+        <Link href="/forge">Back to the forge session</Link>. Passport {shortHash(p.passport_sha256)}.
       </p>
     </main>
   );
