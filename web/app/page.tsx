@@ -9,6 +9,7 @@ import {
   FLAGSHIPS,
   HEADLINE,
   IMPLEMENTS,
+  IMPLEMENTED_FLAGSHIPS,
   SUMMARY,
   githubFile,
   incidentsSentence,
@@ -65,7 +66,11 @@ export default function Home() {
         <div className="hero-foot">
           <p>
             Muse Spark 1.3 produced each repair{FLAGSHIPS.every((f) => f.repair.attempt === 1) ? " on its first attempt" : ""}, for{" "}
-            {usd(costs.minList)} to {usd(costs.maxList)} at list prices. Lean proves the ports and the repairs, not the real Solidity and
+            {usd(costs.minList)} to {usd(costs.maxList)} at list prices.
+            {IMPLEMENTED_FLAGSHIPS.length === FLAGSHIPS.length && IMPLEMENTED_FLAGSHIPS.every((i) => i.passport.status === "VERIFIED")
+              ? " Starting from the specification alone, with no vulnerable code to work from, it also wrote all three from scratch, each VERIFIED."
+              : ""}{" "}
+            Lean proves the ports, repairs and implementations, not the real Solidity and
             Move code: <a href="#claims">what is and is not proved</a>.
           </p>
           <div className="hero-actions">

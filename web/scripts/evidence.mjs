@@ -136,6 +136,12 @@ const evidence = {
   },
   flagships,
   implements: F.IMPLEMENTS ?? undefined,
+  implemented_flagships: F.IMPLEMENTED_FLAGSHIPS.map((i) => ({
+    flagship: i.key,
+    mode: "implement: Muse starts from the locked challenge with placeholder definitions and unproved theorems; no vulnerable code, issue report or reference",
+    status: i.passport.status,
+    passport: { sha256: i.passport.sha256, path: i.passport.path, requirements: i.passport.requirements, reproduce: i.passport.reproduce },
+  })),
   benchmark: {
     tasks: F.BENCHMARK.tasks,
     splits: F.BENCHMARK.splits,
@@ -203,6 +209,13 @@ function llms() {
     L.push(`- Not proved: ${f.not_proved.join(" ")}`);
     L.push(`- Task: ${f.readme}`, "");
   }
+  L.push("## Implemented from the specification alone", "");
+  for (const i of evidence.implemented_flagships) {
+    const n = Object.keys(i.passport.requirements).length;
+    L.push(`- ${i.flagship}: ${i.status}, ${n} of ${n} requirements. Passport ${i.passport.sha256} (${i.passport.path}). Reproduce: ${i.passport.reproduce}`);
+  }
+  if (F.IMPLEMENTS) L.push(`- Benchmark: ${F.IMPLEMENTS.value} of ${F.IMPLEMENTS.of} ${F.IMPLEMENTS.label} (${F.IMPLEMENTS.detail}; ${F.IMPLEMENTS.source}).`);
+  L.push("");
   L.push("## Benchmark", "");
   L.push(`- ${evidence.benchmark.tasks} repair tasks in six families: ${evidence.benchmark.families.map((x) => `${x.family.toLowerCase()} (${x.tasks})`).join(", ")}; ${F.BENCHMARK.splits.dev} development, ${F.BENCHMARK.splits.val} validation, ${F.BENCHMARK.splits.test} test.`);
   L.push(`- E1 (${E1.source}): on the ${E1.tasks} frozen test tasks, ${E1.arms.map((a) => `${a.key} ${a.label} completed ${a.completed}`).join(", ")}; McNemar exact p = ${E1.mcnemarP} against A0, so the arms are not shown to differ. ${E1.tasks * E1.arms.length} runs cost $${E1.batchUsdList} at list prices.`);
