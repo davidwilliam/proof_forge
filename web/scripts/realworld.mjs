@@ -55,7 +55,9 @@ function version(key, v) {
   };
 }
 
-const projects = Object.entries(obj(summary.projects)).map(([key, p]) => ({
+// Only projects with a Lean port refuted by ProofForge. A real-code-only check (RubyMoney) stays in
+// results/realworld-1: its fixed release breaks fairness requirements its documentation never promised.
+const projects = Object.entries(obj(summary.projects)).filter(([, p]) => Object.keys(obj(p.ports)).length > 0).map(([key, p]) => ({
   key,
   project: str(p.project) ?? key,
   repository: str(p.repository),
