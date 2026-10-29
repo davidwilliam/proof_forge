@@ -17,6 +17,7 @@ pnpm install
 pnpm test                # property and reducer tests; writes generated/property-tests.json
 pnpm passport:repaired   # Passport for the repaired sidecar build; writes generated/repaired-passport.json
 pnpm realworld           # real-world bug results from results/realworld-1/summary.json; writes generated/realworld.json
+pnpm evidence            # machine-readable summary of the home page; writes public/evidence.json and public/llms.txt
 pnpm dev                 # http://localhost:3000
 ```
 
@@ -39,6 +40,7 @@ pnpm start
 | Path | Content |
 |---|---|
 | `/` | Overview: the problem, the four steps, headline E1 and E2 figures (`lib/evidence.ts`, checked against `results/` by `tests/evidence.test.ts`) and released real-world bugs (`generated/realworld.json`) |
+| `/llms.txt`, `/evidence.json` | The same claims, figures, Passport hashes, source paths and reproduction commands for agents (`scripts/evidence.mjs`; `tests/evidence-files.test.ts` fails when they are stale) |
 | `/forge` | Forge session. Query parameters: `job` (attach to an existing job), `recording`, `task`; `/` with any of them redirects here |
 | `/passport/<sha256>` | Passport evidence view |
 | `/challenge` | Binary check of a hidden variant |
