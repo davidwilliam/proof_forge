@@ -49,7 +49,7 @@ export default async function ResultsPage() {
   return (
     <main className="page">
       <h1>Results</h1>
-      <p className="muted" style={{ maxWidth: "80ch" }}>
+      <p className="lead">
         E1 measures repair completion per agent arm under identical budgets. E2 measures integrity: the same candidate artifacts are checked by
         ordinary checking, a trusted rebuild with property tests, and ProofForge. Every bad case in this suite is seeded;
         these results do not estimate error rates on repairs in general.
@@ -191,8 +191,14 @@ function E2Section({ name, d }: { name: string; d: E2Data }) {
             {agg.arms.map((a) => (
               <tr key={a.arm}>
                 <td>{e2ArmLabels[a.arm]}</td>
-                <td className="num">{rate(a.falseAccept)}</td>
-                <td className="num">{rate(a.falseReject)}</td>
+                <td className="num">
+                  {rate(a.falseAccept)}
+                  <Meter r={a.falseAccept} />
+                </td>
+                <td className="num">
+                  {rate(a.falseReject)}
+                  <Meter r={a.falseReject} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -272,5 +278,15 @@ function E2Section({ name, d }: { name: string; d: E2Data }) {
         <p className="small muted">Green marks a correct decision; red marks a wrong one (a bad case accepted or a good case rejected).</p>
       </details>
     </section>
+  );
+}
+
+/** A proportion bar beside a count; the count stays the primary signal. */
+function Meter({ r }: { r: Rate }) {
+  const pct = r.of ? (100 * r.count) / r.of : 0;
+  return (
+    <span className="meter" aria-hidden="true">
+      <span style={{ width: `${pct}%` }} />
+    </span>
   );
 }

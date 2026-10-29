@@ -25,7 +25,7 @@ export default async function ChallengePage() {
   return (
     <main className="page">
       <h1>Challenge a hidden variant</h1>
-      <p className="muted" style={{ maxWidth: "80ch" }}>
+      <p className="lead">
         Each variant is a buggy payout component that has not been shown to anyone. ProofForge builds its executable and runs the
         requirement-derived property tests against it. A violation comes with a concrete witness: the input and the output that breaks a locked
         requirement. The target is a witness within 20 seconds.

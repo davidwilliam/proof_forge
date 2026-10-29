@@ -14,7 +14,7 @@ export default function PayoutsPage() {
   return (
     <main className="page">
       <h1>Split a payout</h1>
-      <p className="muted" style={{ maxWidth: "75ch" }}>
+      <p className="lead">
         Enter an amount in dollars and three or more recipients, then run the same request on the buggy build and on the verified repair. Both
         builds are the Lean payout component compiled to the <code>payout-sidecar</code> executable.
       </p>

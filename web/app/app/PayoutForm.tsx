@@ -45,87 +45,89 @@ export function PayoutForm({ passportSolutionSha }: { passportSolutionSha: strin
   };
 
   return (
-    <section>
-      <h2>Payout request</h2>
-      <div className="form-grid">
-        <label htmlFor="amount">Amount (dollars)</label>
-        <div>
-          <input
-            id="amount"
-            inputMode="decimal"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            aria-invalid={!amountCheck.ok}
-            aria-describedby="amount-msg"
-            style={{ width: "100%" }}
-          />
-          <div id="amount-msg" className="small" style={{ color: amountCheck.ok ? "var(--muted)" : "var(--bad)" }}>
-            {amountCheck.ok ? `${amountCheck.value} cents` : amountCheck.error}
+    <section className="form-section">
+      <div className="card form-card">
+        <h2>Payout request</h2>
+        <div className="form-grid">
+          <label htmlFor="amount">Amount (dollars)</label>
+          <div>
+            <input
+              id="amount"
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              aria-invalid={!amountCheck.ok}
+              aria-describedby="amount-msg"
+              style={{ width: "100%" }}
+            />
+            <div id="amount-msg" className="small" style={{ color: amountCheck.ok ? "var(--muted)" : "var(--bad)" }}>
+              {amountCheck.ok ? `${amountCheck.value} cents` : amountCheck.error}
+            </div>
+          </div>
+          <label htmlFor="balance">Source balance (dollars)</label>
+          <div>
+            <input
+              id="balance"
+              inputMode="decimal"
+              value={balance}
+              onChange={(e) => setBalance(e.target.value)}
+              aria-invalid={!balanceCheck.ok}
+              aria-describedby="balance-msg"
+              style={{ width: "100%" }}
+            />
+            <div id="balance-msg" className="small" style={{ color: balanceCheck.ok ? "var(--muted)" : "var(--bad)" }}>
+              {balanceCheck.ok ? `${balanceCheck.value} cents in source account 1` : balanceCheck.error}
+            </div>
+          </div>
+          <span>Recipients (account ids)</span>
+          <div className="stack">
+            {recipients.map((r, i) => {
+              const ok = parseAccountId(r).ok;
+              return (
+                <div className="row" key={i}>
+                  <input
+                    aria-label={`Recipient ${i + 1} account id`}
+                    value={r}
+                    inputMode="numeric"
+                    onChange={(e) => setRecipients((xs) => xs.map((x, j) => (j === i ? e.target.value : x)))}
+                    aria-invalid={!ok}
+                    style={{ width: 110 }}
+                  />
+                  <button onClick={() => setRecipients((xs) => xs.filter((_, j) => j !== i))} disabled={recipients.length <= 3} aria-label={`Remove recipient ${i + 1}`}>
+                    Remove
+                  </button>
+                </div>
+              );
+            })}
+            <button
+              onClick={() =>
+                setRecipients((xs) => {
+                  const used = new Set(xs.map(Number));
+                  let next = 2;
+                  while (used.has(next)) next++;
+                  return [...xs, String(next)];
+                })
+              }
+              disabled={recipients.length >= 12}
+            >
+              Add recipient
+            </button>
           </div>
         </div>
-        <label htmlFor="balance">Source balance (dollars)</label>
-        <div>
-          <input
-            id="balance"
-            inputMode="decimal"
-            value={balance}
-            onChange={(e) => setBalance(e.target.value)}
-            aria-invalid={!balanceCheck.ok}
-            aria-describedby="balance-msg"
-            style={{ width: "100%" }}
-          />
-          <div id="balance-msg" className="small" style={{ color: balanceCheck.ok ? "var(--muted)" : "var(--bad)" }}>
-            {balanceCheck.ok ? `${balanceCheck.value} cents in source account 1` : balanceCheck.error}
-          </div>
-        </div>
-        <span>Recipients (account ids)</span>
-        <div className="stack">
-          {recipients.map((r, i) => {
-            const ok = parseAccountId(r).ok;
-            return (
-              <div className="row" key={i}>
-                <input
-                  aria-label={`Recipient ${i + 1} account id`}
-                  value={r}
-                  inputMode="numeric"
-                  onChange={(e) => setRecipients((xs) => xs.map((x, j) => (j === i ? e.target.value : x)))}
-                  aria-invalid={!ok}
-                  style={{ width: 110 }}
-                />
-                <button onClick={() => setRecipients((xs) => xs.filter((_, j) => j !== i))} disabled={recipients.length <= 3} aria-label={`Remove recipient ${i + 1}`}>
-                  Remove
-                </button>
-              </div>
-            );
-          })}
-          <button
-            onClick={() =>
-              setRecipients((xs) => {
-                const used = new Set(xs.map(Number));
-                let next = 2;
-                while (used.has(next)) next++;
-                return [...xs, String(next)];
-              })
-            }
-            disabled={recipients.length >= 12}
-          >
-            Add recipient
+        {!built.ok ? (
+          <p style={{ color: "var(--bad)" }} role="status">
+            {built.error}
+          </p>
+        ) : null}
+        <div className="row" style={{ margin: "16px 0" }}>
+          <button onClick={() => run("buggy")} disabled={!built.ok || busy !== null}>
+            {busy === "buggy" ? "Running on buggy build" : "Run on buggy build"}
           </button>
+          <button className="primary" onClick={() => run("repaired")} disabled={!built.ok || busy !== null}>
+            {busy === "repaired" ? "Running on repaired build" : "Run on repaired build"}
+          </button>
+          <span className="small muted">The first run of each build compiles it, which can take a minute.</span>
         </div>
-      </div>
-      {!built.ok ? (
-        <p style={{ color: "var(--bad)" }} role="status">
-          {built.error}
-        </p>
-      ) : null}
-      <div className="row" style={{ margin: "16px 0" }}>
-        <button onClick={() => run("buggy")} disabled={!built.ok || busy !== null}>
-          {busy === "buggy" ? "Running on buggy build" : "Run on buggy build"}
-        </button>
-        <button className="primary" onClick={() => run("repaired")} disabled={!built.ok || busy !== null}>
-          {busy === "repaired" ? "Running on repaired build" : "Run on repaired build"}
-        </button>
-        <span className="small muted">The first run of each build compiles it, which can take a minute.</span>
       </div>
       {error ? <ErrorBox title="Payout request failed" message={error} /> : null}
 
@@ -142,7 +144,7 @@ function ResultCard({ build, run, passportSolutionSha }: { build: Build; run: Ru
   const title = build === "buggy" ? "Buggy build" : "Repaired build";
   if (!run) {
     return (
-      <div className="card">
+      <div className="card result-card">
         <h3>{title}</h3>
         <p className="muted">Not run yet.</p>
       </div>
@@ -150,8 +152,9 @@ function ResultCard({ build, run, passportSolutionSha }: { build: Build; run: Ru
   }
   const { summary, response, input } = run;
   const match = passportSolutionSha ? passportSolutionSha === response.solution_sha256 : null;
+  const outcome = !summary || summary.outcome !== "ok" ? undefined : summary.discrepancy === 0 ? "conserved" : "mismatch";
   return (
-    <div className="card">
+    <div className="card result-card" data-outcome={outcome}>
       <h3>{title}</h3>
       {run.error || !summary ? (
         <p style={{ color: "var(--bad)" }}>{run.error ?? "No result"}</p>
