@@ -142,7 +142,7 @@ export function ForgeSession(props: {
 
   const running = !!jobId && !state.terminal;
   const segment = state.segment ?? (jobId ? "Connecting" : "No session running");
-  const segKind = /fresh check/i.test(segment) ? "check" : /^live$/i.test(segment) ? "live" : "recorded";
+  const segKind = !jobId ? "idle" : /fresh check/i.test(segment) ? "check" : /^live$/i.test(segment) ? "live" : "recorded";
   const showMinor = minor ?? !state.hasToolEvents;
   const wallEnd = state.terminal ? state.wallEnd : now;
   const budget = passport?.provenance?.budget;
@@ -190,10 +190,30 @@ export function ForgeSession(props: {
       </div>
 
       <div className="task-header">
-        <h1>
-          Task {task.id}: repair <code>{task.definitions.map((d) => `${task.namespace}.${d}`).join(", ")}</code>
-        </h1>
-        <p>{task.issue}</p>
+        <div>
+          <h1>
+            Task {task.id}: repair <code>{task.definitions.map((d) => `${task.namespace}.${d}`).join(", ")}</code>
+          </h1>
+          <p>{task.issue}</p>
+        </div>
+        <ol className="pipeline" aria-label="How a repair counts">
+          <li>
+            <strong>Lock</strong>
+            The owner&apos;s requirements, hashed.
+          </li>
+          <li>
+            <strong>Repair</strong>
+            A Muse model fixes the code and proves each one.
+          </li>
+          <li>
+            <strong>Check</strong>
+            Fresh Comparator, kernel replay and property tests.
+          </li>
+          <li>
+            <strong>Passport</strong>
+            Statuses come only from that check.
+          </li>
+        </ol>
       </div>
 
       <aside className="col col-left" aria-label="Locked requirements">
@@ -288,7 +308,7 @@ export function ForgeSession(props: {
         </p>
 
         {state.passport ? (
-          <div className="panel" style={{ margin: "12px 0", background: "var(--bg)" }}>
+          <div className="passport-callout">
             <div>
               Component <Status value={state.passport.status} />
             </div>

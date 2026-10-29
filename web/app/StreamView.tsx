@@ -312,7 +312,7 @@ function PassportLine({ e }: { e: RawEvent }) {
   const reqs = (e.requirements && typeof e.requirements === "object" ? e.requirements : {}) as Record<string, string>;
   const sha = s(e.passport_sha256);
   return (
-    <div className="ev-milestone" style={{ borderColor: "var(--fg)" }}>
+    <div className="ev-milestone ev-passport">
       <div style={{ fontWeight: 650 }}>
         Passport from the fresh check: component <Status value={s(e.status)} />
       </div>
