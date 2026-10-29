@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { CopyButton } from "./DownloadJson";
 
 /** A status word with its color. The word is always shown; color is never the only signal. */
 export function Status({ value, children }: { value: string | null | undefined; children?: ReactNode }) {
@@ -44,12 +45,19 @@ export function ErrorBox({ title, message, children }: { title: string; message?
   );
 }
 
-export function Hash({ value, full = false }: { value: string | null | undefined; full?: boolean }) {
+export function Hash({ value, full = false, copy = false }: { value: string | null | undefined; full?: boolean; copy?: boolean }) {
   if (!value) return <span className="muted">none</span>;
   const v = value.startsWith("sha256:") ? value.slice(7) : value;
-  return (
+  const text = (
     <span className="hash" title={v}>
       {full ? v : v.slice(0, 16)}
+    </span>
+  );
+  if (!copy) return text;
+  return (
+    <span className="hash-copy">
+      {text}
+      <CopyButton text={v} label="Copy sha256" />
     </span>
   );
 }
