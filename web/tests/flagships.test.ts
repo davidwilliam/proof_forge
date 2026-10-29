@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { BENCHMARK, FEATURED, FLAGSHIPS, type Flagship, type PassportRef } from "../lib/flagships";
+import { BENCHMARK, FEATURED, FLAGSHIPS, IMPLEMENTED_FLAGSHIPS, IMPLEMENTS, type Flagship, type PassportRef } from "../lib/flagships";
 import { ROOT, readExact, readPassport, readRunSummary } from "../scripts/lib/results.mjs";
 
 const text = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
@@ -215,5 +215,28 @@ describe("benchmark breadth", () => {
     for (const fam of BENCHMARK.families) expect(tasks.filter((t) => t.family === fam.key).length, fam.key).toBe(fam.tasks);
     expect(BENCHMARK.families.reduce((n, x) => n + x.tasks, 0)).toBe(BENCHMARK.tasks);
     for (const [split, count] of Object.entries(BENCHMARK.splits)) expect(tasks.filter((t) => t.split === split).length, split).toBe(count);
+  });
+});
+
+describe("implement-mode figures match the committed files", () => {
+  for (const i of IMPLEMENTED_FLAGSHIPS) {
+    it(i.key, () => {
+      const p = readPassport(i.passport.path);
+      expect(p.recomputedSha256).toBe(p.sha256);
+      expect(p.sha256).toBe(i.passport.sha256);
+      expect(p.status).toBe(i.passport.status);
+      expect(p.requirements).toEqual(i.passport.requirements);
+      expect(p.reproduce).toBe(i.passport.reproduce);
+      expect(FLAGSHIPS.some((f) => f.key === i.key && path.basename(f.task) === p.task)).toBe(true);
+      expect(readRunSummary(`${i.run}/summary.json`).acceptedInSession).toBe(true);
+      expect(readExact(`${i.run}/summary.json`).task_mode).toBe("implement");
+      expect(text(`${i.run}/verify.txt`)).toMatch(/^reproduced$/m);
+    });
+  }
+  it("benchmark implement count", () => {
+    const j = readExact("results/implement-1/implement.json");
+    expect(IMPLEMENTS?.value).toBe(j.summary.accepted);
+    expect(IMPLEMENTS?.of).toBe(j.summary.runs);
+    expect(Object.keys(j.summary.bases).length).toBe(9);
   });
 });

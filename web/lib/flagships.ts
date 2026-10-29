@@ -568,7 +568,83 @@ export interface ImplementsFigure {
   detail: string;
   source: string;
 }
-export const IMPLEMENTS: ImplementsFigure | null = null;
+// results/implement-1/implement.json: 30 of 30 frozen E1 test tasks accepted in implement mode
+export const IMPLEMENTS: ImplementsFigure | null = {
+  label: "test tasks implemented from the specification alone",
+  value: 30,
+  of: 30,
+  detail: "9 base specifications in ledgers, permissions and queues; the variants differ only in code implement mode never sees",
+  source: "results/implement-1/implement.json",
+};
+
+/** Implement mode on the flagships: Muse starts from a stub generated from the locked challenge. */
+export interface ImplementedFlagship {
+  key: Flagship["key"];
+  run: string;
+  passport: PassportRef;
+}
+export const IMPLEMENTED_FLAGSHIPS: ImplementedFlagship[] = [
+  {
+    key: "cetus",
+    // results/implement-flagships-1/rw-cetus-shlw/passport.json and summary.json
+    run: "results/implement-flagships-1/rw-cetus-shlw",
+    passport: {
+      path: "results/implement-flagships-1/rw-cetus-shlw/passport.json",
+      sha256: "b2cf6c2de4f91b8ea0f1505463e5301f28783d87a103c0a3e7d1d3f791a7dd7a",
+      status: "VERIFIED",
+      requirements: {
+      "REQ-SHLW-COMPLETE": "VERIFIED",
+      "REQ-SHLW-EXACT": "VERIFIED",
+      "REQ-DELTA-A-FLOOR": "VERIFIED",
+      "REQ-DELTA-A-TIGHT": "VERIFIED",
+      "REQ-DELTA-A-COVERS": "VERIFIED",
+      },
+      reproduce: "bin/proofforge verify results/implement-flagships-1/rw-cetus-shlw/passport.json --candidate results/implement-flagships-1/rw-cetus-shlw/final.lean",
+    },
+  },
+  {
+    key: "euler",
+    // results/implement-flagships-1/rw-euler-donate/passport.json and summary.json
+    run: "results/implement-flagships-1/rw-euler-donate",
+    passport: {
+      path: "results/implement-flagships-1/rw-euler-donate/passport.json",
+      sha256: "27d4ec2838e9bbfc938278e29e8eac89570d1f14a9468de15b03514cbdd4286e",
+      status: "VERIFIED",
+      requirements: {
+      "REQ-HONEST-FLOW": "VERIFIED",
+      "REQ-ALLOWED-SUCCEEDS": "VERIFIED",
+      "REQ-EFFECTS": "VERIFIED",
+      "REQ-ACTOR-HEALTHY": "VERIFIED",
+      "REQ-STAYS-HEALTHY": "VERIFIED",
+      "REQ-NO-BAD-DEBT": "VERIFIED",
+      },
+      reproduce: "bin/proofforge verify results/implement-flagships-1/rw-euler-donate/passport.json --candidate results/implement-flagships-1/rw-euler-donate/final.lean",
+    },
+  },
+  {
+    key: "hundred",
+    // results/implement-flagships-1/rw-hundred-vault/passport.json and summary.json
+    run: "results/implement-flagships-1/rw-hundred-vault",
+    passport: {
+      path: "results/implement-flagships-1/rw-hundred-vault/passport.json",
+      sha256: "eee7e2cdbedf658d81afc95f07966d5d37a9e6f7a27cabbccd6dd0dc5ba6e3c6",
+      status: "VERIFIED",
+      requirements: {
+      "REQ-DEPOSIT-SUCCEEDS": "VERIFIED",
+      "REQ-REDEEM-SUCCEEDS": "VERIFIED",
+      "REQ-WITHDRAW-SUCCEEDS": "VERIFIED",
+      "REQ-DEPOSIT-EFFECTS": "VERIFIED",
+      "REQ-REDEEM-EFFECTS": "VERIFIED",
+      "REQ-WITHDRAW-EFFECTS": "VERIFIED",
+      "REQ-DEPOSIT-ROUNDS-DOWN": "VERIFIED",
+      "REQ-REDEEM-ROUNDS-DOWN": "VERIFIED",
+      "REQ-WITHDRAW-ROUNDS-UP": "VERIFIED",
+      "REQ-SHARE-VALUE": "VERIFIED",
+      },
+      reproduce: "bin/proofforge verify results/implement-flagships-1/rw-hundred-vault/passport.json --candidate results/implement-flagships-1/rw-hundred-vault/final.lean",
+    },
+  }
+];
 
 /** The benchmark beyond the incidents (tasks/ and formal/). */
 export const BENCHMARK = {
@@ -607,4 +683,4 @@ export function incidentsSentence(fs: readonly Flagship[] = FLAGSHIPS): string {
 
 export const HEADLINE = "AI-written financial code that ships with a proof.";
 export const SUMMARY =
-  "Meta's Muse Spark fixes the logic behind real exploits and proves every locked requirement in Lean 4. ProofForge rechecks each proof in a fresh sandbox and issues a Passport. No proof, no merge.";
+  "Meta's Muse Spark writes and repairs the logic behind real exploits and proves every locked requirement in Lean 4. ProofForge rechecks each proof in a fresh sandbox and issues a Passport. No proof, no merge.";
