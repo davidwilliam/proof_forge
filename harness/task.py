@@ -24,6 +24,7 @@ import hashlib, importlib.util, json, pathlib, sys, threading
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FLAGSHIP = ROOT / "formal"
 TASKS = ROOT / "tasks"
+REALWORLD = ROOT / "realworld" / "tasks"
 PROJECT_FILES = ["lean-toolchain", "lakefile.toml", "lake-manifest.json", "spec", "app"]
 _ORACLE_LOCK = threading.Lock()
 
@@ -85,7 +86,8 @@ class Task:
 
 
 def load(arg=None) -> Task:
-    """Load a task by directory path or by id under tasks/; default is the flagship."""
+    """Load a task by directory path, or by id under tasks/ or realworld/tasks/; default is
+    the flagship."""
     if arg is None:
         return Task(FLAGSHIP)
     p = pathlib.Path(arg)
@@ -93,6 +95,8 @@ def load(arg=None) -> Task:
         return Task(p)
     if (TASKS / arg / "task.json").exists():
         return Task(TASKS / arg)
+    if (REALWORLD / arg / "task.json").exists():
+        return Task(REALWORLD / arg)
     if arg in ("flagship", "payout-flagship"):
         return Task(FLAGSHIP)
     raise FileNotFoundError(f"no task {arg}")
