@@ -1,6 +1,7 @@
 import ProofForgeFin.Money.Round
 import ProofForgeFin.Money.Allocation
 import ProofForgeFin.Money.Hamilton
+import ProofForgeFin.Money.Split
 /-!
 # ProofForgeFin.Money
 
@@ -13,4 +14,5 @@ exponents, interest, currency conversion and fees.
   between them, the symmetric convention for negative amounts, and the remainder-to-the-first
   methods.
 * `ProofForgeFin.Money.Hamilton`: allocation by the largest-remainder method.
+* `ProofForgeFin.Money.Split`: equal splits of signed amounts.
 -/
