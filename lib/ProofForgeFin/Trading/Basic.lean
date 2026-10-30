@@ -58,9 +58,11 @@ def lt : Side → Nat → Nat → Prop
   | buy, p, q => q < p
   | sell, p, q => p < q
 
+/-- "At least as good" is decidable. -/
 instance instDecidableLe (s : Side) (p q : Nat) : Decidable (s.le p q) := by
   cases s <;> unfold le <;> infer_instance
 
+/-- "Strictly better" is decidable. -/
 instance instDecidableLt (s : Side) (p q : Nat) : Decidable (s.lt p q) := by
   cases s <;> unfold lt <;> infer_instance
 
