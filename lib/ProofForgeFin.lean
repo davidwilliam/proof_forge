@@ -1,6 +1,7 @@
 import ProofForgeFin.Rounding
 import ProofForgeFin.FixedPoint
 import ProofForgeFin.Word
+import ProofForgeFin.Seq
 /-!
 # ProofForgeFin
 
@@ -11,4 +12,6 @@ no dependency beyond the Lean core library.
 * `ProofForgeFin.FixedPoint`: fixed-point products and quotients at any scale, scaled and
   decimal conversions, round trips.
 * `ProofForgeFin.Word`: exactness conditions for `BitVec` arithmetic and shift overflow.
+* `ProofForgeFin.Seq`: runs of operations, traces, atomic runs, reachable states, invariants and
+  accumulated bounds.
 -/
