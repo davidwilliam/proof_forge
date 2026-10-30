@@ -1,6 +1,7 @@
 import ProofForgeFinDemo.ShareVault
 import ProofForgeFinDemo.BatchTransfer
 import ProofForgeFinDemo.Compound
+import ProofForgeFinDemo.Euler
 /-!
 # ProofForgeFin demonstrations
 
@@ -11,4 +12,5 @@ task files (the task files are not imported or modified).
 * `BatchTransfer`: `sum_shift` and `sum_applyLegs` of `transfers-batch-b3`.
 * `Compound`: `run_inv`, `run_pot` and the final bound of `rw-compound-comp`, for every
   implementation, invariant and potential.
+* `Euler`: REQ-NO-BAD-DEBT of `rw-euler-donate` from REQ-STAYS-HEALTHY, for every implementation.
 -/
