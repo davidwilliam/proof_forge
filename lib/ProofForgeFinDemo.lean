@@ -6,6 +6,7 @@ import ProofForgeFinDemo.Trading
 import ProofForgeFinDemo.Machine
 import ProofForgeFinDemo.Evm
 import ProofForgeFinDemo.Money
+import ProofForgeFinDemo.DeFi
 /-!
 # ProofForgeFin demonstrations
 
