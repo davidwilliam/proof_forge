@@ -178,6 +178,24 @@ theorem healthy_of_params {m m' : Params} {p : Position} (hone : m'.one = m.one)
   exact Nat.le_trans (mulUp_mono _ (Nat.le_refl _) hd)
     (Nat.le_trans h (mulDown_mono _ (mulDown_mono _ (Nat.le_refl _) hc) hf))
 
+/-- The health factor at scale `one` (Aave's `healthFactor`): the borrow limit over the debt
+value, rounded down; 0 for a position without debt value (Aave reports the maximum there). -/
+def healthFactor (p : Position) : Nat := m.borrowLimit p * m.one / m.debtValue p
+
+/-- A position with debt is healthy exactly when its health factor is at least 1. -/
+theorem one_le_healthFactor_iff {p : Position} (h : 0 < m.debtValue p) :
+    m.one ≤ m.healthFactor p ↔ m.Healthy p := by
+  unfold healthFactor Healthy
+  rw [Nat.le_div_iff_mul_le h, Nat.mul_comm m.one]
+  rcases Nat.eq_zero_or_pos m.one with h0 | h0
+  · constructor
+    · intro _
+      unfold debtValue mulUp mulDivUp at h
+      rw [h0] at h
+      simp [ceilDiv] at h
+    · intro _; rw [h0]; simp
+  · exact ⟨fun h1 => Nat.le_of_mul_le_mul_right h1 h0, fun h1 => Nat.mul_le_mul_right _ h1⟩
+
 /-! ### Liquidation -/
 
 /-- Collateral seized for repaying `repay` units of debt with liquidation incentive `incentive`

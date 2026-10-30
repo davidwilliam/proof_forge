@@ -442,6 +442,111 @@ theorem scaled_dominates (one : Nat) (hone : 0 < one) (raw rate : Nat → Nat) {
     · rw [update2_other _ _ _ hi hj, update2_other _ _ _ hi hj]
       exact Nat.le_refl _
 
+/-! ### A pool-math interface -/
+
+/-- Pool math on balances `b`: an invariant (StableMath's `D`, the constant product) and the two
+pricing functions (`_calcOutGivenIn`, `_calcInGivenOut`; token `i` in, token `j` out). -/
+structure PoolMath where
+  /-- The invariant of the balances. -/
+  invariant : (Nat → Nat) → Nat
+  /-- The amount of token `j` out for `x` of token `i` in. -/
+  outGivenIn : (Nat → Nat) → Nat → Nat → Nat → Nat
+  /-- The amount of token `i` in for `x` of token `j` out. -/
+  inGivenOut : (Nat → Nat) → Nat → Nat → Nat → Nat
+
+/-- A given-in trade priced by the math pays out at most the balance and keeps the invariant. -/
+def OutGivenInSound (m : PoolMath) (n : Nat) : Prop :=
+  ∀ (b : Nat → Nat) (i j x : Nat), i ≠ j → i < n → j < n →
+    m.outGivenIn b i j x ≤ b j ∧
+    m.invariant b ≤ m.invariant (update2 b i (b i + x) j (b j - m.outGivenIn b i j x))
+
+/-- A given-out trade below the balance, priced by the math, keeps the invariant. -/
+def InGivenOutSound (m : PoolMath) (n : Nat) : Prop :=
+  ∀ (b : Nat → Nat) (i j x : Nat), i ≠ j → i < n → j < n → x < b j →
+    m.invariant b ≤ m.invariant (update2 b i (b i + m.inGivenOut b i j x) j (b j - x))
+
+/-- The contract of Balancer's swap specification for an `n`-token pool: a monotone invariant that
+trades priced by the math keep. -/
+structure WellBehaved (m : PoolMath) (n : Nat) : Prop where
+  /-- The invariant does not decrease when no balance decreases. -/
+  monotone : InvariantMonotone m.invariant n
+  /-- Given-in trades keep it. -/
+  outGivenIn : OutGivenInSound m n
+  /-- Given-out trades keep it. -/
+  inGivenOut : InGivenOutSound m n
+
+/-- A given-in swap settled in raw units keeps the invariant of the scaled balances (rounded
+down) when the math was credited at most the amount in, rounded down, and the amount out, in scaled
+units, is at most what the math priced. -/
+theorem WellBehaved.scaled_swapIn {m : PoolMath} {n : Nat} (hw : WellBehaved m n) {one : Nat}
+    (hone : 0 < one) (raw rate : Nat → Nat) {i j x ain aout : Nat} (hij : i ≠ j) (hi : i < n)
+    (hj : j < n) (hgain : x * one ≤ ain * rate i)
+    (hloss : aout * rate j ≤
+      m.outGivenIn (fun k => scaleDown one (raw k) (rate k)) i j x * one) (haout : aout ≤ raw j) :
+    m.invariant (fun k => scaleDown one (raw k) (rate k)) ≤
+      m.invariant (fun k => scaleDown one (update2 raw i (raw i + ain) j (raw j - aout) k) (rate k)) :=
+  invariant_le_of_dominates hw.monotone (hw.outGivenIn _ i j x hij hi hj).2
+    (fun k _ => scaled_dominates one hone raw rate hij haout hgain hloss k)
+
+/-- A given-out swap settled in raw units keeps the invariant of the scaled balances when the
+amount out, rounded up, is below the scaled balance and the amount in, in scaled units, covers
+what the math priced. -/
+theorem WellBehaved.scaled_swapOut {m : PoolMath} {n : Nat} (hw : WellBehaved m n) {one : Nat}
+    (hone : 0 < one) (raw rate : Nat → Nat) {i j x ain aout : Nat} (hij : i ≠ j) (hi : i < n)
+    (hj : j < n) (hx : x < scaleDown one (raw j) (rate j)) (hloss : aout * rate j ≤ x * one)
+    (hgain : m.inGivenOut (fun k => scaleDown one (raw k) (rate k)) i j x * one ≤ ain * rate i)
+    (haout : aout ≤ raw j) :
+    m.invariant (fun k => scaleDown one (raw k) (rate k)) ≤
+      m.invariant (fun k => scaleDown one (update2 raw i (raw i + ain) j (raw j - aout) k) (rate k)) :=
+  invariant_le_of_dominates hw.monotone (hw.inGivenOut _ i j x hij hi hj hx)
+    (fun k _ => scaled_dominates one hone raw rate hij haout hgain hloss k)
+
+/-- The two-token constant product (tokens 0 and 1): invariant `b 0 * b 1`, given-in priced at
+`b j * x / (b i + x)` rounded down, given-out at `b i * x / (b j - x)` rounded up (and `b i * x`
+when `x` is not below the balance). -/
+def constantProduct : PoolMath where
+  invariant b := b 0 * b 1
+  outGivenIn b i j x := b j * x / (b i + x)
+  inGivenOut b i j x := if x < b j then ceilDiv (b i * x) (b j - x) else b i * x
+
+/-- A given-in trade on a constant product keeps the product: `u * v ≤ (u + x) * (v - out)`. -/
+theorem cp_out_le (u v x : Nat) : u * v ≤ (u + x) * (v - v * x / (u + x)) := by
+  have := k_le_swapOut (D := 1) (g := 1) (x := u) (y := v) (dx := x) Nat.one_pos (Nat.le_refl _)
+  simp only [amountOut, Nat.mul_one] at this
+  rwa [Nat.mul_comm x v] at this
+
+/-- A given-out trade on a constant product keeps the product: `u * v ≤ (u + c) * (v - x)` for the
+cost `c` rounded up. -/
+theorem cp_in_le {u v x : Nat} (h : x < v) : u * v ≤ (u + ceilDiv (u * x) (v - x)) * (v - x) := by
+  have h1 := le_ceilDiv_mul (u * x) (v - x) (by omega)
+  have e : u * v = u * (v - x) + u * x := by rw [← Nat.mul_add]; congr 1; omega
+  rw [Nat.add_mul, e]
+  omega
+
+/-- The constant product is well behaved for two tokens. -/
+theorem constantProduct_wellBehaved : WellBehaved constantProduct 2 where
+  monotone b b' h := Nat.mul_le_mul (h 0 (by decide)) (h 1 (by decide))
+  outGivenIn b i j x hij hi hj := by
+    have hc : (i = 0 ∧ j = 1) ∨ (i = 1 ∧ j = 0) := by omega
+    refine ⟨Nat.div_le_of_le_mul (by
+      rw [Nat.mul_comm (b i + x)]; exact Nat.mul_le_mul_left _ (Nat.le_add_left _ _)), ?_⟩
+    rcases hc with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+    · simp only [constantProduct, update2_left, update2_right _ _ _ (by decide : (1 : Nat) ≠ 0)]
+      exact cp_out_le _ _ _
+    · simp only [constantProduct, update2_left, update2_right _ _ _ (by decide : (0 : Nat) ≠ 1)]
+      rw [Nat.mul_comm (b 0), Nat.mul_comm (b 0 - _)]
+      exact cp_out_le _ _ _
+  inGivenOut b i j x hij hi hj hx := by
+    have hc : (i = 0 ∧ j = 1) ∨ (i = 1 ∧ j = 0) := by omega
+    rcases hc with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+    · simp only [constantProduct, update2_left, update2_right _ _ _ (by decide : (1 : Nat) ≠ 0),
+        hx, ↓reduceIte]
+      exact cp_in_le hx
+    · simp only [constantProduct, update2_left, update2_right _ _ _ (by decide : (0 : Nat) ≠ 1),
+        hx, ↓reduceIte]
+      rw [Nat.mul_comm (b 0), Nat.mul_comm (b 0 - x)]
+      exact cp_in_le hx
+
 /-- A batch keeps the invariant when every successful swap does (`batchSwap` reverts as a whole
 when one swap reverts). -/
 theorem runAll_invariant_le {σ α : Type} {step : σ → α → Option σ} (V : σ → Nat)
