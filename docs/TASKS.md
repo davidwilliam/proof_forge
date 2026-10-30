@@ -23,6 +23,7 @@ Each task is a self-contained Lean project in `tasks/<id>/`:
 | `reference/*.lean` | reference solutions proving every requirement | no |
 | `attacks/*.lean`, `attacks/attacks.json` | seeded wrong candidates with expected verdicts | no |
 | `validation.json` | output of `harness/validate_task.py` | no |
+| `counterexample.py` | optional counterexample adapter (`docs/COUNTEREXAMPLES.md`) | no |
 
 `task.json`:
 
@@ -74,6 +75,10 @@ Each task is a self-contained Lean project in `tasks/<id>/`:
 
 - `app/Main.lean` reads one JSON object per stdin line and prints one JSON object per stdout line; on a parse error it prints `{"error":"bad input"}` and exits with code 2 at the end. The serialization must expose every field the requirements constrain, so the oracle can check them.
 - `oracle.py` exports `gen_case(rng)` (one input object; mix valid and invalid inputs, about 30% invalid, with boundary values), `check(case, out)` (list of `(REQ-ID, message)` violations), and optionally `followup(case, out)` (a follow-up input and the REQ-ID its violations count against, or `None`), `FLAGSHIP` (a fixed showcase input) and `describe(out)`. The oracle mirrors `Spec.lean` independently; it never imports Lean output. Every violation found on a follow-up case is charged to the REQ-ID that `followup` returns, not to the one `check` reports, so use `followup` only for requirements that need a second step (such as resubmission for idempotency).
+
+## Counterexample adapter (optional)
+
+A task may provide `counterexample.py` with `instance(task, requirement, case, out, origin=None)`, which maps a failing case of the binary check to the Lean terms of the refuted requirement's instance, so that a REFUTED Passport carries a refutation checked by the kernel (`harness/counterexample.py`, `docs/COUNTEREXAMPLES.md`). It is untrusted: the statement it proves is the locked one, negated, and Comparator checks it. Existing tasks keep theirs in `counterexamples/<task id>.py` or `counterexamples/<base id>.py`, outside the task directory, so that task snapshots bound by validation receipts and the test freeze do not change. A task without an adapter is judged exactly as before.
 
 ## Validation
 
