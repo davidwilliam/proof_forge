@@ -302,5 +302,5 @@ axioms.
   and amortization schedules with rounding of the payment itself other than the fixed `p` are
   not covered. `finalPayment_le` gives an upper bound on the final payment; no lower bound
   (the final payment can be below `p`) and no nonnegativity of the balances is proved.
-* The demonstrations re-prove requirements over copied definitions; they are not wired into the
-  task projects or the judge (see the scope section of `lib/README.md`).
+* The demonstrations re-prove requirements over copied definitions; they are not part of the
+  task projects, and candidates cannot import them (see `lib/README.md`, Integration).

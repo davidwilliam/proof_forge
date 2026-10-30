@@ -297,5 +297,5 @@ Quot.sound, propext]`, and `tests/test_fin_lib.py` passes.
 * Vaults: fees, deposit and withdrawal limits other than the books, and asynchronous (ERC-7540)
   flows are not modelled; `maxDeposit` and `maxMint` are unbounded as in OpenZeppelin and have no
   definition here.
-* The library is not wired into the judge, the task projects or the agent prompts (see
-  `lib/README.md`).
+* Candidates may import the library; the task projects are unchanged (see `lib/README.md`,
+  Integration).

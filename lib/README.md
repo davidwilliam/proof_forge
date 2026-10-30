@@ -298,9 +298,63 @@ remainder (`rw-moneyphp-allocate`, `rw-spliit-balances`); a library form of the 
 depend on that task's model; overflow-checked word versions of the fixed-point operations beyond the
 exactness conditions of `ProofForgeFin.Word`.
 
-The library is not wired into the judge, the task projects, the agent prompts or retrieval. A task
-that uses it needs the library available in the judge's project (baked into the pinned image or
-required by path from the task's `lakefile.toml`, which changes the task's locked hash, so as a new
-task version), `ProofForgeFin` added to the imports `harness/judge.py` allows in candidate files, and
-the same library version for the challenge and the solution so that Comparator compares the same
-definitions.
+## Integration with the judge and the prover
+
+Candidates may import the library; the task projects are unchanged. `harness/fin_lib.py` does the
+following, and `docs/ARCHITECTURE.md` (section "ProofForgeFin in judged projects") gives the
+details and the trust argument.
+
+* Imports. A candidate's `Solution.lean` may import `ProofForgeFin` and any `ProofForgeFin.*`
+  module in addition to the task's `Spec` and `Lemmas`, `Init.*` and `Std.*`.
+  `ProofForgeFinDemo` and `Lean` are refused. Importing the library brings `Lean` into scope (the
+  tactics of `ProofForgeFin.Tactic` are metaprograms), so the implementation scan refuses every way
+  for candidate code to define or run its own: `macro`, `elab`, `syntax`, `elab_rules`,
+  `macro_rules`, `run_tac`, `by_elab`, simprocs, `register_*`, `declare_*`, `initialize` and
+  attributes such as `@[tactic]` and `@[command_elab]`.
+* Version. The library version is `source_tree_sha256`, a hash of the files the package is built
+  from (`lakefile.toml`, `lake-manifest.json`, `lean-toolchain`, `ProofForgeFin.lean`,
+  `ProofForgeFin/**/*.lean`); the demonstrations, `Audit.lean` and the docs are not part of it. Show
+  the current version with `.venv/bin/python harness/fin_lib.py version`.
+* Vendoring. The judge, the binary check and the counterexample stage copy the built package
+  into the fresh project at `.lake/packages/proofforge-fin` and require it by path, only when a
+  candidate file imports the library. The build is made once per version, in the pinned image with
+  no network, from the committed sources (`.venv/bin/python harness/fin_lib.py build`; it also runs
+  automatically on first use). No image rebuild is needed when the library changes.
+* Library scan. The library modules a candidate imports, transitively, must not contain
+  `implemented_by`, `extern`, `unsafe`, `@[export]`, `@[csimp]`, `initialize`, `#eval`,
+  `run_cmd`, `run_elab`, `run_meta`, `native_decide`, `bv_decide`, `set_option`, `opaque`, `axiom`,
+  `sorry` or `partial`, and may import only `ProofForgeFin`, `Init`, `Std` and `Lean`. Tactic and
+  syntax definitions are allowed in library code. A library change that breaks this rule makes the
+  judge reject every candidate that imports the affected modules; `tests/test_fin_integration.py`
+  runs the scan.
+* Checking. Comparator's export for a solution contains the library declarations its theorems
+  depend on, so the six kernels check them; the axiom audit covers them; permitted axioms are still
+  only `propext`, `Classical.choice` and `Quot.sound`.
+* Passport. Every new Passport has a `library` record: the source tree hash available to the
+  judge and whether it was vendored; for a candidate that imports the library, the modules
+  imported, the size of their closure, the library scan, the commit whose library sources were
+  vendored, and the image and toolchain of the build. `bin/proofforge verify` compares the record,
+  and reproduces a Passport of an older library version with that version's sources from the
+  recorded commit.
+* Prover. `agents/repair.py --library on` (the default for arms A1 and A2) vendors the library into
+  the agent's workspace and gives the model a prompt section generated from the declaration index
+  (`harness/FinIndex.lean`, run against the built library: every module doc, theorem, definition,
+  structure, tactic and simp set with its signature and doc string), a `search_library` tool, an
+  `add_import` tool and, for each obligation, the declarations the index ranks highest for it. A0
+  (`agents/baseline.py`) never gets the library.
+
+Measured with `tests/fixtures/library/compound_lib.lean`, a candidate for `rw-compound-comp` whose
+three sequence bounds are the library argument of `ProofForgeFinDemo/DeFi/Compound.lean`: VERIFIED,
+eight of eight requirements, six kernels. Two of the kernels, con-leche and con-ron, ran out of
+fuel on four steps of the demonstration as written (they unfold `doubleScale = 10 ^ 36` in
+equations such as `A * doubleScale + 0 = A * doubleScale`); the fixture proves that arithmetic over
+an abstract scale and instantiates it. A demonstration that is meant to be copied into a candidate
+should state its arithmetic that way.
+
+### After a library change
+
+Nothing in the judge or the image changes: the next judged candidate that imports the library
+triggers a build of the new version (or run `.venv/bin/python harness/fin_lib.py build`), the new
+source tree hash goes into new Passports, and the agent's index is regenerated with the build.
+Passports of the earlier version still reproduce: verify extracts that version's sources from the
+commit the Passport records. Run `tests/test_fin_lib.py` and `tests/test_fin_integration.py`.

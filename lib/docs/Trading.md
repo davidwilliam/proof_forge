@@ -263,6 +263,6 @@ detection).
   rounding of the remaining cost on a reduce. `Int` floor and ceiling rounding is not used.
 * Netting: no net debit caps, no collateral, no settlement failure or partial settlement, no
   multi-currency netting.
-* The library is not wired into the judge, the task projects or the agent prompts (see
-  `lib/README.md`, Scope). The demonstrations are separate re-proofs, not accepted task
+* Candidates may import the library; the task projects are unchanged (see `lib/README.md`,
+  Integration). The demonstrations are separate re-proofs, not accepted task
   solutions.

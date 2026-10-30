@@ -293,4 +293,4 @@ comparison are shown reduced.
 * `Keyed` keeps the seen identifiers as a list; a task that keeps them as a field of its state
   maps to the pair through an abstraction function.
 * The demonstrations re-prove requirements of reference solutions; they do not replace the task
-  projects, and the library is not wired into the judge (see `lib/README.md`, Scope).
+  projects; candidates may import the library (see `lib/README.md`, Integration).
