@@ -4,6 +4,7 @@ import ProofForgeFin.Evm.MulDiv
 import ProofForgeFin.Evm.FullMath
 import ProofForgeFin.Evm.FixedQ
 import ProofForgeFin.Evm.SqrtPrice
+import ProofForgeFin.Evm.Signed
 /-!
 # EVM and machine arithmetic
 
@@ -21,4 +22,6 @@ Machine words as `BitVec w`, with every result characterized through `toNat` in 
   between them with both roundings, and the conversion of `TickMath.getSqrtRatioAtTick`.
 * `ProofForgeFin.Evm.SqrtPrice`: Uniswap v3 `SqrtPriceMath.getAmount0Delta`, `getAmount1Delta`
   and `getNextSqrtPriceFromAmount0RoundingUp`, with exact rounding bounds.
+* `ProofForgeFin.Evm.Signed`: truncated, floor and ceiling integer division and their bounds;
+  checked `intN` arithmetic, `SafeCast` conversions, `SignedMath.abs`, `LiquidityMath.addDelta`.
 -/
