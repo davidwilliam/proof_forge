@@ -26,6 +26,8 @@ the Solidity compiler emits (`x > max - y`, `x != 0 && y > max / x`).
 
 namespace ProofForgeFin.Evm
 
+variable {w : Nat}
+
 /-- A Solidity `uint256` or Move `u256`. -/
 abbrev U256 := BitVec 256
 
@@ -133,6 +135,26 @@ theorem toNat_sub_of_lt {x y : BitVec w} (h : x.toNat < y.toNat) :
 /-- Wrapping multiplication is the product modulo `2^w`. -/
 theorem toNat_mul' (x y : BitVec w) : (x * y).toNat = x.toNat * y.toNat % 2 ^ w :=
   BitVec.toNat_mul x y
+
+/-- The distance between two words without underflow, `x > y ? x - y : y - x` (the
+`sqrt_price_diff` of Cetus `get_delta_a`, the sorted difference of Uniswap `getAmount0Delta`). -/
+def absDiffW (x y : BitVec w) : BitVec w := if x > y then x - y else y - x
+
+/-- The distance is `max - min` of the values. -/
+theorem toNat_absDiffW (x y : BitVec w) :
+    (absDiffW x y).toNat = max x.toNat y.toNat - min x.toNat y.toNat := by
+  unfold absDiffW
+  by_cases h : x > y
+  · rw [ite_eq_left h]
+    rw [GT.gt, BitVec.lt_def] at h
+    rw [toNat_sub_of_le _ _ (Nat.le_of_lt h)]; omega
+  · rw [ite_eq_right h]
+    rw [GT.gt, BitVec.lt_def] at h
+    rw [toNat_sub_of_le _ _ (by omega)]; omega
+
+/-- The distance is zero exactly when the words are equal. -/
+theorem absDiffW_eq_zero_iff {x y : BitVec w} : absDiffW x y = 0 ↔ x.toNat = y.toNat := by
+  rw [eq_zero_iff_toNat, toNat_absDiffW]; omega
 
 /-! ## Checked arithmetic (Solidity 0.8, Move, Rust `checked_*`) -/
 
