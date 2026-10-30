@@ -13,8 +13,15 @@ required definition keeps its signature, its body is a neutral placeholder, ever
 theorem is `sorry`) and asks for an implementation from the specification; the issue report,
 the buggy candidate and the reference solutions are not used. Judging is identical.
 
+Library (`--library on`, the default): the workspace has ProofForgeFin vendored (harness/fin_lib.py),
+the system prompt gains a section generated from the library's declaration index (modules,
+tactics, simp sets) with the rule that the candidate may import ProofForgeFin, the tools gain
+`search_library` (retrieval over the index) and `add_import`, and each obligation's prompt lists
+the library declarations the index ranks highest for it. `--library off` gives the harness
+without the library. A0 (agents/baseline.py) never gets the library.
+
 Usage: repair.py [--task T] [--model muse-spark-1.3-contributor] [--planner muse-wonder-1.0|none]
-                 [--mode repair|implement] [--loop orchestrated|free]
+                 [--mode repair|implement] [--loop orchestrated|free] [--library on|off]
                  [--budget-usd X] [--budget-wall S] [--out DIR] [--start FILE]
 """
 import argparse, json, pathlib, re, shutil, sys, tempfile, time
@@ -24,7 +31,7 @@ sys.path.insert(0, str(ROOT / "agents"))
 sys.path.insert(0, str(ROOT / "harness"))
 from meta_client import chat, APIError, DeadlineReached  # noqa: E402
 from budget import Budget, BudgetExceeded  # noqa: E402
-import judge, binary_check, task as taskmod  # noqa: E402
+import judge, binary_check, fin_lib, task as taskmod  # noqa: E402
 
 FORBIDDEN_TEXT = ("sorry, axiom, opaque, implemented_by, extern, unsafe, export, macro, elab, syntax, "
                   "initialize, #eval, run_cmd, native_decide, set_option")
@@ -172,7 +179,89 @@ Workflow:
 - Stop when check reports ACCEPTED."""
 
 
-def tools_for(task):
+# When to reach for each library tactic. The tactics themselves, their modules and their doc
+# strings come from the generated index; a tactic without a line here is listed with the first
+# sentence of its doc string only, and a line whose tactic is no longer in the index is dropped.
+TACTIC_USE = {
+    "struct_simp": "goals with projections of structure literals, projections of an `if`, updates read at a key "
+                   "(`upd f k v j`) or constructor equations; pass the step's definitions, e.g. `struct_simp [step, upd, h]`",
+    "step_cases": "a goal about one step of a model: splits on the operation and on every `if` and `match` in the step, "
+                  "simplifies each branch and closes the refused ones; `step_cases op [step, f]`, or "
+                  "`all_goals try step_cases` after another tactic",
+    "run_induction": "a requirement over every sequence of operations (`Seq.run step s ops`, or a task's own `run` "
+                     "after `run_induction [run_eq]`): one goal per operation constructor; `using J` for a stronger "
+                     "invariant, `total Inv` for a ghost total such as COMP emitted so far",
+    "fin_simp": "fixed-point and share conversions (`mulDown`, `divUp`, `previewRedeem`, `ceilDiv`, ...) put in "
+                "`/` and `ceilDiv` normal form",
+    "div_norm": "right before `omega` on goals with `ceilDiv` or division by literals or named literal scales",
+    "round_bound": "rounding bounds on `Nat`: `x / d * d ≤ x`, `x ≤ ceilDiv x d * d`, `mulDown ≤ mulUp`, sums of "
+                   "rounded parts, round trips",
+    "generalize_divs": "goals whose quotients have variable divisors: replaces each quotient and remainder by a fresh "
+                       "variable with its bounds, so `omega` can finish",
+    "machine_norm": "state-machine goals over the `ProofForgeFin.Machine` models: reduces projections and the "
+                    "`machine_simps` set in the goal and every hypothesis",
+}
+
+
+def _module_line(doc, n=170):
+    """The opening of a module doc (its heading dropped): whole sentences up to `n` characters."""
+    keep = [l for l in (doc or "").splitlines() if not l.lstrip().startswith(("#", "* ", "- "))]
+    text = re.sub(r"\s+", " ", " ".join(keep).replace("**", "")).strip()
+    if len(text) <= n:
+        return text
+    cut = text.rfind(". ", 0, n)
+    return text[:cut + 1] if cut >= 60 else text[: n - 3] + "..."
+
+
+def library_brief(index, tools=True):
+    """The prompt section on ProofForgeFin, generated from the library's declaration index."""
+    by_kind = {}
+    for e in index.entries:
+        by_kind.setdefault(e["kind"], []).append(e)
+    mods = sorted(by_kind.get("module", []), key=lambda e: e["name"])
+    lines = [
+        "", "",
+        "ProofForgeFin library (part of ProofForge; Lean 4 core only, every theorem proved with the permitted axioms):",
+        "- candidate/Solution.lean may import ProofForgeFin modules in addition to the imports above: "
+        "`import ProofForgeFin` for all of it, or one module such as `import ProofForgeFin.Rounding`. "
+        "Imports go at the top of the file" + (
+            "; add_import adds one and keeps it only if the file still compiles." if tools else "."),
+        "- ProofForgeFinDemo is not importable. Library names are qualified (`ProofForgeFin.ceilDiv_spec`, "
+        "`ProofForgeFin.Seq.run_invariant`); `open ProofForgeFin` shortens them. Library declarations you use are "
+        "checked by the judge's kernels like your own.",
+        "- Use the library's tactics; do not define tactics, macros, elaborators, syntax, simprocs or attributes "
+        "yourself (the judge rejects them).",
+        "- At a literal scale such as `10 ^ 36`, prove the arithmetic as a lemma over a variable scale and "
+        "instantiate it: two of the judge's kernels unfold literal scales in equations that Lean's kernel accepts.",
+    ]
+    if tools:
+        lines.append("- search_library finds library theorems, definitions and tactics by keywords, names or a "
+                     "statement and returns each signature and doc string; search before proving a general fact "
+                     "about rounding, shares, sequences of operations, ledgers or interest yourself.")
+    lines.append("Modules:")
+    lines += [f"- {e['name']}: {_module_line(e.get('doc'))}" for e in mods]
+    tactics = sorted({e["name"]: e for e in reversed(by_kind.get("tactic", []))}.values(), key=lambda e: e["name"])
+    if tactics:
+        lines.append("Tactics (`import ProofForgeFin`, or the module named):")
+        for e in tactics:
+            use = TACTIC_USE.get(e["name"])
+            lines.append(f"- `{e['name']}` ({e['module']}): " + (f"use for {use}." if use else fin_lib.short_doc(e.get("doc"), 200)))
+    sets = sorted(by_kind.get("simp_set", []), key=lambda e: e["name"])
+    if sets:
+        lines.append("Simp sets (`simp only [fin_simp]` and so on): " + "; ".join(
+            f"`{e['name']}`: {fin_lib.short_doc(e.get('doc'), 120)}" for e in sets))
+    return "\n".join(lines)
+
+
+def tools_for(task, library=False):
+    lib = [
+        {"type": "function", "function": {"name": "search_library", "description": "Search the ProofForgeFin library index (theorems, definitions, structures, tactics, simp sets, modules) by keywords, declaration names or a statement. Returns the best matches with signature, module to import and doc string.",
+         "parameters": {"type": "object", "properties": {"query": {"type": "string"},
+                                                         "limit": {"type": "integer", "minimum": 1, "maximum": 25}},
+                        "required": ["query"]}}},
+        {"type": "function", "function": {"name": "add_import", "description": "Add `import <module>` for a ProofForgeFin module at the top of candidate/Solution.lean; kept only if the file still compiles.",
+         "parameters": {"type": "object", "properties": {"module": {"type": "string"}}, "required": ["module"]}}},
+    ] if library else []
     return [
         {"type": "function", "function": {"name": "read_file", "description": "Read a file from the workspace.",
          "parameters": {"type": "object", "properties": {"path": {"type": "string", "enum": task.readable}}, "required": ["path"]}}},
@@ -186,11 +275,11 @@ def tools_for(task):
          "parameters": {"type": "object", "properties": {}}}},
         {"type": "function", "function": {"name": "run_tests", "description": "Build the executable from the current candidate and run property tests against the requirements. Returns violated requirements and counterexamples.",
          "parameters": {"type": "object", "properties": {}}}},
-    ]
+    ] + lib
 
 
 class Session:
-    def __init__(self, task, model, start, out, budget=None, mode="repair"):
+    def __init__(self, task, model, start, out, budget=None, mode="repair", library=False):
         self.task, self.model, self.out, self.mode = task, model, out, mode
         self.ns, self.theorems = task.ns, task.theorems
         self.end = f"end {task.ns}"
@@ -202,6 +291,13 @@ class Session:
             (shutil.copytree if src.is_dir() else shutil.copy)(src, self.ws / rel)
         (self.ws / "candidate").mkdir()
         shutil.copy(start, self.ws / "candidate/Solution.lean")
+        # ProofForgeFin in the workspace, so that the candidate can import it in every compile;
+        # the judge vendors the same version into its own fresh project.
+        self.library = library
+        self.lib_index = None
+        if library:
+            fin_lib.vendor(self.ws, force=True)
+            self.lib_index = fin_lib.Index.load()
         self.version = 0
         self.targets = set()   # planned helper lemmas the bank may replace while they are sorry
         self.plan_count = 0
@@ -474,6 +570,47 @@ class Session:
         return "NOT ACCEPTED by judge: " + "; ".join(reasons) + "\n" + "\n".join(
             l for l in cmp_.splitlines() if "error" in l.lower())[-3000:]
 
+    def search_library(self, query, limit=10):
+        if not self.lib_index:
+            return "error: the library is not available in this run"
+        try:
+            limit = max(1, min(25, int(limit or 10)))
+        except (TypeError, ValueError):
+            limit = 10
+        hits = self.lib_index.search(query or "", limit=limit)
+        self.log(kind="library_search", query=(query or "")[:500], hits=[e["name"] for e in hits])
+        if not hits:
+            return "no library declaration matches; try other words or a declaration name"
+        return fin_lib.render(hits)
+
+    def add_import(self, module):
+        """Transactional: the import is kept only if the file still compiles."""
+        module = (module or "").strip()
+        if not self.library:
+            return "error: the library is not available in this run"
+        if not fin_lib.IMPORT_RE.match(module) or not fin_lib.module_file(module).is_file():
+            return f"error: no ProofForgeFin module {module!r}"
+        before = self._source()
+        if re.search(rf"^\s*import\s+{re.escape(module)}\s*$", before, re.M):
+            return f"`import {module}` is already present"
+        lines = before.split("\n")
+        last = max([i for i, l in enumerate(lines) if re.match(r"^\s*import\s+\S+", l)], default=-1)
+        lines.insert(last + 1, f"import {module}")
+        self._save("\n".join(lines), f"import {module}")
+        r = self.compile()
+        if "error:" in r["output_tail"]:
+            self._save(before, f"revert import {module}")
+            return (f"REVERTED: with `import {module}` the file does not compile (names may clash with the "
+                    "library's), so the file is unchanged. Errors:\n" + self._clean(r["output_tail"])[-4000:])
+        return f"added `import {module}` (version {self.version}); file compiles"
+
+    def library_hints(self, text, limit=8):
+        """The library declarations the index ranks highest for `text`, for an obligation's prompt."""
+        if not self.lib_index:
+            return ""
+        hits = [e for e in self.lib_index.search(text, limit=limit + 6) if e["kind"] != "module"][:limit]
+        return fin_lib.render(hits, sig_chars=300) if hits else ""
+
     def run_tests(self):
         b = binary_check.check_binary(str(self.ws / "candidate/Solution.lean"), n_cases=300,
                                       seed=self.version, task=self.task)
@@ -487,7 +624,7 @@ class Session:
 
 def dialog(s, model, effort, system, user, tool_names, max_turns, done, label):
     """Run one tool-using dialog until done() or the turn budget is spent."""
-    tools = [t for t in tools_for(s.task) if t["function"]["name"] in tool_names]
+    tools = [t for t in tools_for(s.task, s.library) if t["function"]["name"] in tool_names]
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     extra = {} if effort == "default" else {"reasoning_effort": effort}
     for turn in range(max_turns):
@@ -524,7 +661,9 @@ def dialog(s, model, effort, system, user, tool_names, max_turns, done, label):
                   "write_solution": lambda: s.write_solution(args.get("content", "")),
                   "replace_declaration": lambda: s.replace_declaration(args.get("name", ""), args.get("text", "")),
                   "try_snippet": lambda: s.try_snippet(args.get("code", "")),
-                  "check": s.check, "run_tests": s.run_tests}.get(name) if name in tool_names else None
+                  "check": s.check, "run_tests": s.run_tests,
+                  "search_library": lambda: s.search_library(args.get("query", ""), args.get("limit", 10)),
+                  "add_import": lambda: s.add_import(args.get("module", ""))}.get(name) if name in tool_names else None
             t_tool = time.monotonic()
             result = fn() if fn else f"error: tool {name} is not available in this phase"
             s.log(kind="tool", label=label, name=name,
@@ -541,8 +680,32 @@ def spec_text(s):
     return "\n\n".join(f"=== {p} ===\n{s.read_file(p)}" for p in s.task.readable[:-1])
 
 
+LIBRARY_TOOLS = {"search_library", "add_import"}
+
+
+def system_prompt(s):
+    """Task brief and workflow; with the library, the library section generated from its index."""
+    return task_brief(s.task, s.mode) + WORKFLOW + (library_brief(s.lib_index) if s.library else "")
+
+
+def lib_tools(s):
+    return LIBRARY_TOOLS if s.library else set()
+
+
+def obligation_query(s, stmt):
+    """Retrieval text for an obligation: its statement and the doc strings of the specification
+    definitions it names."""
+    spec = (s.task.root / s.task.spec_dir / "Spec.lean").read_text()
+    docs = []
+    for name in sorted(set(re.findall(r"[A-Za-z_][\w.']*", stmt))):
+        m = re.search(rf"/--((?:(?!-/).)*)-/\s*\n(?:@\[[^\]]*\]\s*)?(?:def|abbrev|structure|inductive) {re.escape(name)}\b", spec, re.S)
+        if m:
+            docs.append(re.sub(r"\s+", " ", m.group(1)).strip())
+    return stmt + "\n" + "\n".join(docs)
+
+
 def orchestrate(s, a):
-    system = task_brief(s.task, s.mode) + WORKFLOW
+    system = system_prompt(s)
     spec = spec_text(s)
     impl = s.mode == "implement"
     defs = ", ".join(f"`{s.ns}.{d}`" for d in s.task.definitions)
@@ -560,7 +723,7 @@ def orchestrate(s, a):
     user0 = (f"{spec}\n\n=== candidate/Solution.lean (current, {'placeholder' if impl else 'buggy'}) ===\n{s._source()}\n\n"
              f"Phase 1 of 2: {'implement' if impl else 'fix'} {defs} so it meets the requirements. Keep every required theorem in the file "
              "(use `sorry` proofs for now). Write the file with write_solution, then call run_tests until it reports PASS.")
-    ok0 = tests_ok["v"] or dialog(s, a.model, a.effort, system, user0, {"write_solution", "run_tests", "read_file"},
+    ok0 = tests_ok["v"] or dialog(s, a.model, a.effort, system, user0, {"write_solution", "run_tests", "read_file"} | lib_tools(s),
                                   a.phase0_turns, lambda: tests_ok["v"], "implement")[0]
     s.log(kind="phase", phase="implement", ok=ok0)
     if ok0:
@@ -571,7 +734,8 @@ def orchestrate(s, a):
         import baseline
         s.log(kind="phase", phase="whole-file")
         baseline.run(s, argparse.Namespace(model=a.model, effort=a.effort, max_turns=200),
-                     state="current, partly implemented" if impl else "current, partly repaired")
+                     state="current, partly implemented" if impl else "current, partly repaired",
+                     library_text=library_brief(s.lib_index, tools=False) if s.library else "")
 
 
 def structured(s, a, system, spec):
@@ -721,9 +885,14 @@ def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
     stmt = (m.group(0).split(":= by")[0].split(":= sorry")[0] if m else t).strip()
     status = s.check_status()
     defs = ", ".join(f"`{d}`" for d in s.task.definitions)
+    hints = s.library_hints(obligation_query(s, stmt)) if s.library else ""
+    if hints:
+        s.log(kind="library_hints", theorem=t, hits=re.findall(r"^\[\w+\] (\S+)", hints, re.M))
     user = (f"{spec}\n\n=== candidate/Solution.lean (current) ===\n{src}\n\n"
             f"Current requirement status: {', '.join(f'{k}={v}' for k, v in status.items())}\n\n"
             + (f"Proof plan from the architect:\n{plan_text}\n\n" if plan_text else "")
+            + (f"ProofForgeFin declarations the library index ranks highest for this obligation "
+               f"(search_library finds more; add_import adds a module):\n{hints}\n\n" if hints else "")
             + f"Your task now: prove `{stmt}`. Do not change {defs} or anything already proved. "
             "Develop the proof with try_snippet; a clean snippet that proves "
             f"`{t}` replaces its sorry automatically. You may use the other helper lemmas in the file even if "
@@ -732,10 +901,20 @@ def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
         """The target's own proof is sorry-free and the file compiles (dependencies may be pending)."""
         m2 = re.search(rf"^(?:private\s+)?theorem\s+{re.escape(t)}\b.*?(?=^{s.boundary})", s._source(), re.S | re.M)
         return bool(m2) and "sorry" not in m2.group(0) and s.check_status([t]).get(t) != "ERROR"
-    ok, _ = dialog(s, a.model, a.effort, system, user, {"try_snippet", "replace_declaration", "check", "read_file"},
+    ok, _ = dialog(s, a.model, a.effort, system, user, {"try_snippet", "replace_declaration", "check", "read_file"} | lib_tools(s),
                    budget, own_proof_done, f"{label}:{t}")
     s.log(kind="obligation", label=label, theorem=t, ok=ok)
     return ok
+
+
+def library_summary(s):
+    """The library arm of a run: off, or on with the version and index the run used."""
+    if not s.library:
+        return {"enabled": False}
+    built = json.loads((fin_lib.ensure_built() / "built.json").read_text())
+    return {"enabled": True, "package": fin_lib.PACKAGE, "source_tree_sha256": built["source_tree_sha256"],
+            "index_sha256": built["index_sha256"], "index_entries": len(s.lib_index.entries),
+            "git_commit": fin_lib.git_commit()}
 
 
 def finish(s, out, arm, extra):
@@ -780,6 +959,9 @@ def main():
     ap.add_argument("--budget-usd", type=float, help="cap at standard-tier list prices")
     ap.add_argument("--budget-wall", type=float, help="wall-clock cap in seconds")
     ap.add_argument("--out", help="run directory (default: runs/repair-<time>-<task>-<arm>)")
+    ap.add_argument("--library", default="on", choices=["on", "off"],
+                    help="on (default): ProofForgeFin in the workspace, its index in the prompt, search_library and "
+                         "add_import; off: the harness without the library")
     a = ap.parse_args()
     if a.mode in ("orchestrated", "free"):
         a.loop, a.mode = a.mode, "repair"
@@ -795,19 +977,21 @@ def main():
     if a.mode == "implement":
         start = out / "start.lean"
         start.write_text(stub_candidate(task))
-    s = Session(task, a.model, start, out, Budget(a.budget_usd, a.budget_wall), mode=a.mode)
+    s = Session(task, a.model, start, out, Budget(a.budget_usd, a.budget_wall), mode=a.mode,
+                library=a.library == "on")
     s.log(kind="start", arm=arm, **vars(a))
     try:
         if a.loop == "orchestrated":
             orchestrate(s, a)
         else:
-            dialog(s, a.model, a.effort, task_brief(task, a.mode) + WORKFLOW,
+            dialog(s, a.model, a.effort, system_prompt(s),
                    "Begin. The current candidate is candidate/Solution.lean.",
-                   {t["function"]["name"] for t in tools_for(task)}, a.max_turns, lambda: s.accepted, "free")
+                   {t["function"]["name"] for t in tools_for(task, s.library)}, a.max_turns, lambda: s.accepted, "free")
     except BudgetExceeded as e:
         s.log(kind="budget_stop", reason=str(e))
         print(f"budget exhausted: {e}", flush=True)
-    summary = finish(s, out, arm, {"mode": a.loop, "task_mode": a.mode, "effort": a.effort, "planner": a.planner})
+    summary = finish(s, out, arm, {"mode": a.loop, "task_mode": a.mode, "effort": a.effort, "planner": a.planner,
+                                   "library": library_summary(s)})
     print(json.dumps(summary))
 
 

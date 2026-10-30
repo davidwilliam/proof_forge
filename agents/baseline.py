@@ -47,8 +47,10 @@ def audit(s):
     return s.accepted, verdict
 
 
-def run(s, a, state="current, buggy"):
-    system = repair.task_brief(s.task, getattr(s, "mode", "repair")) + PROTOCOL
+def run(s, a, state="current, buggy", library_text=""):
+    """Compile-and-retry. `library_text` is appended to the system prompt; A0 passes none (repair.py
+    phase 3 passes its library section when the library is on)."""
+    system = repair.task_brief(s.task, getattr(s, "mode", "repair")) + PROTOCOL + library_text
     user = (repair.spec_text(s) + f"\n\n=== candidate/Solution.lean ({state}) ===\n" + s._source())
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     extra = {} if a.effort == "default" else {"reasoning_effort": a.effort}
