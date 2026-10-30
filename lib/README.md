@@ -346,10 +346,9 @@ details and the trust argument.
 Measured with `tests/fixtures/library/compound_lib.lean`, a candidate for `rw-compound-comp` whose
 three sequence bounds are the library argument of `ProofForgeFinDemo/DeFi/Compound.lean`: VERIFIED,
 eight of eight requirements, six kernels. Two of the kernels, con-leche and con-ron, ran out of
-fuel on four steps of the demonstration as written (they unfold `doubleScale = 10 ^ 36` in
-equations such as `A * doubleScale + 0 = A * doubleScale`); the fixture proves that arithmetic over
-an abstract scale and instantiates it. A demonstration that is meant to be copied into a candidate
-should state its arithmetic that way.
+fuel on four steps of an earlier version of the demonstration (they unfold `doubleScale = 10 ^ 36`
+in equations such as `A * doubleScale + 0 = A * doubleScale`); the fixture and the demonstration
+now prove that arithmetic over an abstract scale and instantiate it.
 
 ### After a library change
 
@@ -357,4 +356,52 @@ Nothing in the judge or the image changes: the next judged candidate that import
 triggers a build of the new version (or run `.venv/bin/python harness/fin_lib.py build`), the new
 source tree hash goes into new Passports, and the agent's index is regenerated with the build.
 Passports of the earlier version still reproduce: verify extracts that version's sources from the
-commit the Passport records. Run `tests/test_fin_lib.py` and `tests/test_fin_integration.py`.
+commit the Passport records. Run `tests/test_fin_lib.py`, `tests/test_fin_kernels.py` and
+`tests/test_fin_integration.py`.
+
+## Writing proofs that every judge kernel accepts
+
+The judge accepts a proof only when all six kernels of `lake comparator --paranoid` (Lean default
+and paranoid, lean4lean, nanoda, con-leche, con-ron) and `leanchecker` accept it, and every
+library declaration a candidate's theorems depend on is in the export they check. A library proof
+that Lean's kernel accepts can still be rejected by another kernel, and then the judge rejects
+every candidate that uses it. The case met so far: con-leche and con-ron reduce under a fuel
+bound, and a definitional check such as `A * doubleScale + 0 = A * doubleScale`, with `A` a
+variable and `doubleScale = 10 ^ 36`, makes them unfold and reduce the literal until the fuel
+runs out (`fuel exhausted: whnfCore`), where Lean's kernel settles it without unfolding. In
+library and demonstration code:
+
+* State arithmetic over a variable scale and instantiate it. A lemma over `D` (or the library's
+  `one`), applied at `doubleScale`, is checked by substitution, so no kernel unfolds `10 ^ 36`.
+  `advance_arith`, `upgrade_arith` and `noPosition_arith` in `ProofForgeFinDemo/DeFi/Compound.lean`
+  are the pattern; the statements that mention `doubleScale` stay as they are.
+* Do not leave a step to the kernel's evaluation when one side has a variable next to a large
+  literal: `simp`, `simpa`, `omega` and `rfl` can produce such steps (`... + 0`, `0 / doubleScale`,
+  products reordered). Rewrite with `Nat` lemmas over the variable instead (`Nat.add_zero`,
+  `Nat.zero_div`, `Nat.mul_comm`; `le_mul_add_zero` and `le_of_le_add_zero_div` in the Compound
+  demonstration).
+* Closed computations on literals are fine: `decide` on `0 < 10 ^ 36` (`doubleScale_pos`) passes
+  every kernel, which evaluate `Nat` operations on literals directly. Library lemmas take
+  positivity of a scale as a hypothesis (`0 < one`) and do not depend on its value.
+* `@[irreducible]` changes what the elaborator unfolds, not what a kernel unfolds, so it is not a
+  fix; `opaque` is not allowed in library code.
+* After a change, run the checker in the pinned image:
+
+  ```
+  .venv/bin/python harness/fin_kernels.py
+  ```
+
+  It builds the library and the demonstrations, exports every declaration with the exporter
+  Comparator uses, runs the export through `lake comparator --paranoid` as the judge does, and
+  replays every module with `leanchecker`; it names each declaration a kernel rejects with the
+  kernel's reason. `tests/test_fin_kernels.py` runs it (slow) and fails on any rejection.
+
+Measured in the pinned image: before the change to the Compound demonstration, con-leche and
+con-ron rejected `psi_moves`, `psi_upgrade` and `psi_noPosition` (`fuel exhausted: whnfCore`), and
+the three bounds that depend on them (`account_bounded`, `no_backdated`, `bounds_of_calls`) could
+not be checked; every other declaration passed all six kernels. Now all 9,548 safe constants of
+the library and the demonstrations (5,508 theorems, counting compiler-generated ones) pass all
+six kernels in one Comparator run, and `leanchecker` accepts all 74 modules that declare
+constants. The 57 `_unsafe_rec` constants (Lean's compiled form of recursive definitions, which no
+proof mentions) pass Lean's kernels and lean4lean; nanoda, con-leche and con-ron decline `unsafe`
+code by design.

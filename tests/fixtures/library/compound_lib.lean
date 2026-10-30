@@ -11,15 +11,16 @@ proved with the reference's own potential argument: they come from the library a
 `namespace CompRewards.Lib`), which proves them for every implementation that meets the
 per-call requirements, from `ProofForgeFin.DeFi.Rewards` and `ProofForgeFin.Seq`.
 
-Four steps of the demonstration are restated so that every kernel of `lake comparator --paranoid`
-accepts them. As written in the demonstration, `psi_moves` (its `advance` field), `psi_upgrade`,
-`psi_noPosition` and the last step of `no_backdated` are accepted by Lean's kernels, lean4lean and
-nanoda, but con-leche and con-ron stop with "fuel exhausted: whnfCore": they unfold
-`doubleScale = 10 ^ 36` in equations such as `A * doubleScale + 0 = A * doubleScale` that Lean's
-kernel settles without unfolding. Here `psi_moves` has one theorem per field, and the arithmetic of
-those steps is proved over an abstract scale `D` (`advance_arith`, `upgrade_arith`,
-`noPosition_arith`, `le_mul_add_zero`, `le_of_le_add_zero_div`) and then instantiated, the way
-the reference solution's `div_bound` is.
+Four steps are stated so that every kernel of `lake comparator --paranoid` accepts them. As first
+written in the demonstration, `psi_moves` (its `advance` field), `psi_upgrade`, `psi_noPosition` and
+the last step of `no_backdated` were accepted by Lean's kernels, lean4lean and nanoda, but con-leche
+and con-ron stopped with "fuel exhausted: whnfCore": they unfold `doubleScale = 10 ^ 36` in
+equations such as `A * doubleScale + 0 = A * doubleScale` that Lean's kernel settles without
+unfolding. Here `psi_moves` has one theorem per field, and the arithmetic of those steps is proved
+over an abstract scale `D` (`advance_arith`, `upgrade_arith`, `noPosition_arith`,
+`le_mul_add_zero`, `le_of_le_add_zero_div`) and then instantiated, the way the reference
+solution's `div_bound` is; the demonstration now proves those steps the same way
+(`harness/fin_kernels.py` checks it).
 -/
 
 namespace CompRewards
