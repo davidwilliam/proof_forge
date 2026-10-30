@@ -149,6 +149,37 @@ def test_resolve_attempts_a_shared_helper_once_per_round():
         close(s)
 
 
+def test_open_helpers_are_found_through_proved_ones():
+    s = session()
+    try:
+        extra = ("theorem h2 : 2 = 2 := by sorry\n\ntheorem h1 : 1 = 1 := by\n  have := h2\n  rfl\n\nend Payout")
+        s._save(s._source().replace("end Payout", extra), "fixture")
+        s._save(s._replace_in(s._source(), "req_effects", "theorem req_effects : True := by\n  have := h1\n  trivial")[0], "fixture")
+        assert repair.pending_deps(s, "req_effects") == ["h2"]
+        assert repair.pending_deps(s, "h2") == []
+    finally:
+        close(s)
+
+
+def test_planner_nesting_counts_plans_not_dependency_levels():
+    s = session()
+    planned = []
+    try:
+        s._save(s._source().replace("end Payout", "theorem h3 : 3 = 3 := by sorry\n\ntheorem q : 4 = 4 := by sorry\n\nend Payout"), "fixture")
+        def fake_plan(s_, a_, sp, t, attempt):
+            planned.append(t)
+            return (["q"], "") if t == "h3" else ([], "")
+        s.level["h3"] = 1
+        with patch.object(repair, "prove_target", lambda *x, **k: False), patch.object(repair, "plan", fake_plan), \
+                patch.object(repair.Session, "check_status", lambda self, names=None: {n: "SORRY" for n in (names or TASK.theorems)}):
+            s.tried = set()
+            repair.resolve(s, args(planner="muse-wonder-1.0"), "", "", "h3", 4)   # four dependency levels down
+        assert planned == ["h3"], planned        # its plan lemma q (level 2) is not planned again
+        assert s.level["q"] == 2
+    finally:
+        close(s)
+
+
 def test_architect_reverts_code_that_does_not_compile_and_keeps_a_fix():
     if not have_lean():
         print("skip (no Lean image)")

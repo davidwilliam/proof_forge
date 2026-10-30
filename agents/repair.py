@@ -211,6 +211,7 @@ class Session:
         self.notes = {}        # declaration name -> notes from dialogs that did not prove it
         self.tried = set()     # declarations already attempted in the current resolution round
         self.plan_for = {}     # helper name -> prose of the architecture or plan that introduced it
+        self.level = {}        # helper name -> planner nesting level (required theorems: 0)
         self.events = []
         # Declaration boundary: the next top-level item or the namespace end.
         self.boundary = (r"(?:@\[|/--|private |protected |noncomputable |theorem |lemma |def |instance |abbrev "
@@ -651,31 +652,43 @@ def own_sorry_free(s, name):
 
 
 def pending_deps(s, name):
-    """Helper declarations still proved by `sorry` that `name`'s proof mentions."""
-    body = decl_text(s, name)
-    out = []
-    for m in s.DECL.finditer(s._source()):
-        n = m.group(1).split(".")[-1]
-        if n != name and n not in s.theorems and re.search(rf"(?<![\w.]){re.escape(n)}(?![\w?!'])", body) \
-                and not own_sorry_free(s, n):
-            out.append(n)
-    return out
+    """Helper declarations still proved by `sorry` that `name`'s proof uses, directly or
+    through helpers whose own proofs are complete, in file order."""
+    names = [m.group(1).split(".")[-1] for m in s.DECL.finditer(s._source())]
+    names = [n for n in dict.fromkeys(names) if n not in s.theorems]
+    out, seen, todo = [], {name}, [name]
+    while todo:
+        body = decl_text(s, todo.pop())
+        for n in names:
+            if n in seen or not re.search(rf"(?<![\w.]){re.escape(n)}(?![\w?!'])", body):
+                continue
+            seen.add(n)
+            if own_sorry_free(s, n):
+                todo.append(n)
+            else:
+                out.append(n)
+    return [n for n in names if n in out]
 
 
 def resolve(s, a, system, spec, name, depth, plan_text=""):
-    """Make `name` sorry-free: try directly, then decompose with the planner (bounded depth),
-    then resolve the open helpers its proof uses. Each declaration is attempted once per
-    round. When an earlier direct dialog on `name` failed and a planner is available, the
+    """Make `name` sorry-free: try directly, then decompose with the planner, then resolve
+    the open helpers its proof uses. `depth` is the dependency nesting (labels only); the
+    planner nesting is bounded by --max-depth through each declaration's plan level:
+    required theorems 0, architecture helpers 1, a plan's lemmas one more than the
+    declaration they were planned for. Each declaration is attempted once per round. When
+    an earlier direct dialog on `name` failed and a planner is available, the
     decomposition comes first."""
     if name in s.tried:
         return own_sorry_free(s, name) and not pending_deps(s, name)
     s.tried.add(name)
-    can_plan = a.planner != "none" and depth < a.max_depth
+    level = s.level.get(name, 0)
+    can_plan = a.planner != "none" and level < a.max_depth
     if not own_sorry_free(s, name) and not (can_plan and name in s.notes):
         prove_target(s, a, system, spec, name, a.obligation_turns, f"d{depth}", plan_text)
     if not own_sorry_free(s, name) and can_plan:
         lemmas, text = plan(s, a, spec, name, s.plan_count)
         for l in lemmas:
+            s.level[l] = level + 1
             resolve(s, a, system, spec, l, depth + 1, text)
         prove_target(s, a, system, spec, name, a.obligation_turns, f"d{depth}", text)
     if own_sorry_free(s, name):
@@ -938,6 +951,8 @@ def architect(s, a, spec, pending, rnd):
             continue
         prose = text[: m.start()].strip()[-3000:]
         s.targets.update(helpers)
+        for h in helpers:
+            s.level[h] = 1
         for h in helpers:
             s.plan_for[h] = prose
         (s.out / f"arch_{rnd}.md").write_text(text)
