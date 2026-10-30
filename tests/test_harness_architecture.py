@@ -170,6 +170,42 @@ def test_architect_reverts_code_that_does_not_compile_and_keeps_a_fix():
         close(s)
 
 
+def test_planner_failure_ends_the_plan_without_more_retries():
+    s = session()
+    seen = []
+    def fail(self, model, messages, purpose, **k):
+        seen.append(k)
+        raise repair.APIError(503, "overloaded")
+    try:
+        with patch.object(repair.Session, "call", fail):
+            assert repair.plan(s, args(planner="muse-wonder-1.0"), "", "req_conservation", 0) == ([], "")
+        assert len(seen) == 1 and seen[0]["max_tokens"] == repair.PLANNER_MAX_TOKENS
+        assert seen[0]["attempts"] == repair.PLANNER_ATTEMPTS
+    finally:
+        close(s)
+
+
+def test_architect_falls_back_to_the_prover_when_the_planner_fails():
+    if not have_lean():
+        print("skip (no Lean image)")
+        return
+    s = session()
+    models = []
+    def call(self, model, messages, purpose, **k):
+        models.append((model, k.get("max_tokens")))
+        if model == "muse-wonder-1.0":
+            raise repair.APIError(503, "overloaded")
+        return reply(SKELETON)
+    try:
+        with patch.object(repair.Session, "call", call):
+            helpers, derived = repair.architect(s, args(planner="muse-wonder-1.0"), "", ["req_conservation"], 0)
+        assert models == [("muse-wonder-1.0", repair.PLANNER_MAX_TOKENS), ("muse-spark-1.3-contributor", None)], models
+        assert derived == ["req_conservation"]
+        assert any(e["kind"] == "architect_fallback" for e in s.events)
+    finally:
+        close(s)
+
+
 def test_finish_selects_the_best_compiling_version():
     if not have_lean():
         print("skip (no Lean image)")

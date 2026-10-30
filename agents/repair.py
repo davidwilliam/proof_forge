@@ -746,6 +746,12 @@ STRUCTURE_GUIDANCE = """How to structure proofs of requirements like these:
 - A requirement about a single call follows from a lemma that computes that call's result: unfold the definition once and case on its branches."""
 
 
+# Planner calls are priced far above the prover's, and every attempt is reserved at its worst
+# case (max_tokens of output) until it settles; a failed attempt keeps that charge. Observed
+# planner completions stay below 15,000 tokens, so the cap and the retries are kept small.
+PLANNER_MAX_TOKENS = 20000
+PLANNER_ATTEMPTS = 2
+
 PLANNER_SYSTEM = """You are a Lean 4 proof architect (Lean v4.35.0 core library only, no Mathlib).
 Given a specification, a candidate implementation, and a required theorem that a prover failed to prove,
 you design a chain of helper lemmas that makes the proof routine. Each lemma must be TRUE, stated in
@@ -895,10 +901,15 @@ def architect(s, a, spec, pending, rnd):
     extra = {} if a.planner_effort == "default" else {"reasoning_effort": a.planner_effort}
     for tries in range(3):
         try:
-            r, _ = s.call(model, messages, f"arch:{s.task.id}:{rnd}:{tries}", timeout=900, **extra)
+            limits = {} if model == a.model else {"max_tokens": PLANNER_MAX_TOKENS, "attempts": PLANNER_ATTEMPTS}
+            r, _ = s.call(model, messages, f"arch:{s.task.id}:{rnd}:{tries}", timeout=900, **limits, **extra)
         except APIError as e:
             s.log(kind="api_error", status=e.status, body=e.body[:300])
-            s.pause(20)
+            if model != a.model:   # the planner is failing: the prover designs this round instead
+                s.log(kind="architect_fallback", round=rnd, model=a.model)
+                model = a.model
+            else:
+                s.pause(20)
             continue
         text = r["choices"][0]["message"].get("content") or ""
         messages.append({"role": "assistant", "content": text})
@@ -955,11 +966,11 @@ def plan(s, a, spec, t, attempt):
     for tries in range(3):
         try:
             r, _ = s.call(a.planner, [{"role": "system", "content": PLANNER_SYSTEM}, {"role": "user", "content": user}],
-                          f"plan:{s.task.id}:{t}:{attempt}", timeout=900, **extra)
+                          f"plan:{s.task.id}:{t}:{attempt}", timeout=900, max_tokens=PLANNER_MAX_TOKENS,
+                          attempts=PLANNER_ATTEMPTS, **extra)
         except APIError as e:
             s.log(kind="api_error", status=e.status, body=e.body[:300])
-            s.pause(20)
-            continue
+            return [], ""   # no plan this time; the target keeps its direct attempts
         text = r["choices"][0]["message"].get("content") or ""
         m = re.search(r"```lean\s*\n(.*?)```", text, re.S)
         if not m:
