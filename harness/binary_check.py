@@ -38,10 +38,16 @@ def property_tests(project, task, n_cases, seed, result):
     cases = ([flagship] if flagship else []) + [oracle.gen_case(rng) for _ in range(n_cases)]
     result.update(cases=len(cases), violations={}, witnesses=[])
 
-    def record(rid, msg, case, out):
+    def record(rid, msg, case, out, origin=None):
         result["violations"][rid] = result["violations"].get(rid, 0) + 1
-        if len(result["witnesses"]) < 6:
-            result["witnesses"].append({"requirement": rid, "message": msg, "input": case, "output": out})
+        # The first six witnesses, plus the first one of every further requirement, so that each
+        # refuted requirement has a witness (the counterexample stage starts from it). A witness
+        # found on a follow-up case also keeps the round-1 case it was derived from.
+        if len(result["witnesses"]) < 6 or all(w["requirement"] != rid for w in result["witnesses"]):
+            w = {"requirement": rid, "message": msg, "input": case, "output": out}
+            if origin:
+                w["origin"] = origin
+            result["witnesses"].append(w)
 
     outs = run_cases(project, task.exe, cases, "round1")
     if outs is None:
@@ -55,15 +61,15 @@ def property_tests(project, task, n_cases, seed, result):
             record(rid, msg, c, o)
         nxt = oracle.followup(c, o) if hasattr(oracle, "followup") else None
         if nxt:
-            follow.append(nxt)
+            follow.append((nxt, {"input": c, "output": o}))
     if follow:
-        outs2 = run_cases(project, task.exe, [c for c, _ in follow], "round2")
+        outs2 = run_cases(project, task.exe, [c for (c, _), _ in follow], "round2")
         if outs2 is None:
             result.update(status="TIMEOUT", followup_cases=len(follow))
             return result
-        for (c, rid), o in zip(follow, outs2):
+        for ((c, rid), origin), o in zip(follow, outs2):
             for _, msg in oracle.check(c, o):
-                record(rid, f"follow-up case: {msg}", c, o)
+                record(rid, f"follow-up case: {msg}", c, o, origin)
     result["followup_cases"] = len(follow)
     if flagship and outs:
         result["flagship_output"] = outs[0]
