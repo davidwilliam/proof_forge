@@ -11,10 +11,12 @@ harness sets indices, balances and block numbers directly; here a state with tho
 used. The cToken's borrow index is 1e18, so a borrow balance equals its borrow units; where a
 test uses a borrow index of 1.1e18 the units are the balance divided by 1.1, as in its comments.
 
-Tests 13 and 14 restate the Proposal 62 upgrade simulation on a fork of mainnet,
-`spec/sim/0011-split-comp-rewards/hypothetical_mainnet_upgrade.scen` at the same commit: after
-the upgrade, an account mints into cMKR, a market whose indices were 0, and claims nothing;
-after COMP speeds of 1 are set and blocks pass, its claim pays what was emitted.
+Tests 13 and 14 follow the Proposal 62 upgrade simulation on a fork of mainnet,
+`spec/sim/0011-split-comp-rewards/hypothetical_mainnet_upgrade.scen` at the same commit. Test 13
+is its mint test: after the upgrade, an account mints 1000e18 into cMKR, a market whose indices
+were 0, and its claim pays nothing. Test 14 takes the simulation's next steps (governance sets
+COMP speeds of 1, blocks pass, the account claims) with its own block count, so its amount is
+not the simulation's.
 
 All fourteen pass on the port. None of them has an account that held a position before the
 upgrade, with no recorded index, in a market whose index the upgrade initialized: the state of
