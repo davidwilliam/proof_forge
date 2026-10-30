@@ -14,8 +14,9 @@ The caps are hard limits for the work they bound:
     responses stay charged at the worst case;
   - a response completed after the deadline is discarded, and no tool runs after it;
   - every Lean tool run in the agent process is cut off at the deadline (judge.DEADLINE).
-The candidate on disk at the deadline is the run's result. After the deadline the agent
-only selects the newest compiling version it already produced (repair.finish); judging
+After the deadline the agent only selects among the compiling versions it already produced
+(repair.finish: the newest for A0, the one proving the most required theorems for the
+harness, by statuses recorded during the run); judging
 of that candidate by the shared evaluator is outside the budget and identical for all arms.
 """
 import time
