@@ -1,0 +1,306 @@
+# ProofForgeFin
+
+ProofForgeFin is a Lean 4 library of proved facts for specifications and proofs about money code:
+rounding and fixed-point arithmetic on `Nat`, share accounting, runs of operations with invariants
+over every reachable state, and conservation over accounts. It depends on the Lean core library
+only (no Mathlib), builds with the pinned toolchain (Lean v4.35.0) in the judge image, and every
+theorem is proved with no axiom beyond `propext`, `Classical.choice` and `Quot.sound`.
+
+The task specifications and reference solutions in this repository re-derive the same
+foundations task by task: floor and ceiling bounds, cross-multiplied share value, `run` over a
+list of operations with an induction, sums over account lists. The library states each of them
+once, for every scale, state type and operation type, so a specification can name a library
+definition and a proof can cite a library theorem.
+
+The library has 233 theorems and 38 definitions in six modules, plus four demonstrations (27
+theorems) that re-prove lemmas of task reference solutions with it. Every definition, structure
+field and constructor has a doc string; the build enables `linter.missingDocs` for the library and
+emits no warning.
+
+## Contents
+
+Statements below are paraphrased; the Lean names are exact. `a / b` is `Nat` division (rounded
+down); every bound is stated by cross-multiplication, so `q * b ≤ a` reads "`q` is at most the
+exact quotient".
+
+### `ProofForgeFin.Rounding`: floor and ceiling division
+
+`ceilDiv a b := (a + b - 1) / b`.
+
+* `floor_spec`: for `0 < b`, `a / b * b ≤ a ∧ a < (a / b + 1) * b`; `div_eq_of_bounds` (uniqueness).
+* `ceilDiv_spec`: for `0 < b`, `a ≤ ceilDiv a b * b ∧ ceilDiv a b * b < a + b`;
+  `ceilDiv_eq_of_bounds`, `ceilDiv_le_iff`, `lt_ceilDiv_iff`.
+* `div_le_ceilDiv`, `ceilDiv_le_div_add_one`, `ceilDiv_eq_div_iff` (equal exactly when `a % b = 0`),
+  `ceilDiv_eq_div_add_one`.
+* The forms deployed code uses are `ceilDiv`: `ceilDiv_eq_add_pred` (`(a + (b - 1)) / b`, Balancer
+  `scaleUp`) and `ceilDiv_eq_ite` (`if a = 0 then 0 else (a - 1) / b + 1`, Balancer `mulUp`, `divUp`).
+* Monotonicity: `div_mono_left`, `div_anti_right`, `ceilDiv_mono_left`, `ceilDiv_anti_right`; order of
+  rationals: `div_le_div_of_mul_le`, `ceilDiv_le_ceilDiv_of_mul_le` (`a * d ≤ c * b` gives
+  `a / b ≤ c / d` and the same for `ceilDiv`).
+* `mul_div_le_of_le`: `t ≤ s → t * a / s ≤ a` (a pro-rata payout never exceeds the pot).
+* Sums of rounded parts: `div_add_div_le`, `div_add_le_div_add_div_add_one`, `sum_div_mul_le`,
+  `sum_lt_sum_div_add_length_mul` (rounding each of `n` parts down loses less than `n` units),
+  `sum_div_le_div_sum`.
+* `le_add_div_of_mul_le`: `0 < D → X * D ≤ Y * D + P → X ≤ Y + P / D` (from a scaled potential to
+  an amount).
+
+Recurs in: `rw-hundred-vault/reference/SolutionA.lean` (`floor_spec`, `ceil_spec`,
+`mul_div_le_self`), `rw-balancer-upscale/reference/SolutionA.lean` (`scaleUp_ge`, `scaleUp_lt`,
+`mulUp_eq`, `divUp_spec`), `rw-cetus-shlw/spec/ClmmMath/Lemmas.lean` (`divRound_up`,
+`divRound_down`), `rw-compound-comp/reference/SolutionA.lean` (`div_bound`), the fee and share
+arithmetic of `tasks/payouts-*`.
+
+### `ProofForgeFin.FixedPoint`: fixed point at any scale
+
+`mulDiv a n d := a * n / d`, `mulDivUp a n d := ceilDiv (a * n) d`; `mulDown one a b`, `mulUp one a b`
+(`a * b / one`), `divDown one a b`, `divUp one a b` (`a * one / b`); `scaleDown`, `scaleUp`,
+`unscaleDown`, `unscaleUp` (Balancer's `_upscale` and `_downscale*`); `convertDecimalsDown`,
+`convertDecimalsUp` (an amount with `d` decimals as one with `e` decimals). The scale `one` is a
+parameter: `10^18`, `10^36` and `2^64` are instances, and the lemmas need only `0 < one`.
+
+* `mulDown_spec`: `mulDown one a b * one ≤ a * b ∧ a * b < (mulDown one a b + 1) * one` (within one
+  unit below the exact product); `mulUp_spec`: `a * b ≤ mulUp one a b * one ∧ mulUp one a b * one < a * b + one`.
+* `divDown_spec`, `divUp_spec`: the same for `a * one / b`, for `0 < b`.
+* `mulDown_le_mulUp`, `mulUp_le_mulDown_add_one`, `divDown_le_divUp`, `divUp_le_divDown_add_one`,
+  `mulDivUp_eq_mulDiv_iff`.
+* Monotonicity in each argument (`mulDown_mono`, `mulUp_mono`, `divDown_mono_left`,
+  `divDown_anti_right`, `divUp_mono_left`, `divUp_anti_right`), commutativity, identities
+  (`mulDown_one`, `divUp_one`, ...).
+* Balancer's formulas are these operations: `mulUp_eq_ite`, `mulUp_eq_add_pred`, `divUp_eq_ite`.
+* Round trips: `divDown_mulDown_le` (`divDown one (mulDown one a b) b ≤ a`), `mulDown_divDown_le`,
+  `le_divUp_mulUp`, `le_mulUp_divUp`: converting and converting back in the direction that favours
+  the holder of the funds never gains a unit.
+* Two products: `mulDown_mulDown_le`, `le_mulUp_mulUp` (bounds at scale `one * one`).
+* `convertDecimals_spec`, `convertDecimalsDown_of_le` (to more decimals the conversion is exact).
+
+Recurs in: `rw-balancer-upscale/reference/SolutionA.lean` (`FixedPoint` port, `le_div_one_one`,
+`div_one_one_le`), `rw-balancer-upscale/spec/BalancerSwap/Spec.lean` (`scaleDown`, `scaleUp`),
+`rw-euler-donate/spec/EulerLending/Spec.lean` (1e18 liquidation terms),
+`rw-compound-comp/spec/CompRewards/Spec.lean` (`creditFor`, `accrueSide` at `doubleScale`).
+
+### `ProofForgeFin.Word`: machine words
+
+* `mul_two_pow_lt_iff`: for `k ≤ w`, `a * 2^k < 2^w ↔ a < 2^(w - k)`. For `w = 256`, `k = 64` this is the
+  overflow condition a correct `checked_shlw` must test (`n < 2^192`).
+* `toNat_shiftLeft_of_lt`, `toNat_shiftLeft_of_lt_two_pow`, `toNat_ushiftRight`, `toNat_mul_of_lt`,
+  `toNat_add_of_lt`, `toNat_sub_of_le`, `toNat_setWidth_of_le`, `toNat_ofNat_of_lt`: when a `BitVec`
+  operation is exact.
+* `toNat_fullMul`: the product of two `w`-bit words widened to `2w` bits is exact (`full_mul`).
+
+Recurs in: `rw-cetus-shlw/spec/ClmmMath/Lemmas.lean` (`toNat_fullMul`, `toNat_absDiff`) and
+`rw-cetus-shlw/reference/SolutionA.lean` (`flag_false_iff`, `value_of_flag`).
+
+### `ProofForgeFin.Shares`: share accounting
+
+`Pool` (`assets`, `supply`); `ValueNotBelow p q := p.assets * q.supply ≤ q.assets * p.supply`; the
+ERC-4626 conversions rounded in the vault's favour: `previewDeposit` (down), `previewMint` (up),
+`previewRedeem` (down), `previewWithdraw` (up); `Pool.add`, `Pool.sub`; a vault model `Op` and
+`step` (deposit, mint, redeem, withdraw, donate; refused calls leave the books unchanged).
+
+* Exactness: `previewDeposit_spec`, `previewMint_spec`, `previewRedeem_spec`, `previewWithdraw_spec`.
+* `valueNotBelow_trans`: `ValueNotBelow p q → ValueNotBelow q r → 0 < q.supply → ValueNotBelow p r`.
+* `add_value`: `t * assets ≤ x * supply → ValueNotBelow p (p.add x t)`; `sub_value`:
+  `y * supply ≤ t * assets → ValueNotBelow p (p.sub y t)`. Every conversion below is an instance.
+* Share value does not fall when rounding favours the vault: `deposit_value`, `mint_value`,
+  `redeem_value`, `withdraw_value`, `donate_value`.
+* `previewRedeem_le_of_value`: if value did not fall, redeeming the same shares later pays at least
+  as much.
+* Round trips never return more than was put in: `deposit_redeem_le`, `mint_redeem_le`,
+  `redeem_deposit_le`, `withdraw_mint_ge`.
+* `previewDeposit_eq_zero_iff`: a deposit mints nothing exactly when `x * supply < assets` (the
+  first-depositor inflation condition); `previewRedeem_le_assets`, `previewWithdraw_le_supply`,
+  monotonicity, `previewDeposit_le_previewWithdraw`, `previewRedeem_le_previewMint`.
+* `step_value`: from a vault with outstanding shares no operation lowers share value;
+  `run_value`: share value never falls over any sequence of operations along which shares stay
+  outstanding.
+
+Recurs in: `rw-hundred-vault/spec/ShareVault/Spec.lean` (`ValueNotBelow`, the rounding
+requirements, `ShareValueNeverFalls`) and its reference solution (`value_trans`, `exec_value`,
+`run_value`); `rw-balancer-upscale` (pool value under a batch).
+
+### `ProofForgeFin.Seq`: sequences of operations
+
+`run step s ops` (state after the operations), `trace step s ops` (every state passed through),
+`Preserves step I`, `accum next f g ops` (a total computed from the operations with a ghost state
+`g`), `skip` (a partial step whose refusals leave the state unchanged), `runAll` (an atomic run of a
+partial step), `Reachable step init`.
+
+* Runs: `run_append`, `run_snoc`, `run_eq_foldl`, `length_trace`, `self_mem_trace`, `run_mem_trace`,
+  `run_take_mem_trace`, `exists_take_of_mem_trace`.
+* Induction principle: `run_invariant` (`Preserves step I → I s → I (run step s ops)`),
+  `trace_invariant` (on every state of the trace), `run_invariant_of_imp` (strengthening),
+  `run_invariant_under` (an invariant relative to another), `Preserves.and`, `run_of_step`,
+  `run_invariant_of_mem` (operations of one list only).
+* Relations along runs: `run_rel` (reflexive, transitive), `run_rel_of_trace` (a relation that
+  composes only through states satisfying `C`, for runs whose trace stays in `C`: share value with
+  outstanding shares), `run_ge`, `run_le`.
+* Accumulated bounds: `run_eq_of_step_eq`, `run_eq_of_mem`, `run_eq_add_sum`,
+  `run_le_add_sum` (`(∀ s a, P (step s a) ≤ P s + f a) → P (run step s ops) ≤ P s + (ops.map f).sum`),
+  `run_le_add_sum_of_inv`.
+* Ghost accumulators: `accum_append`, `accum_const`; `run_total_invariant` (an invariant
+  `Inv g e s` over the ghost state, the total so far and the state; with
+  `Inv g e s := Q s ≤ Q₀ + e ∧ J g s` it states "credited ≤ initial + emitted so far");
+  `run_le_accum`, `run_le_scaled_accum` (`P (run step s ops) ≤ P s + c * accum next f g ops`);
+  `run_bound_via_potential` (from `Q s * c ≤ P s` and `P s ≤ B * c + R` at the start,
+  `Q (run step s ops) ≤ B + accum next f g ops + R / c`); `run_pair`.
+* Partial steps: `skip_preserves`, `skip_rel`, `runAll_cons_eq_some`, `runAll_append`, `runAll_some`,
+  `runAll_invariant`, `runAll_rel` (a batch never lowers a value no single operation lowers),
+  `runAll_rel_of_inv`.
+* Reachable states: `Reachable.invariant`, `Reachable.invariant_of_imp`, `reachable_of_runAll`,
+  `exists_runAll_of_reachable`, `reachable_iff` (reachable exactly when some atomic run reaches it),
+  `reachable_run_skip`.
+
+Recurs in: `rw-hundred-vault` (`run`, `trace`, `run_value`), `rw-euler-donate` (`Reachable`,
+`runAll`, `req_no_bad_debt`), `rw-balancer-upscale` (`run` of a batch, `req_batch_keeps_value`),
+`rc-knight-router/spec/OrderRouter/Lemmas.lean` (`run` as a fold, `run_induction`),
+`rw-compound-comp` (`run`, `emitted` with the speeds as ghost state, `run_inv`, `run_pot`,
+`spec_rewards_bounded`), `tasks/transfers-batch-*` (`applyLegs`).
+
+### `ProofForgeFin.Ledger`: conservation over accounts
+
+`sumOver l f` (the right fold the task specifications use), `adjust`, `transfer`, `Move`,
+`applyMoves`, `upd`, `SupplyMatches holders bal supply`, `equalSplit a n`.
+
+* `sumOver` algebra: `sumOver_eq_sum_map`, `sumOver_append`, `sumOver_add`, `sumOver_sub`,
+  `sumOver_congr`, `sumOver_ite_eq` (an indicator over a duplicate-free list), `sumOver_le_sumOver`.
+* `sumOver_adjust`, `sumOver_transfer'`, `sumOver_transfer` (a transfer between two accounts of a
+  duplicate-free list conserves the total), `sumOver_applyMoves` (so does any batch of them),
+  `applyMoves_other`.
+* Natural-number balances: `le_sum_map`, `sum_map_upd` (updating one account), `sum_map_upd_of_not_mem`,
+  `sum_map_le_sum_map`, `sum_map_congr`.
+* Shares and supply: `SupplyMatches.balance_le` (a holder holds at most the supply),
+  `SupplyMatches.mint`, `SupplyMatches.burn`, `SupplyMatches.move`.
+* Splitting: `length_equalSplit`, `sum_equalSplit` (the parts add up to the amount),
+  `mem_equalSplit_bounds` (each part within one unit of `a / n`), `equalSplit_le_add_one`.
+* Accounts indexed by position (`List.modify`, `List.getD`): `getD_modify`, `getD_modify_self`,
+  `getD_modify_ne`, `modify_of_length_le`, `getD_mem_or`, `sum_map_modify`, `sum_map_modify_le`,
+  `sum_map_modify_eq`, `sum_map_modify_modify` (moving an amount between two positions conserves
+  the total), `getD_le_sum_map`, `sum_map_le_add`, `sum_map_mul_le`, `sum_map_mul_right`.
+
+Recurs in: `tasks/transfers-batch-*/spec/Batch/Lemmas.lean` and the same `sumOver_*` lemmas in
+the `Lemmas.lean` of the `transfers-overdraft`, `payouts-fee`, `payouts-flagship`,
+`payouts-weighted`, `ledgers-journal` and `ledgers-reversal` families; the reference solutions of
+`transfers-batch-*` (`sum_shift`, `sum_applyLegs`); `rw-compound-comp/reference/SolutionA.lean`
+(the `List.modify` lemmas, `totalSupply`, `St.credited`); `rc-knight-router/spec/OrderRouter/Lemmas.lean`
+(`sentFor_append`, `execFor_le_sentFor`); `rw-gomoney-split` (conservation and one-unit bounds of
+an equal split, there for signed amounts).
+
+## Demonstrations
+
+`ProofForgeFinDemo` re-proves lemmas of task reference solutions with the library. Each file copies
+the task definitions it needs verbatim (with their doc strings) from the task files named in its
+header; no task file is imported or modified.
+
+* `ShareVault.lean` (`rw-hundred-vault`): `req_share_value : ShareValueNeverFalls vault` for the
+  reference implementation. The reference proof states its own floor and ceiling bounds and
+  cross-multiplied transitivity, then does the arithmetic of each call and an induction over the
+  trace. Here
+  each successful call is a library conversion (`Shares.deposit_value`, `redeem_value`,
+  `withdraw_value`, `donate_value`) and the induction is `Seq.run_rel_of_trace` with
+  `Shares.valueNotBelow_trans`, after `run_eq` and `trace_eq` identify the task's `run` and `trace`
+  with the library's.
+* `BatchTransfer.lean` (`transfers-batch-b3`): `sum_shift` and `sum_applyLegs` of the reference
+  solution (an admissible batch conserves the total), from `Ledger.sumOver_transfer` and
+  `Ledger.sumOver_applyMoves`, with `shift` identified as `Ledger.transfer` by `rfl`.
+* `Compound.lean` (`rw-compound-comp`): the sequence half of the reward bounds, for every
+  implementation, invariant and potential: `run_inv`, `run_pot` (a potential that each operation
+  raises by at most `doubleScale` times the COMP it emits is raised by a sequence by at most
+  `doubleScale * emitted sp ops`) and `credited_bound` (the final division step of
+  `spec_rewards_bounded`). `emitted` is shown to be `Seq.accum nextSpeeds emittedBy`. The per-operation
+  lemmas of the reference (`exec_inv`, `exec_pot`) are hypotheses, not re-proved.
+* `Euler.lean` (`rw-euler-donate`): `noBadDebt_of_staysHealthy : StaysHealthy step → NoBadDebt step`
+  for every implementation, via `Seq.Reachable.invariant` after `reachable_iff` identifies the task's
+  `Reachable` with the library's; `runAll_healthy` extends it to every successful session.
+
+## Axiom audit
+
+`Audit.lean` (not part of the library targets) imports the library and the demonstrations, collects
+with `Lean.collectAxioms` the axioms of every constant declared in a `ProofForgeFin` or
+`ProofForgeFinDemo` module, and reports a violation for any axiom outside `propext`,
+`Classical.choice` and `Quot.sound` and for any axiom declared in those modules. A `sorry` appears as
+`sorryAx`; in Lean 4.35 `native_decide` and `bv_decide` declare an auxiliary axiom
+(`<theorem>._native.native_decide.ax_...`, `<theorem>._native.bv_decide.ax_...`) that the theorem
+depends on, so all three are reported; `tests/test_fin_lib.py` checks this on a probe copy. The
+audit then prints `#print axioms` for the main results.
+
+Output in the pinned image (`proofforge-lean:4.35.0`,
+`sha256:7d5b583a0fe4c4cef9d78f4a5b0c929da97d6ec20f11cfc6b6806e005f76e18a`, linux/arm64):
+
+```
+axioms used: [Classical.choice, Quot.sound, propext]
+audit: 1331 constants, 419 theorems, 0 violations
+'ProofForgeFin.floor_spec' depends on axioms: [propext, Quot.sound]
+'ProofForgeFin.ceilDiv_spec' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ProofForgeFin.mulDown_spec' depends on axioms: [propext, Quot.sound]
+'ProofForgeFin.mulUp_spec' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ProofForgeFin.mulDown_le_mulUp' depends on axioms: [propext, Quot.sound]
+'ProofForgeFin.mulUp_le_mulDown_add_one' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ProofForgeFin.divDown_spec' depends on axioms: [propext, Quot.sound]
+'ProofForgeFin.divUp_spec' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ProofForgeFin.le_divUp_mulUp' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ProofForgeFin.mul_two_pow_lt_iff' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ProofForgeFin.toNat_fullMul' depends on axioms: [propext, Quot.sound]
+'ProofForgeFin.Shares.valueNotBelow_trans' depends on axioms: [propext]
+'ProofForgeFin.Shares.deposit_value' depends on axioms: [propext, Quot.sound]
+'ProofForgeFin.Shares.withdraw_value' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ProofForgeFin.Shares.deposit_redeem_le' depends on axioms: [propext, Quot.sound]
+'ProofForgeFin.Shares.step_value' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ProofForgeFin.Shares.run_value' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ProofForgeFin.Seq.run_invariant' does not depend on any axioms
+'ProofForgeFin.Seq.run_rel_of_trace' depends on axioms: [propext]
+'ProofForgeFin.Seq.run_le_add_sum' depends on axioms: [propext, Quot.sound]
+'ProofForgeFin.Seq.run_total_invariant' does not depend on any axioms
+'ProofForgeFin.Seq.run_bound_via_potential' depends on axioms: [propext, Quot.sound]
+'ProofForgeFin.Seq.runAll_rel' does not depend on any axioms
+'ProofForgeFin.Seq.reachable_iff' depends on axioms: [propext]
+'ProofForgeFin.Ledger.sumOver_transfer' depends on axioms: [propext, Quot.sound]
+'ProofForgeFin.Ledger.sumOver_applyMoves' depends on axioms: [propext, Quot.sound]
+'ProofForgeFin.Ledger.SupplyMatches.move' depends on axioms: [propext, Quot.sound]
+'ProofForgeFin.Ledger.sum_map_modify_modify' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ProofForgeFin.Ledger.sum_equalSplit' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ProofForgeFin.Ledger.mem_equalSplit_bounds' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ProofForgeFinDemo.ShareVault.req_share_value' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ProofForgeFinDemo.BatchTransfer.sum_applyLegs' depends on axioms: [propext, Quot.sound]
+'ProofForgeFinDemo.Compound.run_pot' depends on axioms: [propext, Quot.sound]
+'ProofForgeFinDemo.Compound.credited_bound' depends on axioms: [propext, Quot.sound]
+'ProofForgeFinDemo.Euler.noBadDebt_of_staysHealthy' does not depend on any axioms
+```
+
+The counts include the constants Lean generates for each declaration (recursors, matchers,
+`injEq` theorems, auxiliary proofs); the source declares 233 library theorems and 27 demonstration
+theorems.
+
+## Building
+
+In the pinned image, from the repository root:
+
+```
+.venv/bin/python harness/lean.py lib "lake build && lake env lean Audit.lean"
+```
+
+`harness/lean.py` runs the command in `proofforge-lean:4.35.0` with `lib/` mounted at `/work` and
+takes one of the judge's container slots. The test builds the library, runs the audit, and checks
+the audit on a probe copy with a `sorry`, a `native_decide` and a `bv_decide`:
+
+```
+.venv/bin/python tests/test_fin_lib.py
+```
+
+## Scope
+
+Covered: rounding and fixed point on `Nat`, share accounting with exact ratios, sequences of total
+and partial steps, sums over account lists and lists indexed by position, equal splits.
+
+Not covered: rounding of signed amounts (`Int` floor and ceiling toward zero or toward negative
+infinity, and the equal split of a negative amount in `rw-gomoney-split`); allocation by ratios with the largest
+remainder (`rw-moneyphp-allocate`, `rw-spliit-balances`); a library form of the `BitVec` `div_round` routine of
+`rw-cetus-shlw`; the per-operation lemmas of the Compound reward potential (`exec_pot`), which
+depend on that task's model; overflow-checked word versions of the fixed-point operations beyond the
+exactness conditions of `ProofForgeFin.Word`.
+
+The library is not wired into the judge, the task projects, the agent prompts or retrieval. A task
+that uses it needs the library available in the judge's project (baked into the pinned image or
+required by path from the task's `lakefile.toml`, which changes the task's locked hash, so as a new
+task version), `ProofForgeFin` added to the imports `harness/judge.py` allows in candidate files, and
+the same library version for the challenge and the solution so that Comparator compares the same
+definitions.
