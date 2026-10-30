@@ -10,7 +10,11 @@ completed when the judge accepts and the binary passes.
 Arms: A0 compile-and-retry (agents/baseline.py), A1 harness without planner, A2 harness
 with the planner (agents/repair.py).
 
-Usage: e1.py --label NAME [--split dev] [--tasks id,id] [--arms A0,A1,A2]
+The ProofForgeFin library is an explicit setting of the harness arms (`--library on|off`, default
+on): it is passed to agents/repair.py and recorded in config.json with the library's source tree
+hash. The E1 results in results/e1-dev-2 and results/e1-test-1 predate the library (no library).
+
+Usage: e1.py --label NAME [--split dev] [--tasks id,id] [--arms A0,A1,A2] [--library on|off]
              [--budget-usd 3] [--budget-wall 2700] [--parallel 3] [--report-only]
 Results: results/e1-<label>/ (per run: summary.json, final.lean, eval.json, events.jsonl).
 """
@@ -26,14 +30,29 @@ ARMS = {
     "A1": [sys.executable, str(ROOT / "agents/repair.py"), "--planner", "none"],
     "A2": [sys.executable, str(ROOT / "agents/repair.py"), "--planner", "muse-wonder-1.0"],
 }
+# Arms that take the ProofForgeFin library flag (agents/repair.py --library on|off). A0 is Muse
+# alone and never gets the library.
+LIBRARY_ARMS = ("A1", "A2")
 EVAL_CASES, EVAL_SEED = 2000, 1
+
+
+def library_flag(a):
+    """The library setting of a run's arguments; arguments without it (as in tests) get the
+    default."""
+    return getattr(a, "library", None) or "on"
+
+
+def arm_command(arm, library):
+    """The agent command of an arm; the library flag is always explicit for the harness arms."""
+    return ARMS[arm] + (["--library", library] if arm in LIBRARY_ARMS else [])
 
 
 def task_ref(t):
     return str(t.root) if t.root == taskmod.FLAGSHIP else t.id
 
 
-CODE_GLOBS = ["agents/*.py", "harness/*.py", "eval/e1.py", "eval/freeze.py", "infra/docker/Dockerfile.lean"]
+CODE_GLOBS = ["agents/*.py", "harness/*.py", "harness/*.lean", "eval/e1.py", "eval/freeze.py",
+              "infra/docker/Dockerfile.lean"]
 
 
 def git(*args):
@@ -50,7 +69,12 @@ def frozen_config(a, tasks, arms):
                           "task_json": taskmod.sha256(t.root / "task.json"),
                           "oracle": taskmod.sha256(t.root / "oracle.py"),
                           "start_candidate": taskmod.sha256(t.start)} for t in tasks}
-    cfg = {"tasks": [t.id for t in tasks], "arms": {arm: ARMS[arm][1:] for arm in arms}, "model": a.model,
+    import fin_lib
+    flag = library_flag(a)
+    library = {"flag": flag, "arms": [arm for arm in arms if arm in LIBRARY_ARMS and flag == "on"],
+               "source_tree_sha256": fin_lib.tree_sha256()}
+    cfg = {"tasks": [t.id for t in tasks], "arms": {arm: arm_command(arm, flag)[1:] for arm in arms},
+           "library": library, "model": a.model,
            "budget_usd_list": a.budget_usd, "budget_wall_s": a.budget_wall, "parallel": a.parallel,
            "eval_cases": EVAL_CASES, "eval_seed": EVAL_SEED, "judge_image": judge.image_id(),
            "container_slots": judge.SLOTS, "code_sha256": code, "task_sha256": task_hashes,
@@ -123,7 +147,7 @@ def run_task(t, arms, a, out, cfg, cap):
         d = dirs[arm]
         if arm in todo:
             d.mkdir(parents=True, exist_ok=True)
-            cmd = ARMS[arm] + ["--task", task_ref(t), "--model", a.model, "--out", str(d),
+            cmd = arm_command(arm, library_flag(a)) + ["--task", task_ref(t), "--model", a.model, "--out", str(d),
                                "--budget-usd", str(a.budget_usd), "--budget-wall", str(a.budget_wall)]
             with (d / "agent.log").open("w") as log:
                 try:
@@ -275,6 +299,8 @@ def main():
     ap.add_argument("--budget-wall", type=float, default=2700)
     ap.add_argument("--parallel", type=int, default=2)
     ap.add_argument("--report-only", action="store_true")
+    ap.add_argument("--library", default="on", choices=["on", "off"],
+                    help="ProofForgeFin for the harness arms A1 and A2 (passed to agents/repair.py; A0 never has it)")
     ap.add_argument("--batch-usd", type=float, help="cap on the batch total at list prices")
     ap.add_argument("--require-clean", action="store_true", help="refuse to run with uncommitted tracked changes")
     ap.add_argument("--freeze", type=pathlib.Path, default=ROOT / "results/test-freeze.json",

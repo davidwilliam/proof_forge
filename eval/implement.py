@@ -185,6 +185,8 @@ def main():
     ap.add_argument("--parallel", type=int, default=2)
     ap.add_argument("--batch-usd", type=float, default=150)
     ap.add_argument("--report-only", action="store_true")
+    ap.add_argument("--library", default="on", choices=["on", "off"],
+                    help="ProofForgeFin for the implement arm (passed to agents/repair.py)")
     ap.add_argument("--freeze", type=pathlib.Path, default=ROOT / "results/test-freeze.json")
     a = ap.parse_args()
     ids = a.tasks.split(",") if a.tasks else json.loads((REPAIR_RESULTS / "config.json").read_text())["tasks"]
