@@ -5,6 +5,7 @@ import ProofForgeFin.Money.Split
 import ProofForgeFin.Money.Currency
 import ProofForgeFin.Money.Fee
 import ProofForgeFin.Money.FX
+import ProofForgeFin.Money.Interest
 /-!
 # ProofForgeFin.Money
 
@@ -21,4 +22,6 @@ exponents, interest, currency conversion and fees.
 * `ProofForgeFin.Money.Currency`: currencies, minor units, and rescaling between exponents.
 * `ProofForgeFin.Money.Fee`: percentage fees rounded either way, caps and minimums, gross-up.
 * `ProofForgeFin.Money.FX`: currency conversion, round trips and no-arbitrage bounds.
+* `ProofForgeFin.Money.Interest`: simple and compound interest rounded every period, and
+  amortization with a fixed payment.
 -/
