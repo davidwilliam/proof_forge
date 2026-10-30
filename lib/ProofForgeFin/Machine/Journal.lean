@@ -18,6 +18,8 @@ to them by `rfl`.
 * Reversal: `negate ls` negates every amount; posting it after `ls` restores every balance
   exactly (`post_post_negate`), and reversing a whole sequence of entries in any order restores
   the opening balances (`postAll_reverse_restores`).
+* Transfers: a transfer is the balanced two-line entry `transferLines src dst x`, and posting it
+  is `Ledger.transfer` (`post_transferLines`).
 * Order: posting is commutative (`post_comm`); a sequence of entries posted in any order gives the
   same balances (`postAll_perm`).
 * Debits and credits: `lineSum = debits - credits` (`lineSum_eq_debits_sub_credits`), so an
@@ -168,6 +170,30 @@ theorem trial_balance_post {l : List κ} (hl : l.Nodup) (bal : κ → Int) {ls :
 theorem post_of_not_named (bal : κ → Int) {ls : List (κ × Int)} {a : κ} (h : ∀ x ∈ ls, x.1 ≠ a) :
     post bal ls a = bal a := by
   simp [netOf_eq_zero h]
+
+/-- The two-line entry of a transfer: debit the destination, credit the source. -/
+def transferLines (src dst : κ) (x : Int) : List (κ × Int) := [(src, -x), (dst, x)]
+
+/-- Posting the two-line entry of a transfer is `Ledger.transfer`. -/
+theorem post_transferLines (bal : κ → Int) (src dst : κ) (x : Int) :
+    post bal (transferLines src dst x) = Ledger.transfer bal src dst x := by
+  funext a
+  have e1 : (src = a) ↔ (a = src) := eq_comm
+  have e2 : (dst = a) ↔ (a = dst) := eq_comm
+  simp only [post_apply, transferLines, netOf_cons, netOf_nil, Ledger.transfer, e1, e2]
+  by_cases hs : a = src
+  · by_cases hd : a = dst
+    · simp only [eq_true hs, eq_true hd, ite_true]; omega
+    · simp only [eq_true hs, eq_false hd, ite_true, ite_false]; omega
+  · by_cases hd : a = dst
+    · simp only [eq_false hs, eq_true hd, ite_true, ite_false]; omega
+    · simp only [eq_false hs, eq_false hd, ite_false]; omega
+
+omit [DecidableEq κ] in
+/-- The entry of a transfer is balanced. -/
+theorem balanced_transferLines (src dst : κ) (x : Int) : Balanced (transferLines src dst x) := by
+  show lineSum [(src, -x), (dst, x)] = 0
+  simp only [lineSum_cons, lineSum_nil]; omega
 
 /-! ## Reversal -/
 
