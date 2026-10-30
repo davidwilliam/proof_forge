@@ -1,13 +1,25 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { BENCHMARK, FEATURED, FLAGSHIPS, IMPLEMENTED_FLAGSHIPS, IMPLEMENTS, type Flagship, type PassportRef } from "../lib/flagships";
+import {
+  BENCHMARK,
+  FEATURED,
+  FLAGSHIPS,
+  IMPLEMENTED_FLAGSHIPS,
+  IMPLEMENTS,
+  lossTotalMillions,
+  lossTotalPhrase,
+  type Flagship,
+  type PassportRef,
+} from "../lib/flagships";
 import { ROOT, readExact, readPassport, readRunSummary } from "../scripts/lib/results.mjs";
 
 const text = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 const round = (x: number, places: number) => Math.round(x * 10 ** places) / 10 ** places;
 const allPassports = (f: Flagship): PassportRef[] =>
-  [f.vulnerable.passport, f.repair.passport, ...f.timeline.map((v) => v.passport)].filter((p): p is PassportRef => !!p);
+  [f.vulnerable.passport, f.repair.passport, ...f.timeline.map((v) => v.passport), ...f.unresolved.map((u) => u.passport)].filter(
+    (p): p is PassportRef => !!p,
+  );
 
 describe("flagship Passports match the committed files", () => {
   for (const f of FLAGSHIPS) {
@@ -27,7 +39,14 @@ describe("flagship Passports match the committed files", () => {
       expect(r.propertyCases).toBe(f.repair.propertyCases);
       expect(r.executableStatus).toBe("PASS");
       if (f.vulnerable.passport) expect(readPassport(f.vulnerable.passport.path).executableStatus).toBe("REFUTED");
-      expect(text(`${f.repair.run}/verify.txt`)).toMatch(/^reproduced$/m);
+      expect(f.repair.verifyLog.startsWith(`${f.repair.run}/`)).toBe(true);
+      expect(text(f.repair.verifyLog)).toMatch(/^reproduced$/m);
+      for (const u of f.unresolved) {
+        const q = readPassport(u.passport.path);
+        expect(q.status, u.run).toBe("UNRESOLVED");
+        expect(q.executableStatus, u.run).toBe("PASS");
+        expect(q.propertyCases, u.run).toBe(f.repair.propertyCases);
+      }
     });
   }
 });
@@ -39,14 +58,34 @@ describe("flagship repair runs match summary.json", () => {
       expect(s.task).toBe(path.basename(f.task));
       expect(s.arm).toBe(f.repair.arm);
       expect(s.model).toBe("muse-spark-1.3-contributor");
-      expect(s.planner).toBe("none");
+      expect(s.planner).toBe(f.repair.planner ? "muse-wonder-1.0" : "none");
+      expect(f.repair.arm).toBe(f.repair.planner ? "A2" : "A1");
       expect(s.acceptedInSession).toBe(true);
       expect(Math.round(s.seconds)).toBe(f.repair.seconds);
       expect(s.calls).toBe(f.repair.calls);
       // Shown to two decimals, or three when the amount is under five cents.
       expect(round(s.usdList, 2)).toBe(f.repair.usdList);
       expect(round(s.usdCharged, s.usdCharged < 0.045 ? 3 : 2)).toBe(f.repair.usdCharged);
-      expect(f.repair.attempt).toBe(Number(/repair-A1-(\d+)$/.exec(f.repair.run)![1]));
+      expect(f.repair.attempt).toBe(Number(new RegExp(`(?:repair-)?${f.repair.arm}-(\\d+)$`).exec(f.repair.run)![1]));
+      for (const u of f.unresolved) expect(readRunSummary(`${u.run}/summary.json`).acceptedInSession, u.run).toBe(false);
+    });
+  }
+});
+
+describe("earlier attempts without a Passport match the results README", () => {
+  for (const f of FLAGSHIPS.filter((x) => x.unresolved.length)) {
+    it(f.key, () => {
+      const readme = text(`${path.dirname(f.repair.run)}/README.md`);
+      const total = Object.keys(f.repair.passport.requirements).length;
+      for (const u of f.unresolved) {
+        const id = path.basename(u.run);
+        expect(u.label).toBe(`${id.split("-")[0]}, attempt ${id.split("-")[1]}`);
+        const row = readme.split("\n").find((l) => l.startsWith(`| ${id} |`))!;
+        expect(row, id).toBeDefined();
+        expect(row).toContain(`| ${u.proved} of ${total} |`);
+        expect(row).toContain(u.stop.replace("wall-clock", "wall"));
+        expect(row).toContain(u.passport.sha256.slice(0, 16));
+      }
     });
   }
 });
@@ -55,30 +94,41 @@ describe("loss figures are quoted from the task READMEs", () => {
   for (const f of FLAGSHIPS) {
     it(f.key, () => {
       const readme = text(`${f.task}/README.md`);
-      const amount = f.loss.amount.replace(/^about /, "");
-      const m = /^\$(\d+) million$/.exec(amount)!;
+      const m = /^(about |more than )?\$(\d+) million$/.exec(f.loss.amount)!;
       expect(m, f.loss.amount).not.toBeNull();
-      expect(f.loss.amount.startsWith("about ")).toBe(true);
-      // The README states it as "about $223 million" or "about $197M".
-      expect(readme.includes(`about ${amount}`) || readme.includes(`about $${m[1]}M`)).toBe(true);
+      const x = m[2]!;
+      expect(f.loss.usdMillions).toBe(Number(x));
+      // The README states it as "about $223 million", "about $197M", "$120+ million" or "$460 million".
+      const quoted =
+        m[1] === "about "
+          ? readme.includes(`about $${x} million`) || readme.includes(`about $${x}M`)
+          : m[1] === "more than "
+            ? readme.includes(`$${x}+ million`)
+            : readme.includes(`$${x} million`);
+      expect(quoted, f.loss.amount).toBe(true);
       for (const c of f.loss.citations) expect(readme, c.url).toContain(c.url);
     });
   }
+  it("the total sums the rounded-down figures", () => {
+    expect(lossTotalMillions()).toBe(FLAGSHIPS.reduce((n, f) => n + f.loss.usdMillions, 0));
+    const m = lossTotalMillions();
+    expect(lossTotalPhrase()).toBe(m >= 1000 ? `more than $${Math.floor(m / 1000)} billion` : `more than $${Math.floor(m / 10) * 10} million`);
+  });
 });
 
 /** Incident-specific figures, recomputed from each real-code report. Every flagship needs one. */
 const realCode: Record<string, (f: Flagship) => void> = {
   cetus(f) {
-    const r = readExact(f.realCode.report);
-    expect(r.cases).toBe(f.realCode.total);
+    const r = readExact(f.realCode!.report);
+    expect(r.cases).toBe(f.realCode!.total);
     expect(r.documented_cases).toBe(7);
     expect(r.sui_version).toContain("1.83.0");
     const keys = ["original", "pr6", "pr7"];
-    expect(f.realCode.rows.length).toBe(keys.length);
-    f.realCode.rows.forEach((row, i) => {
+    expect(f.realCode!.rows.length).toBe(keys.length);
+    f.realCode!.rows.forEach((row, i) => {
       const v = r.versions[keys[i]!];
       expect(v.commit).toBe(row.commit);
-      expect(v.outputs).toBe(f.realCode.total);
+      expect(v.outputs).toBe(f.realCode!.total);
       expect(v.violating_cases).toBe(row.violating);
       expect(v.agrees_with_port).toBe(row.sameAsPort);
       expect(v.same_as_proved).toBe(row.sameAsProved);
@@ -86,7 +136,7 @@ const realCode: Record<string, (f: Flagship) => void> = {
     expect(r.versions.pr6.by_requirement["REQ-SHLW-EXACT"]).toBe(32);
     expect(r.versions.original.witnesses[0].output.amount).toBe(1);
     expect(r.reference.candidate).toContain(f.repair.passport.sha256.slice(0, 16));
-    expect(r.lean_confirmation).toMatchObject({ goals: f.realCode.confirmedInLean.goals, checked: f.realCode.confirmedInLean.checked });
+    expect(r.lean_confirmation).toMatchObject({ goals: f.realCode!.confirmedInLean.goals, checked: f.realCode!.confirmedInLean.checked });
 
     // Counterexamples on the timeline.
     const owed = /rounded up, is (\d+) units/.exec(r.versions.original.witnesses[0].message)![1]!;
@@ -118,15 +168,15 @@ const realCode: Record<string, (f: Flagship) => void> = {
   },
 
   euler(f) {
-    const r = readExact(f.realCode.report);
+    const r = readExact(f.realCode!.report);
     const [plain, patched] = [r.versions.b1ee326, r.versions["b1ee326+checkLiquidity"]];
-    for (const v of [plain, patched]) expect(v.sequences).toBe(f.realCode.total);
-    const [a, b] = f.realCode.rows;
+    for (const v of [plain, patched]) expect(v.sequences).toBe(f.realCode!.total);
+    const [a, b] = f.realCode!.rows;
     expect([plain.commit, plain.violating_sequences, plain.same_as_proved]).toEqual([a!.commit, a!.violating, a!.sameAsProved]);
     expect(plain.euler_liquidity_violations).toBe(a!.violating);
     expect([patched.violating_sequences, patched.same_as_proved]).toEqual([b!.violating, b!.sameAsProved]);
     expect(r.proved.candidate).toContain(f.repair.passport.sha256.slice(0, 16));
-    expect(r.lean_confirmation.goals).toBe(f.realCode.confirmedInLean.goals);
+    expect(r.lean_confirmation.goals).toBe(f.realCode!.confirmedInLean.goals);
     expect(r.lean_confirmation.checked).toBe(true);
     expect(r.lean.kernel_refutation.checked).toBe(true);
 
@@ -154,17 +204,17 @@ const realCode: Record<string, (f: Flagship) => void> = {
   },
 
   hundred(f) {
-    const r = readExact(f.realCode.report);
+    const r = readExact(f.realCode!.report);
     const c = r.comparison;
-    expect(c.cases).toBe(f.realCode.total);
-    const [deployed, muse] = f.realCode.rows;
+    expect(c.cases).toBe(f.realCode!.total);
+    const [deployed, muse] = f.realCode!.rows;
     expect([c.real_same_as_port, c.violating_cases, c.real_same_as_proved]).toEqual([deployed!.sameAsPort, deployed!.violating, deployed!.sameAsProved]);
     expect(c.real_differs_from_port).toEqual([]);
     expect(c.proved_violations).toBe(muse!.violating);
     expect(r.fork_block).toBe(90761917);
-    expect(f.realCode.how).toContain(String(r.fork_block));
+    expect(f.realCode!.how).toContain(String(r.fork_block));
     expect(r.proved.candidate).toContain(f.repair.passport.sha256.slice(0, 16));
-    expect(r.lean_confirmation).toMatchObject(f.realCode.confirmedInLean);
+    expect(r.lean_confirmation).toMatchObject(f.realCode!.confirmedInLean);
     expect(r.port.kernel_refutation_checked).toBe(true);
     expect(r.port.kernel_refutation).toBe(f.vulnerable.witness);
 
@@ -189,19 +239,79 @@ const realCode: Record<string, (f: Flagship) => void> = {
     expect(w.message).toContain("1.99999999992");
     expect(f.attack[4]!.text).toContain("1.99999999992");
   },
+
+  balancer(f) {
+    const r = readExact(f.realCode!.report);
+    const c = r.comparison;
+    expect(c.batches).toBe(f.realCode!.total);
+    const [deployed, muse] = f.realCode!.rows;
+    expect([c.real_same_as_port, c.batches_lowering_D_real, c.real_same_as_proved]).toEqual([deployed!.sameAsPort, deployed!.violating, deployed!.sameAsProved]);
+    expect(c.real_differs_from_port).toEqual([]);
+    expect(c.batches_lowering_D_proved).toBe(muse!.violating);
+    expect(c.by_start["0"].rate_falls_real).toBe(c.by_start["0"].D_falls_real);
+    expect(c.swaps).toBe(10385);
+    expect(f.realCode!.how).toContain("10,385");
+    expect(r.proved.candidate).toContain(f.repair.passport.sha256.slice(0, 16));
+    expect(r.lean_confirmation).toMatchObject(f.realCode!.confirmedInLean);
+    expect(r.port.attack_witness).toBe(f.vulnerable.witness);
+    expect(r.port.attack_witness_checked).toBe(true);
+
+    // The attack on the deployed pool, from chain data on the fork.
+    const n = (x: number) => x.toLocaleString("en-US");
+    const doc = c.documented_results[0];
+    expect([doc.swaps, doc.all_ok, doc.amounts_in_match_chain, doc.port_same]).toEqual([90, true, true, true]);
+    expect(f.outcome).toContain(`all ${doc.swaps} swaps`);
+    expect(r.start_states["0"].balances).toEqual([67000, 67000]);
+    expect(f.attack[0]!.after).toContain(n(67000));
+    expect(f.attack[3]!.after).toBe(`${n(doc.balances_after[0])} wei of WETH and ${n(doc.balances_after[1])} of osETH`);
+    expect(r.pool.rates[1]).toBe(1058132408689971699n);
+    // The kernel-checked refutation of the port.
+    const readme = text(`${f.task}/README.md`);
+    for (const x of ["4,749,898,000", "297,229,191"]) {
+      expect(readme).toContain(x);
+      expect(f.vulnerable.finding).toContain(x);
+      expect(f.outcome).toContain(x);
+    }
+    expect(text(f.vulnerable.witness)).toContain("port_refuted_batch_keeps_value");
+    // The README wraps lines; compare with whitespace collapsed.
+    expect(readme.replace(/\s+/g, " ")).toContain(f.context!.split("\u201c")[1]!.split("\u201d")[0]!);
+  },
+};
+
+/** Incidents whose code is not public: the reconstruction and its kernel-checked refutation. */
+const reconstructed: Record<string, (f: Flagship) => void> = {
+  knight(f) {
+    expect(f.realCode).toBeNull();
+    expect(f.language).toBeNull();
+    const p = readExact(f.repair.passport.path);
+    expect(p.reconstruction).toContain("Release No. 34-70694");
+    expect(f.reconstruction).toContain("Release No. 34-70694");
+    expect(readExact(`${f.task}/task.json`).source.reconstructed).toBe(true);
+    const w = text(f.vulnerable.witness);
+    for (const thm of ["legacy_unbounded", "child_orders_unbounded", "rlp_one_child", "aug1_eighth_server"]) expect(w).toContain(`theorem ${thm}`);
+    expect(w).toContain("August 1, 2012");
+    expect(text(`${f.task}/witnesses/restore_cum_count.lean`)).toMatch(/200/);
+    const readme = text(`${f.task}/README.md`);
+    for (const x of ["212 parent orders", "4 million executions in 154 stocks", "397 million shares", "approximately 45 minutes"]) expect(readme).toContain(x);
+    for (const x of ["212", "154", "397", "45"]) expect(f.context).toContain(x);
+  },
 };
 
 describe("real-code comparisons and attacks match the reports", () => {
   it("every number in a scoreboard result is a reported figure", () => {
-    for (const f of FLAGSHIPS) {
-      const known = new Set([f.realCode.total, f.realCode.rows.length, ...f.realCode.rows.flatMap((r) => [r.violating, r.sameAsPort, r.sameAsProved])]);
-      const shown = (`${f.realCode.short} ${f.realCode.result}`.match(/\d[\d,]*/g) ?? []).map((x) => Number(x.replace(/,/g, "")));
+    for (const f of FLAGSHIPS.filter((x) => x.realCode)) {
+      const known = new Set([f.realCode!.total, f.realCode!.rows.length, ...f.realCode!.rows.flatMap((r) => [r.violating, r.sameAsPort, r.sameAsProved])]);
+      const shown = (`${f.realCode!.short} ${f.realCode!.result}`.match(/\d[\d,]*/g) ?? []).map((x) => Number(x.replace(/,/g, "")));
       for (const x of shown) expect(known.has(x), `${f.key}: ${x}`).toBe(true);
-      expect(f.realCode.result).toMatch(new RegExp(`\\b${f.realCode.rows[0]!.violating}\\b`));
+      expect(f.realCode!.result).toMatch(new RegExp(`\\b${f.realCode!.rows[0]!.violating}\\b`));
     }
   });
-  it("every flagship has a check", () => expect(Object.keys(realCode).sort()).toEqual(FLAGSHIPS.map((f) => f.key).sort()));
-  for (const f of FLAGSHIPS) it(f.key, () => realCode[f.key]!(f));
+  it("every flagship has a check", () => {
+    expect(Object.keys(realCode).sort()).toEqual(FLAGSHIPS.filter((f) => f.realCode).map((f) => f.key).sort());
+    expect(Object.keys(reconstructed).sort()).toEqual(FLAGSHIPS.filter((f) => !f.realCode).map((f) => f.key).sort());
+    for (const f of FLAGSHIPS) expect(!f.realCode, f.key).toBe(!!f.reconstruction);
+  });
+  for (const f of FLAGSHIPS) it(f.key, () => (f.realCode ? realCode[f.key]! : reconstructed[f.key]!)(f));
   it("the featured incident has a timeline ending in the Muse repair", () => {
     expect(FEATURED.timeline.at(-1)!.passport.sha256).toBe(FEATURED.repair.passport.sha256);
   });

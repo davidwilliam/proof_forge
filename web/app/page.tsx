@@ -13,6 +13,7 @@ import {
   SUMMARY,
   githubFile,
   incidentsSentence,
+  lossTotalPhrase,
   repairCosts,
   requirementCount,
   verifiedCount,
@@ -29,8 +30,9 @@ const words = ["no", "one", "two", "three", "four", "five", "six"];
 const count = (n: number) => words[n] ?? String(n);
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+const andListOf = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join("; ")}; and ${xs[xs.length - 1]}`);
 
-const metaDescription = `Meta's Muse Spark repaired the logic behind the ${incidentsSentence()} exploits and proved every locked requirement in Lean 4; ProofForge rechecked each proof in a fresh sandbox and issued a Passport.`;
+const metaDescription = `Meta's Muse Spark repaired the logic behind ${count(FLAGSHIPS.length)} real financial failures, ${incidentsSentence()}, and proved every locked requirement in Lean 4; ProofForge rechecked each proof in a fresh sandbox and issued a Passport.`;
 
 export const metadata: Metadata = {
   title: `ProofForge: ${HEADLINE.replace(/\.$/, "")}`,
@@ -53,25 +55,19 @@ const REPAIRED_SPLIT = [34, 33, 33];
 export default function Home() {
   const rw = readRealworld();
   const costs = repairCosts();
+  const planned = FLAGSHIPS.filter((f) => f.repair.planner);
   return (
     <main className="page home">
       <section className="hero" aria-labelledby="home-title">
         <h1 id="home-title">{HEADLINE}</h1>
         <p className="hero-sub">{SUMMARY.replace("Lean 4", "Lean\u00a04")}</p>
-        <ul className="scoreboard" aria-label={`${capital(count(FLAGSHIPS.length))} exploits, repaired and proved`}>
-          {FLAGSHIPS.map((f) => (
-            <ScoreCard key={f.key} f={f} />
-          ))}
-        </ul>
+        <HeroStats />
+        <Ledger />
         <div className="hero-foot">
           <p>
-            Muse Spark 1.3 produced each repair{FLAGSHIPS.every((f) => f.repair.attempt === 1) ? " on its first attempt" : ""}, for{" "}
-            {usd(costs.minList)} to {usd(costs.maxList)} at list prices.
-            {IMPLEMENTED_FLAGSHIPS.length === FLAGSHIPS.length && IMPLEMENTED_FLAGSHIPS.every((i) => i.passport.status === "VERIFIED")
-              ? " Starting from the specification alone, with no vulnerable code to work from, it also wrote all three from scratch, each VERIFIED."
-              : ""}{" "}
-            Lean proves the ports, repairs and implementations, not the real Solidity and
-            Move code: <a href="#claims">what is and is not proved</a>.
+            Muse Spark 1.3 wrote each accepted repair, for {usd(costs.minList)} to {usd(costs.maxList)} at list prices
+            {planned.length ? <>; for {listWords(planned.map((f) => f.incident))}, Muse Wonder 1.0 planned the proof</> : null}. Lean proves
+            the ports, repairs and implementations, not the deployed code: <a href="#claims">what is and is not proved</a>.
           </p>
           <div className="hero-actions">
             <a className="btn btn-primary" href={githubFile(FEATURED.repair.passport.path)}>
@@ -179,50 +175,91 @@ function PassportLink({ p, label }: { p: PassportRef; label?: string }) {
   );
 }
 
-function ScoreCard({ f }: { f: Flagship }) {
-  const p = f.repair.passport;
+function HeroStats() {
+  const n = FLAGSHIPS.length;
+  const refuted = FLAGSHIPS.filter((f) => f.vulnerable.verdict === "REFUTED").length;
+  const verified = FLAGSHIPS.filter((f) => f.repair.passport.status === "VERIFIED").length;
+  const written = IMPLEMENTED_FLAGSHIPS.filter((i) => i.passport.status === "VERIFIED").length;
   return (
-    <li className="score">
-      <h2 className="score-title">
-        <a href={`#case-${f.key}`}>
-          {f.incident}, {f.year}
-        </a>
-      </h2>
-      <p className="score-loss">
-        <strong>{capital(f.loss.amount)}</strong> {f.loss.short}
-      </p>
-      <p className="score-prop">
-        <span className="score-prop-lead">Proved for all inputs: </span>
-        {f.property}
-      </p>
-      <dl className="score-verdicts">
-        <div className="sv" data-verdict={f.vulnerable.verdict}>
-          <dt>Vulnerable code</dt>
-          <dd>
-            <Status value={f.vulnerable.verdict} />
-            <span className="sv-note">kernel-checked counterexample</span>
-          </dd>
-        </div>
-        <svg className="sv-arrow" viewBox="0 0 16 16" aria-hidden="true">
-          <path d="M3 8h9M8.5 4.5L12 8l-3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-        <div className="sv" data-verdict={f.repair.verdict}>
-          <dt>Muse Spark repair</dt>
-          <dd>
-            <Status value={f.repair.verdict} />
-            <span className="sv-note">
-              {verifiedCount(p)} of {requirementCount(p)} requirements
-            </span>
-          </dd>
-        </div>
-      </dl>
-      <p className="score-real">
-        {capital(f.realCode.short)}: {f.realCode.result}.
-      </p>
-      <p className="score-foot">
-        <PassportLink p={p} />
-      </p>
-    </li>
+    <ul className="hero-stats" aria-label="The incidents in figures">
+      <li className="hero-stat">
+        <strong>{capital(lossTotalPhrase("over"))}</strong>
+        <span>taken or lost in {count(n)} real financial failures, as the cited sources report</span>
+      </li>
+      <li className="hero-stat" data-tone="bad">
+        <strong>
+          {refuted} of {n}
+        </strong>
+        <span>vulnerable versions refuted by a kernel-checked counterexample</span>
+      </li>
+      <li className="hero-stat" data-tone="ok">
+        <strong>
+          {verified} of {n}
+        </strong>
+        <span>Muse repairs VERIFIED, every locked requirement proved</span>
+      </li>
+      <li className="hero-stat" data-tone="ok">
+        <strong>
+          {written} of {n}
+        </strong>
+        <span>also written by Muse from the specification alone, VERIFIED</span>
+      </li>
+    </ul>
+  );
+}
+
+function Ledger() {
+  return (
+    <div className="ledger-wrap">
+      <table className="ledger">
+        <thead>
+          <tr>
+            <th scope="col">Incident</th>
+            <th scope="col">Taken or lost</th>
+            <th scope="col">Proved for every input</th>
+            <th scope="col">Vulnerable code</th>
+            <th scope="col">Muse repair</th>
+            <th scope="col">Passport</th>
+          </tr>
+        </thead>
+        <tbody>
+          {FLAGSHIPS.map((f) => {
+            const p = f.repair.passport;
+            return (
+              <tr key={f.key}>
+                <td className="ledger-incident">
+                  <a href={`#case-${f.key}`}>
+                    {f.incident}, {f.year}
+                  </a>
+                  <span className="ledger-sub">
+                    {capital(f.domain)}
+                    {f.reconstruction ? ", reconstructed from the SEC order" : ""}
+                  </span>
+                </td>
+                <td className="ledger-loss">
+                  <strong>{capital(f.loss.amount)}</strong>
+                  <span className="ledger-sub">{f.loss.short}</span>
+                </td>
+                <td className="ledger-prop">{f.property}</td>
+                <td className="ledger-verdict">
+                  <Status value={f.vulnerable.verdict} />
+                  <span className="ledger-sub">counterexample</span>
+                </td>
+                <td className="ledger-verdict">
+                  <Status value={f.repair.verdict} />
+                  <span className="ledger-sub">
+                    {verifiedCount(p)} of {requirementCount(p)} requirements
+                  </span>
+                </td>
+                <td className="ledger-pass">
+                  <PassportLink p={p} label="" />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -279,7 +316,7 @@ function RepairFacts({ f }: { f: Flagship }) {
         <div>
           <dt>Model</dt>
           <dd>
-            {r.model}, {r.tier} tier, harness without a planner
+            {r.model}, {r.tier} tier, {r.planner ? `planned by ${r.planner}` : "harness without a planner"}
           </dd>
         </div>
         <div>
@@ -321,6 +358,7 @@ function RepairFacts({ f }: { f: Flagship }) {
 
 function RealCode({ f }: { f: Flagship }) {
   const rc = f.realCode;
+  if (!rc) return null;
   const allMatch = rc.rows.every((r) => r.sameAsPort === null || r.sameAsPort === rc.total);
   return (
     <div className="card realcode">
@@ -381,6 +419,7 @@ function CaseCard({ f }: { f: Flagship }) {
         ))}
       </p>
       <p className="case-bug">{f.bug}</p>
+      {f.context ? <p className="case-context small muted">{f.context}</p> : null}
       <h4>The attack, with the state after each step</h4>
       <ol className="attack">
         {f.attack.map((s, i) => (
@@ -409,7 +448,9 @@ function CaseCard({ f }: { f: Flagship }) {
       <div className="verdict-box" data-verdict="VERIFIED">
         <div className="verdict-head">
           <Status value="VERIFIED" />
-          <span>Muse Spark 1.3 repair</span>
+          <span>
+            {f.repair.model} repair{f.repair.planner ? `, planned by ${f.repair.planner}` : ""}
+          </span>
         </div>
         <p>
           The repair {f.repair.change}. It proves all {requirementCount(f.repair.passport)} requirements, among them that{" "}
@@ -419,8 +460,34 @@ function CaseCard({ f }: { f: Flagship }) {
           <PassportLink p={f.repair.passport} />
         </p>
       </div>
+      {f.unresolved.length ? <Unresolved f={f} /> : null}
       <RealCode f={f} />
     </article>
+  );
+}
+
+function Unresolved({ f }: { f: Flagship }) {
+  const total = requirementCount(f.repair.passport);
+  return (
+    <div className="verdict-box" data-verdict="UNRESOLVED">
+      <div className="verdict-head">
+        <Status value="UNRESOLVED" />
+        <span>Earlier attempts: tests passed, no Passport</span>
+      </div>
+      <p>
+        {capital(count(f.unresolved.length))} earlier Muse attempts produced code whose rebuilt executable passed all{" "}
+        {fmt(f.repair.propertyCases)} property cases, but none proved every requirement, so ProofForge issued no VERIFIED Passport:{" "}
+        {andListOf(f.unresolved.map((u) => `${u.label} proved ${u.proved} of ${total} before its ${u.stop}`))}.
+      </p>
+      <p className="small">
+        {f.unresolved.map((u, i) => (
+          <span key={u.run}>
+            {i ? ", " : null}
+            <PassportLink p={u.passport} label={u.label} />
+          </span>
+        ))}
+      </p>
+    </div>
   );
 }
 
@@ -447,11 +514,11 @@ function Claims() {
         <div className="card claims-col">
           <h3>Not proved</h3>
           <ul>
-            <li>The Solidity and Move code are not themselves proved.</li>
+            <li>The deployed Solidity and Move code is not itself proved.</li>
             <li>
               The Lean ports are reviewed hand translations. They are tested against the real code on the stated inputs (
-              {listWords(FLAGSHIPS.map((f) => `${fmt(f.realCode.total)} ${f.realCode.unit} for ${f.incident}`))}); the translation is not
-              machine-checked.
+              {listWords(FLAGSHIPS.flatMap((f) => (f.realCode ? [`${fmt(f.realCode.total)} ${f.realCode.unit} for ${f.incident}`] : [])))}
+              ); the translation is not machine-checked.
             </li>
             <li>
               Each port models only the logic its task README names: for example, Euler has one asset and no interest, and Hundred&apos;s
