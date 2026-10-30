@@ -17,10 +17,6 @@
 
 The Modal proxy itself is unauthenticated; vLLM rejects `/v1` requests without the key with HTTP 401. `/health` is open. A Modal Server has no request queue: while no container is up, requests get HTTP 503 and the first one starts a container, which takes several minutes. Warm it before a run by polling `/health` until it returns 200.
 
-## Status
-
-Not yet started on a GPU: Modal refuses every GPU type (H100, A100-80GB, L40S, A10G, T4) on this workspace with "Please add a payment method to use ... GPU functions". The image builds and the CPU download runs. The behavior described above is the configuration, not a measured result, until the first deploy.
-
 ## Deploy
 
 ```
@@ -42,4 +38,4 @@ Stopping the app ends the container and the deployment; `modal deploy` brings it
 
 ## Price
 
-Self-hosted serving has no per-token list price. `infra/modal/bench_glimmer.py` measures prefill and decode throughput on A0-shaped dev-task requests at concurrency 1 and 2. The per-token price for `agents/budget.py` is the container's Modal price per second (H100 $0.001097/s, plus 4 cores at $0.0000131/core/s and 32 GiB at $0.00000222/GiB/s, $0.00122044/s in all, Modal pricing page 2026-10-29) divided by the measured throughput: output tokens at the aggregate decode rate at concurrency 2 (E1 runs with `--parallel 2`), uncached input tokens at the prefill rate. `agents/budget.py` has no Glimmer entry until that measurement exists, so a budgeted run with the Glimmer id fails at its first call instead of running at an invented price.
+Self-hosted serving has no per-token list price. `infra/modal/bench_glimmer.py` measures prefill and decode throughput on A0 prompts of dev tasks at the agents' reasoning level. `agents/budget.py` prices `glimmer/muse-glimmer-30b` at the container's Modal price per second (H100 $3.95/h, 4 cores at $0.0473/core/h, 32 GiB at $0.008/GiB/h: $0.00122089/s, `modal billing rates` on 2026-10-30) divided by the measured throughput: output at the aggregate decode rate with two requests in flight (E1 runs with `--parallel 2`), uncached input at the prefill rate, cached input at a tenth of that. The derivation and the measurement are in `agents/budget.py` and `results/e1-test-glimmer-1/price-bench.json`.
