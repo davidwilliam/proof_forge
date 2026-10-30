@@ -27,9 +27,9 @@ provide an optional adapter, a Python file with
     def instance(task, requirement, case, out, origin=None) -> dict | None
 
 (`origin` is passed only for a witness found on a follow-up case: the round-1 case and output
-it was derived from), looked up as `<task dir>/counterexample.py`, then `counterexamples/<task id>.py`, then
-`counterexamples/<base id>.py` (the task id without its `-bN` variant suffix; variants share a
-specification). The registry directory keeps existing task directories, whose files are frozen by
+it was derived from), looked up as `<task dir>/counterexample.py`, then
+`counterexamples/<task id>.py`, then `counterexamples/<base id>.py` (the task id without its
+`-bN` variant suffix; variants share a specification). The registry directory keeps existing task directories, whose files are frozen by
 validation receipts and the test freeze, unchanged. `instance` returns None when it cannot handle
 the case, or a dict with:
 
@@ -39,9 +39,9 @@ the case, or a dict with:
             of the `hints`.
   hints     proof terms tried for `?` hypotheses that are not decidable (for example a lemma
             that a parameter is well behaved).
-  observe   a Lean function applied to both sides when the instantiated conclusion is an
+  observe   Lean functions applied to both sides when the instantiated conclusion is an
             equation whose type has no decidable equality (a state with function fields); the
-            stage refutes the equation of the observed values.
+            stage refutes the equation of the values of one of them, tried in turn.
   preamble  Lean declarations placed before the theorem (instances, helper lemmas).
   imports   further modules of the task's specification library to import.
   proof     a complete tactic proof, used instead of the default one.
@@ -50,9 +50,12 @@ the case, or a dict with:
 The default proof instantiates the requirement and decides the rest by kernel evaluation:
 
     intro h
-    have hx := h <args>              -- or congrArg (<observe>) (h <args>)
+    have hx := h <args>
     revert hx
     first | decide | decide +kernel
+
+with fallbacks that unfold the specification's propositions, refute one part of a conjunction,
+or refute the equation of one observed value (`congrArg <observe_i> hx`).
 
 Usage: counterexample.py <candidate.lean | workspace> --task T [--cases N] [--seed S] [--json out]
 (runs the binary check, then this stage on each refuted requirement).
@@ -211,17 +214,24 @@ def discharger(hints, unfold):
     return "(by first | " + " | ".join(alts) + ")"
 
 
+def observing(eq, fns):
+    """Tactic alternatives refuting the equation `eq` through one of the observations `fns`. One
+    observation per alternative keeps each `Decidable` instance small."""
+    return "first\n" + "\n".join(
+        f"  | (have hy := congrArg ({f}) ({eq}); revert hy; first | decide | decide +kernel)" for f in fns)
+
+
 def default_proof(inst, props=()):
     hints = inst.get("hints") or []
     unfold = ", ".join(props)
     args = " ".join(discharger(hints, unfold) if a == "?" else (a if a == "_" else f"({a})")
                     for a in inst.get("args") or [])
     app = f"h {args}".rstrip()
-    lines = ["intro h"]
-    if inst.get("observe"):
-        lines.append(f"have hx := congrArg ({inst['observe']}) ({app})")
-    else:
-        lines.append(f"have hx := {app}")
+    obs = inst.get("observe")
+    if obs:
+        obs = [obs] if isinstance(obs, str) else list(obs)
+        return "\n".join("  " + l for l in ["intro h", f"have hx := {app}"] + observing("hx", obs).splitlines())
+    lines = ["intro h", f"have hx := {app}"]
     # Decide the instantiated statement, unfolding the specification's propositions when one
     # has no Decidable instance; when it is a conjunction with a part that is not decidable (for
     # example a frame condition over every account), refute one decidable part.
@@ -252,8 +262,9 @@ def solution_source(task, theorem, stmt, inst, requirement, case):
     pre = (inst.get("preamble") or "").strip("\n")
     body = (f"namespace {task.ns}\n\n" + (pre + "\n\n" if pre else "")
             + f"theorem {cex_name(theorem)} : {negation(stmt)} := by\n{proof}\n\nend {task.ns}\n")
+    obs = inst.get("observe") or []
     adapter_text = " ".join([pre, proof] + list(inst.get("args") or []) + list(inst.get("hints") or [])
-                            + [inst.get("observe") or ""])
+                            + ([obs] if isinstance(obs, str) else list(obs)))
     bad = _scan(adapter_text)
     if bad:
         raise ValueError(f"forbidden construct in adapter output: {sorted(set(bad))}")
@@ -309,7 +320,8 @@ def _record(r):
 
 
 def _errors(tail):
-    errs = [l.strip() for l in tail.splitlines() if "error" in l.lower()]
+    lines = [l.strip() for l in tail.splitlines()]
+    errs = [l for l in lines if re.search(r"\.lean:\d+:\d+: error", l)] or [l for l in lines if "error" in l.lower()]
     return errs[0][:400] if errs else tail.strip()[-400:]
 
 
@@ -347,7 +359,7 @@ def check_items(task, candidate, items, timeout=1800):
                     '[[lean_lib]]\nname = "Cex"\nsrcDir = "cex"\n'
                     f"roots = [{', '.join(json.dumps(r) for r in roots)}]\n")
         for k, it in enumerate(todo):
-            b = judge.in_container(project, f"lake build Cex.S{k} 2>&1 | tail -c 6000; exit ${{PIPESTATUS[0]}}",
+            b = judge.in_container(project, f"lake build Cex.S{k} > cex/b{k}.log 2>&1; rc=$?; head -c 6000 cex/b{k}.log; exit $rc",
                                    timeout=timeout)
             it["checks"] = {"build": _record(b)}
             if b["exit_code"] != 0:
