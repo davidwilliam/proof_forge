@@ -2,13 +2,19 @@
 """proofforge: check a candidate against a locked task, and reproduce a Passport.
 
   proofforge check  --task T [--candidate PATH] [--out passport.json] [--comment comment.md]
+                    [--no-counterexample]
   proofforge verify passport.json --candidate PATH
   proofforge tasks  [--split S]
 
 `check` runs the official pipeline (tree check, implementation scan, Comparator in a fresh
-sandbox, leanchecker, axiom audit) and the binary property check, and writes a Passport.
+sandbox, leanchecker, axiom audit) and the binary property check, and writes a Passport. When
+the candidate is REFUTED it also runs the counterexample stage (harness/counterexample.py):
+each refuted requirement's witness becomes a Lean refutation of the locked requirement, checked
+by Comparator's kernels, leanchecker and the axiom audit, and recorded under `counterexamples`.
 `verify` re-runs the pipeline on the candidate and compares every recorded hash and status
-with the given Passport. Exit code 0 means VERIFIED (check) or reproduced (verify).
+with the given Passport; for a Passport with `counterexamples` it re-checks each recorded
+refutation in a fresh container against a challenge regenerated from the locked files. Exit
+code 0 means VERIFIED (check) or reproduced (verify).
 
 The harness and locked tasks are read from this repository checkout, so in CI it must be a
 trusted checkout (the base branch), with only candidate files taken from the change.
@@ -17,13 +23,14 @@ import argparse, json, pathlib, sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "harness"))
-import passport, task as taskmod  # noqa: E402
+import counterexample as cexmod, passport, task as taskmod  # noqa: E402
 
 
 def cmd_check(a):
     t = taskmod.load(a.task)
     cand = pathlib.Path(a.candidate) if a.candidate else t.start
-    p = passport.run(cand, t, cases=a.cases, seed=a.seed)
+    p = passport.run(cand, t, cases=a.cases, seed=a.seed,
+                     counterexample=not getattr(a, "no_counterexample", False))
     p["reproduce"] = f"bin/proofforge verify {a.out or 'passport.json'} --candidate {a.candidate or cand}"
     p["passport_sha256"] = passport.content_hash(p)
     if a.out:
@@ -56,6 +63,21 @@ def cmd_verify(a):
         ("component status", old["status"], new["status"]),
     ] + [(f"{r['id']} status", r["status"], n["status"]) for r, n in zip(old["requirements"], new["requirements"])] \
       + [(f"{r['id']} statement", r["statement_sha256"], n["statement_sha256"]) for r, n in zip(old["requirements"], new["requirements"])]
+    # A Passport issued with the counterexample stage: re-check every recorded refutation.
+    recorded = old.get("counterexamples")
+    if recorded:
+        again = cexmod.recheck(t, cand, recorded)
+        for r, n in zip(recorded, again):
+            rid = r.get("requirement")
+            checks += [
+                (f"{rid} counterexample statement", r.get("statement"), n.get("statement")),
+                (f"{rid} counterexample source", r.get("lean_file_sha256"),
+                 cexmod.sha256_text(r["lean_source"]) if r.get("lean_source") else None),
+                (f"{rid} counterexample challenge", r.get("challenge_sha256"), n.get("challenge_sha256")),
+                (f"{rid} counterexample kernel check", r.get("kernel_checked"), n.get("kernel_checked")),
+                (f"{rid} counterexample kernels", r.get("kernels"), n.get("kernels")),
+                (f"{rid} counterexample axioms", r.get("axioms"), n.get("axioms")),
+            ]
     bad = 0
     for name, x, y in checks:
         ok = x == y
@@ -90,6 +112,8 @@ def main():
     c.add_argument("--seed", type=int, default=0)
     c.add_argument("--out")
     c.add_argument("--comment")
+    c.add_argument("--no-counterexample", action="store_true",
+                   help="skip the kernel-checked counterexample stage for a REFUTED candidate")
     v = sub.add_parser("verify")
     v.add_argument("passport")
     v.add_argument("--candidate", required=True)

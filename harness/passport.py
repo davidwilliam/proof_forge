@@ -8,13 +8,18 @@ Statuses come only from the judge and binary-check records assembled here:
   UNRESOLVED  neither; for example the proof was rejected and no witness was found
 The component is VERIFIED only when every requirement is.
 
+Optionally (`counterexample=True`), a REFUTED Passport also carries `counterexamples`: for each
+refuted requirement, the negation of its locked statement proved about the candidate's
+definitions on the witness input and checked by Comparator's kernels, leanchecker and the axiom
+audit (harness/counterexample.py). The field is absent when the stage did not run.
+
 Usage: passport.py <candidate.lean | workspace> [--task T] [--cases N] [--seed S]
-                   [--provenance prov.json] [--out passport.json] [--markdown comment.md]
+                   [--provenance prov.json] [--out passport.json] [--markdown comment.md] [--counterexample]
 """
 import argparse, hashlib, json, pathlib, re, sys, time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import binary_check, judge, task as taskmod  # noqa: E402
+import binary_check, counterexample as cexmod, judge, task as taskmod  # noqa: E402
 
 SCHEMA = 1
 TRUST = [
@@ -61,7 +66,7 @@ def content_hash(p):
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
 
 
-def build(task, candidate, j, b, provenance=None):
+def build(task, candidate, j, b, provenance=None, counterexamples=None):
     locked = task.locked()
     files = [pathlib.Path(p) for p in [candidate]] if pathlib.Path(candidate).is_file() else \
         judge.candidate_files(pathlib.Path(candidate))
@@ -131,6 +136,8 @@ def build(task, candidate, j, b, provenance=None):
         "reproduce": f"bin/proofforge verify passport.json --candidate {candidate}",
         "timings_ms": {"judge": j["elapsed_ms"], "binary": b.get("elapsed_ms")},
     }
+    if counterexamples is not None:
+        p["counterexamples"] = counterexamples
     note = reconstruction(task)
     if note:
         p["reconstruction"] = note
@@ -159,7 +166,19 @@ def markdown(p):
               f"Locked manifest sha256:{p['locked']['manifest_sha256'][:16]}  Lean {p['toolchain']['lean'].split(':')[-1]}  "
               f"kernels: {', '.join(p['checks']['comparator_kernels']) or 'none'}",
               f"Solution tree sha256:{p['solution']['solution_tree_sha256'][:16]}  Passport sha256:{p['passport_sha256'][:16]}",
-              "```", "", f"Reproduce: `{p['reproduce']}`"]
+              "```"]
+    cx = p.get("counterexamples")
+    if cx:
+        lines += ["", "Counterexamples checked by the kernel:", "```"]
+        for c in cx:
+            if c.get("kernel_checked"):
+                lines.append(f"{c['requirement']:<{w}}  {c['theorem']} : {c['statement']}  "
+                             f"kernels: {len(c.get('kernels') or [])}  axioms: {', '.join(c.get('axioms') or []) or 'none'}  "
+                             f"source sha256:{c['lean_file_sha256'][:12]}")
+            else:
+                lines.append(f"{c['requirement']:<{w}}  not kernel-checked: {c.get('reason')}")
+        lines += ["```"]
+    lines += ["", f"Reproduce: `{p['reproduce']}`"]
     if not p["proof_check"]["accepted"]:
         lines += ["", "Proof check rejected:"] + [f"- {x}" for x in p["proof_check"]["reasons"]]
     return "\n".join(lines) + "\n"
@@ -174,11 +193,12 @@ def permitted_axioms(task):
         return []
 
 
-def run(candidate, task, cases=2000, seed=0, provenance=None):
+def run(candidate, task, cases=2000, seed=0, provenance=None, counterexample=False):
     j = judge.judge(str(candidate), task=task)
     b = binary_check.check_binary(str(candidate), n_cases=cases, seed=seed, task=task)
     b["seed"] = seed
-    return build(task, str(candidate), j, b, provenance)
+    cx = cexmod.run(task, candidate, b) if counterexample and b.get("status") == "REFUTED" else None
+    return build(task, str(candidate), j, b, provenance, counterexamples=cx)
 
 
 if __name__ == "__main__":
@@ -190,10 +210,12 @@ if __name__ == "__main__":
     ap.add_argument("--provenance")
     ap.add_argument("--out")
     ap.add_argument("--markdown")
+    ap.add_argument("--counterexample", action="store_true",
+                    help="for a REFUTED candidate, also check a refutation of each refuted requirement in the kernel")
     a = ap.parse_args()
     t = taskmod.load(a.task)
     prov = json.loads(pathlib.Path(a.provenance).read_text()) if a.provenance else None
-    p = run(a.candidate, t, a.cases, a.seed, prov)
+    p = run(a.candidate, t, a.cases, a.seed, prov, counterexample=a.counterexample)
     if a.out:
         pathlib.Path(a.out).write_text(json.dumps(p, indent=2) + "\n")
     md = markdown(p)
