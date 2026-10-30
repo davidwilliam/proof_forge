@@ -4,6 +4,7 @@ import ProofForgeFin.Word
 import ProofForgeFin.Shares
 import ProofForgeFin.Seq
 import ProofForgeFin.Ledger
+import ProofForgeFin.Trading
 /-!
 # ProofForgeFin
 
