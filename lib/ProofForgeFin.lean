@@ -8,6 +8,7 @@ import ProofForgeFin.Trading
 import ProofForgeFin.Machine
 import ProofForgeFin.Evm
 import ProofForgeFin.Money
+import ProofForgeFin.DeFi
 /-!
 # ProofForgeFin
 
