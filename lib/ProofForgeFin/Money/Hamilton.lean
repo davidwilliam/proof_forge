@@ -369,6 +369,34 @@ theorem largestRemainder_floor_or_ceil (a : Int) {rs : List Nat} (hS : 0 < rs.su
       (largestRemainder a rs)[i] = divCeil (a * (rs[i] : Int)) rs.sum :=
   (within_iff_floor_or_ceil _ hS).1 (largestRemainder_within a hS i h hr)
 
+/-! ## The symmetric convention -/
+
+/-- Under the symmetric convention (allocate `-a` and negate for a negative amount) the
+largest-remainder method conserves the amount. -/
+theorem symAlloc_largestRemainder_conserves (a : Int) {rs : List Nat} (hS : 0 < rs.sum) :
+    ConservesOn a (symAlloc largestRemainder a rs) :=
+  symAlloc_of_forall_nonneg largestRemainder rs (fun a xs => ConservesOn a xs)
+    (fun _ _ h => conservesOn_neg h) (fun a _ => largestRemainder_conserves a hS) a
+
+/-- Under the symmetric convention the largest-remainder method is within one unit. -/
+theorem symAlloc_largestRemainder_within (a : Int) {rs : List Nat} (hS : 0 < rs.sum) :
+    WithinOneUnitOn a rs (symAlloc largestRemainder a rs) :=
+  symAlloc_of_forall_nonneg largestRemainder rs (fun a xs => WithinOneUnitOn a rs xs)
+    (fun _ _ h => withinOneUnitOn_neg h) (fun a _ => largestRemainder_within a hS) a
+
+/-- Under the symmetric convention the largest-remainder method follows the
+largest-remainder rule. -/
+theorem symAlloc_largestRemainder_largestRemainder (a : Int) {rs : List Nat} (hS : 0 < rs.sum) :
+    LargestRemainderOn a rs (symAlloc largestRemainder a rs) :=
+  symAlloc_of_forall_nonneg largestRemainder rs (fun a xs => LargestRemainderOn a rs xs)
+    (fun _ _ h => largestRemainderOn_neg h) (fun a _ => largestRemainder_largestRemainder a hS) a
+
+/-- Under the symmetric convention the largest-remainder method gives one share per ratio. -/
+theorem symAlloc_largestRemainder_oneShareEach (a : Int) (rs : List Nat) :
+    OneShareEachOn rs (symAlloc largestRemainder a rs) :=
+  symAlloc_of_forall_nonneg largestRemainder rs (fun _ xs => OneShareEachOn rs xs)
+    (fun _ _ h => oneShareEachOn_neg h) (fun a _ => largestRemainder_oneShareEach a rs) a
+
 /-- The allocation of issue 436 of moneyphp, by the largest-remainder method. -/
 theorem largestRemainder_example : largestRemainder 5 [0, 7, 3] = [0, 4, 1] := by decide
 

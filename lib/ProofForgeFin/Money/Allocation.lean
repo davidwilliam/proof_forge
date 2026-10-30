@@ -407,10 +407,24 @@ theorem leftover_le_countP (a : Int) {rs : List Nat} (hS : 0 < rs.sum) :
 
 /-- The leftover is below the number of parties. -/
 theorem leftover_lt_length (a : Int) {rs : List Nat} (hS : 0 < rs.sum) :
-    leftover a rs ≤ rs.length := by
-  have := leftover_le_countP a hS
-  have : rs.countP (0 < ·) ≤ rs.length := List.countP_le_length
-  omega
+    leftover a rs < rs.length := by
+  have h1 := leftover_mul a rs
+  have h2 := sum_emod_le a hS rs
+  have h3 := leftover_nonneg a hS
+  have hc : rs.countP (0 < ·) ≤ rs.length := List.countP_le_length
+  have hl : 0 < rs.length := by
+    rcases rs with _ | ⟨r, rs⟩
+    · simp at hS
+    · simp
+  have hS' : (0 : Int) < rs.sum := by omega
+  have m := Int.mul_le_mul_of_nonneg_left (show ((rs.countP (0 < ·) : Nat) : Int) ≤ rs.length by omega)
+    (show (0 : Int) ≤ (rs.sum : Int) - 1 by omega)
+  have e : ((rs.sum : Int) - 1) * (rs.length : Int) = (rs.length : Int) * rs.sum - rs.length := by
+    rw [Int.sub_mul, Int.one_mul, Int.mul_comm]
+  rcases Int.lt_or_le (leftover a rs) rs.length with h | h
+  · exact h
+  · have := mul_le_mul_of_le (Int.le_of_lt hS') h
+    omega
 
 /-- The sum of the floor shares is at most the amount. -/
 theorem sum_floors_le (a : Int) {rs : List Nat} (hS : 0 < rs.sum) : (floors a rs).sum ≤ a := by
@@ -528,6 +542,81 @@ theorem allocFirst_nonneg {a : Int} (rs : List Nat) (ha : 0 ≤ a) :
   have : 0 ≤ a * ((rs[i]'(by simpa using hi) : Nat) : Int) / rs.sum :=
     Int.ediv_nonneg (Int.mul_nonneg ha (by omega)) (by omega)
   split <;> omega
+
+/-- Allocating nothing gives nothing to everyone. -/
+theorem allocFirst_zero_amount (rs : List Nat) : ∀ x ∈ allocFirst 0 rs, x = 0 := by
+  have hf : ∀ l : List Nat, (l.map (floorShare 0 rs.sum)).sum = 0 := by
+    intro l
+    induction l with
+    | nil => rfl
+    | cons r l ih => simp [floorShare, ih]
+  have hl : leftover 0 rs = 0 := by unfold leftover floors; rw [hf]; rfl
+  intro x hx
+  obtain ⟨i, hi, rfl⟩ := List.mem_iff_getElem.mp hx
+  rw [getElem_allocFirst, hl]
+  simp
+
+/-- For a nonnegative amount the shares of `allocFirst` have the sign of the amount. -/
+theorem allocFirst_sign {a : Int} (rs : List Nat) (ha : 0 ≤ a) : SignOn a (allocFirst a rs) := by
+  intro x hx
+  refine ⟨fun _ => allocFirst_nonneg rs ha x hx, fun h0 => ?_⟩
+  have : a = 0 := by omega
+  subst this
+  have := allocFirst_zero_amount rs x hx
+  omega
+
+/-- Remainder to the first parties under the symmetric convention (go-money's `Allocate`
+computes with truncating division and hands out units of `-1` when the leftover is negative,
+which is this convention; that identification is not proved here) conserves the amount. -/
+theorem symAlloc_allocFirst_conserves (a : Int) {rs : List Nat} (hS : 0 < rs.sum) :
+    ConservesOn a (symAlloc allocFirst a rs) :=
+  symAlloc_of_forall_nonneg allocFirst rs (fun a xs => ConservesOn a xs)
+    (fun _ _ h => conservesOn_neg h) (fun a _ => allocFirst_conserves a hS) a
+
+/-- Remainder to the first parties under the symmetric convention is at most one unit from
+exact. -/
+theorem symAlloc_allocFirst_atMostOneUnit (a : Int) {rs : List Nat} (hS : 0 < rs.sum) :
+    AtMostOneUnitOn a rs (symAlloc allocFirst a rs) :=
+  symAlloc_of_forall_nonneg allocFirst rs (fun a xs => AtMostOneUnitOn a rs xs)
+    (fun _ _ h => atMostOneUnitOn_neg h) (fun a _ => allocFirst_atMostOneUnit a hS) a
+
+/-- Remainder to the first parties under the symmetric convention gives shares with the sign
+of the amount, for every amount. -/
+theorem symAlloc_allocFirst_sign (a : Int) (rs : List Nat) :
+    SignOn a (symAlloc allocFirst a rs) :=
+  symAlloc_of_forall_nonneg allocFirst rs (fun a xs => SignOn a xs)
+    (fun _ _ h => signOn_neg h) (fun _ ha => allocFirst_sign rs ha) a
+
+/-- On a natural-number amount the floor share is the `Nat` quotient. -/
+theorem floorShare_natCast (A S r : Nat) : floorShare (A : Int) S r = ((A * r / S : Nat) : Int) := by
+  unfold floorShare; rw [Int.natCast_ediv, Int.natCast_mul]
+
+/-- On a natural-number amount the floor shares add up to the `Nat` sum of the quotients. -/
+theorem sum_floors_natCast (A : Nat) (rs : List Nat) :
+    (floors (A : Int) rs).sum = ((rs.map (fun r => A * r / rs.sum)).sum : Nat) := by
+  unfold floors
+  generalize rs.sum = S
+  induction rs with
+  | nil => simp
+  | cons r rs ih => simp only [List.map_cons, List.sum_cons, ih, floorShare_natCast]; push_cast; rfl
+
+/-- On a natural-number amount the leftover is the `Nat` leftover
+`A - Σ A * r / S`. -/
+theorem leftover_toNat_natCast (A : Nat) (rs : List Nat) :
+    (leftover (A : Int) rs).toNat = A - (rs.map (fun r => A * r / rs.sum)).sum := by
+  unfold leftover; rw [sum_floors_natCast]; omega
+
+/-- On a natural-number amount, share `i` of `allocFirst` is the `Nat` floor share plus one
+for the first `A - Σ A * r / S` parties (the form of `tasks/payouts-weighted-*`). -/
+theorem getElem_allocFirst_natCast (A : Nat) (rs : List Nat) (i : Nat)
+    (h : i < (allocFirst (A : Int) rs).length) :
+    (allocFirst (A : Int) rs)[i] = ((A * rs[i]'(by simpa using h) / rs.sum +
+      if i < A - (rs.map (fun r => A * r / rs.sum)).sum then 1 else 0 : Nat) : Int) := by
+  rw [getElem_allocFirst, leftover_toNat_natCast]
+  have := floorShare_natCast A rs.sum (rs[i]'(by simpa using h))
+  unfold floorShare at this
+  rw [this]
+  split <;> simp
 
 /-- The allocation of issue 436 of moneyphp: 5 units with ratios `[0, 7, 3]` give a unit to
 the zero ratio. -/
