@@ -1,5 +1,6 @@
 import ProofForgeFinDemo.DeFi.Compound
 import ProofForgeFinDemo.DeFi.Euler
+import ProofForgeFinDemo.DeFi.Hundred
 /-!
 # DeFi demonstrations
 
@@ -12,4 +13,6 @@ reference implementation.
   `rw-compound-comp`, from the five per-call requirements.
 * `Euler`: REQ-STAYS-HEALTHY and REQ-NO-BAD-DEBT of `rw-euler-donate`, from REQ-EFFECTS and
   REQ-ACTOR-HEALTHY.
+* `Hundred`: REQ-SHARE-VALUE of `rw-hundred-vault`, from the effect and rounding requirements of
+  the three calls.
 -/
