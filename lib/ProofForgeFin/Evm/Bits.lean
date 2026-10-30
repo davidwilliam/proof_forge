@@ -11,8 +11,9 @@ import ProofForgeFin.Evm.Uint
   `Nat.log2` on every nonzero `uint256`.
 * `log2Ceil`: the base-2 logarithm rounded up (OpenZeppelin `Math.log2(x, Rounding.Ceil)`), with
   two-sided bounds for both roundings.
-* `trailingZeros`: the exponent of the largest power of two dividing a number (the `twos` factor
-  of `FullMath.mulDiv`).
+* `trailingZeros`: the exponent of the largest power of two dividing a number, and
+  `toNat_neg_and_self`: `x & (0 - x)` is `2^(trailingZeros x)` (the `twos` factor of
+  `FullMath.mulDiv`).
 -/
 
 namespace ProofForgeFin.Evm
@@ -330,5 +331,75 @@ theorem trailingZeros_lt {n : Nat} (hn : n ≠ 0) (h : n < 2 ^ w) : trailingZero
   have hd := Nat.le_of_dvd (Nat.pos_of_ne_zero hn) (two_pow_trailingZeros_dvd n)
   have : 2 ^ w ≤ 2 ^ trailingZeros n := Nat.pow_le_pow_right (by decide) hle
   omega
+
+/-! ## Lowest set bit: `x & (0 - x)` -/
+
+/-- A common power-of-two factor comes out of a bitwise and. -/
+theorem two_pow_mul_and_two_pow_mul (k a b : Nat) : (2 ^ k * a) &&& (2 ^ k * b) = 2 ^ k * (a &&& b) := by
+  apply Nat.eq_of_testBit_eq
+  intro i
+  rw [Nat.testBit_and, Nat.testBit_two_pow_mul, Nat.testBit_two_pow_mul, Nat.testBit_two_pow_mul,
+    Nat.testBit_and]
+  cases decide (i ≥ k) <;> simp
+
+/-- Two numbers that add up to `2^m - 1` share no bit. -/
+theorem and_eq_zero_of_add_eq {x y m : Nat} (h : x + y = 2 ^ m - 1) : x &&& y = 0 := by
+  have hx : x < 2 ^ m := by have := Nat.two_pow_pos m; omega
+  have e := congrArg BitVec.toNat (BitVec.and_not_self (BitVec.ofNat m x))
+  rw [BitVec.toNat_and, BitVec.toNat_not, toNat_ofNat_of_lt hx] at e
+  have hy : 2 ^ m - 1 - x = y := by omega
+  rw [hy] at e
+  simpa using e
+
+/-- Two odd numbers that add up to a power of two share exactly the lowest bit. -/
+theorem and_eq_one_of_odd_add_eq {o o' m : Nat} (ho : o % 2 = 1) (ho' : o' % 2 = 1)
+    (h : o + o' = 2 ^ m) : o &&& o' = 1 := by
+  have hm : m ≠ 0 := by intro e; subst e; simp at h; omega
+  have h2 : 2 ^ m = 2 * 2 ^ (m - 1) := by
+    rw [← Nat.pow_succ']; congr 1; omega
+  have hxy : o / 2 &&& o' / 2 = 0 := and_eq_zero_of_add_eq (m := m - 1) (by omega)
+  apply Nat.eq_of_testBit_eq
+  intro i
+  cases i with
+  | zero => simp [Nat.testBit_zero, ho, ho']
+  | succ j =>
+    rw [Nat.testBit_and, Nat.testBit_succ, Nat.testBit_succ, Nat.testBit_succ, ← Nat.testBit_and,
+      hxy]
+
+/-- The lowest set bit of a nonzero word is `x & (0 - x)` (two's complement): the largest power of
+two dividing `x`. This is `twos` in `FullMath.mulDiv` (`(0 - denominator) & denominator`) and in
+OpenZeppelin `Math.mulDiv` (`denominator & (0 - denominator)`). -/
+theorem toNat_neg_and_self {x : BitVec w} (hx : x ≠ 0) :
+    ((0 - x) &&& x).toNat = 2 ^ trailingZeros x.toNat := by
+  have hn : x.toNat ≠ 0 := fun e => hx (eq_zero_iff_toNat.2 e)
+  have hlt := x.isLt
+  have ⟨h1, h2⟩ := trailingZeros_spec hn
+  generalize trailingZeros x.toNat = k at h1 h2 ⊢
+  have hkw : k < w := by
+    have := trailingZeros_lt hn hlt
+    refine Nat.lt_of_not_le fun hle => ?_
+    have hd : 2 ^ k ∣ x.toNat := Nat.dvd_of_mod_eq_zero h1
+    have := Nat.le_of_dvd (Nat.pos_of_ne_zero hn) hd
+    have : 2 ^ w ≤ 2 ^ k := Nat.pow_le_pow_right (by decide) hle
+    omega
+  generalize ho : x.toNat / 2 ^ k = o at h2
+  have hxo : x.toNat = 2 ^ k * o := by
+    have := Nat.div_add_mod x.toNat (2 ^ k); rw [h1, ho] at this; omega
+  have hw : 2 ^ w = 2 ^ k * 2 ^ (w - k) := by rw [← Nat.pow_add]; congr 1; omega
+  have hol : o < 2 ^ (w - k) := by
+    rw [hxo, hw] at hlt; exact Nat.lt_of_mul_lt_mul_left hlt
+  have hneg : (0 - x).toNat = 2 ^ k * (2 ^ (w - k) - o) := by
+    rw [BitVec.toNat_sub, Nat.mul_sub, ← hw, ← hxo]
+    have : (0 : BitVec w).toNat = 0 := by simp
+    rw [this, Nat.add_zero, Nat.mod_eq_of_lt (by omega)]
+  have heven : 2 ^ (w - k) % 2 = 0 := by
+    rw [show w - k = (w - k - 1) + 1 by omega, Nat.pow_succ]; simp
+  rw [BitVec.toNat_and, hneg, hxo, two_pow_mul_and_two_pow_mul,
+    and_eq_one_of_odd_add_eq (m := w - k) (by omega) h2 (by omega), Nat.mul_one]
+
+/-- The same with the operands in OpenZeppelin's order, `x & (0 - x)`. -/
+theorem toNat_and_neg_self {x : BitVec w} (hx : x ≠ 0) :
+    (x &&& (0 - x)).toNat = 2 ^ trailingZeros x.toNat := by
+  rw [BitVec.and_comm]; exact toNat_neg_and_self hx
 
 end ProofForgeFin.Evm
