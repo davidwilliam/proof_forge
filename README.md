@@ -4,7 +4,7 @@ AI-written financial code that ships with a proof.
 
 Meta's Muse Spark writes and repairs the logic behind real exploits and proves every locked requirement in Lean 4. ProofForge rechecks each proof in a fresh sandbox (Lean's Comparator with six kernels, `leanchecker`, an axiom audit, and property tests on the executable rebuilt from the same source) and issues a Proof Passport. No proof, no merge.
 
-Live site: https://proofforge-nu.vercel.app. Machine-readable summaries generated from the committed results: [/llms.txt](https://proofforge-nu.vercel.app/llms.txt) and [/evidence.json](https://proofforge-nu.vercel.app/evidence.json).
+Live site: https://proofforge.dev. Machine-readable summaries generated from the committed results: [/llms.txt](https://proofforge.dev/llms.txt) and [/evidence.json](https://proofforge.dev/evidence.json).
 
 ## Three real exploits
 

@@ -9,7 +9,7 @@ const { chromium } = require("playwright");
 const fs = require("fs");
 const path = require("path");
 
-const WEB = process.argv[2] || "https://proofforge-nu.vercel.app";
+const WEB = process.argv[2] || "https://proofforge.dev";
 const OUT = process.argv[3] || "browser-walk";
 const EXE = process.env.PF_CHROME || undefined;
 fs.mkdirSync(OUT, { recursive: true });
