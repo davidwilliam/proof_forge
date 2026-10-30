@@ -4,6 +4,7 @@ import ProofForgeFin.Money.Hamilton
 import ProofForgeFin.Money.Split
 import ProofForgeFin.Money.Currency
 import ProofForgeFin.Money.Fee
+import ProofForgeFin.Money.FX
 /-!
 # ProofForgeFin.Money
 
@@ -19,4 +20,5 @@ exponents, interest, currency conversion and fees.
 * `ProofForgeFin.Money.Split`: equal splits of signed amounts.
 * `ProofForgeFin.Money.Currency`: currencies, minor units, and rescaling between exponents.
 * `ProofForgeFin.Money.Fee`: percentage fees rounded either way, caps and minimums, gross-up.
+* `ProofForgeFin.Money.FX`: currency conversion, round trips and no-arbitrage bounds.
 -/
