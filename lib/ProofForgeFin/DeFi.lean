@@ -1,6 +1,7 @@
 import ProofForgeFin.DeFi.Rewards
 import ProofForgeFin.DeFi.Distributor
 import ProofForgeFin.DeFi.Lending
+import ProofForgeFin.DeFi.AMM
 /-!
 # DeFi primitives
 
@@ -13,4 +14,6 @@ Proved building blocks for specifications and proofs about decentralized-finance
   operations, in total and per account.
 * `ProofForgeFin.DeFi.Lending`: health preservation, borrow limits and debt values with prices and
   collateral factors, liquidation bounds, interest indices, and pool solvency.
+* `ProofForgeFin.DeFi.AMM`: constant-product quotes with a fee, the K check, price impact,
+  liquidity tokens and a pool model; invariant pools with scaled balances and batches.
 -/
