@@ -1273,8 +1273,7 @@ theorem creditedTo_le_psi (gs gb : Nat) (w : Account) (s : St) :
 theorem noPosition_arith (D A x y p q u v : Nat) (hx : x = 0) (hy : y = 0) :
     A * D + x * p + y * q + D * (if 0 < x then u else 0) + D * (if 0 < y then v else 0) = A * D := by
   subst hx; subst hy
-  rw [if_neg (Nat.lt_irrefl 0), if_neg (Nat.lt_irrefl 0)]
-  simp only [Nat.zero_mul, Nat.mul_zero, Nat.add_zero]
+  simp only [Nat.lt_irrefl, ↓reduceIte, Nat.zero_mul, Nat.mul_zero, Nat.add_zero]
 
 /-- The potential of an account without a position is its COMP credited, scaled. -/
 theorem psi_noPosition (gs gb : Nat) (s : St) (who : Account) (h : NoPosition s who) :

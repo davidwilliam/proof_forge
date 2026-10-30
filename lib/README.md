@@ -399,8 +399,8 @@ library and demonstration code:
 Measured in the pinned image: before the change to the Compound demonstration, con-leche and
 con-ron rejected `psi_moves`, `psi_upgrade` and `psi_noPosition` (`fuel exhausted: whnfCore`), and
 the three bounds that depend on them (`account_bounded`, `no_backdated`, `bounds_of_calls`) could
-not be checked; every other declaration passed all six kernels. Now all 9,548 safe constants of
-the library and the demonstrations (5,508 theorems, counting compiler-generated ones) pass all
+not be checked; every other declaration passed all six kernels. Now all 9,549 safe constants of
+the library and the demonstrations (5,509 theorems, counting compiler-generated ones) pass all
 six kernels in one Comparator run, and `leanchecker` accepts all 74 modules that declare
 constants. The 57 `_unsafe_rec` constants (Lean's compiled form of recursive definitions, which no
 proof mentions) pass Lean's kernels and lean4lean; nanoda, con-leche and con-ron decline `unsafe`
