@@ -1,4 +1,5 @@
 import ProofForgeFinDemo.ShareVault
+import ProofForgeFinDemo.BatchTransfer
 /-!
 # ProofForgeFin demonstrations
 
@@ -6,4 +7,5 @@ Lemmas of task reference solutions re-proved with the library, over definitions 
 task files (the task files are not imported or modified).
 
 * `ShareVault`: REQ-SHARE-VALUE of `rw-hundred-vault` for the reference implementation.
+* `BatchTransfer`: `sum_shift` and `sum_applyLegs` of `transfers-batch-b3`.
 -/
