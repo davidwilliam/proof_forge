@@ -207,9 +207,14 @@ class Session:
         self.plan_count = 0
         self.accepted = False
         self.last_good = None  # source of the newest version known to compile
+        self.best = None       # (required theorems proved, version, source) of the best compiling version
+        self.notes = {}        # declaration name -> notes from dialogs that did not prove it
+        self.tried = set()     # declarations already attempted in the current resolution round
+        self.plan_for = {}     # helper name -> prose of the architecture or plan that introduced it
         self.events = []
         # Declaration boundary: the next top-level item or the namespace end.
-        self.boundary = rf"(?:@\[|/--|private |protected |theorem |lemma |def |instance |abbrev |{re.escape(self.end)})"
+        self.boundary = (r"(?:@\[|/--|private |protected |noncomputable |theorem |lemma |def |instance |abbrev "
+                         rf"|structure |inductive |{re.escape(self.end)})")
 
     def call(self, model, messages, purpose, tools=None, max_tokens=32000, timeout=600, attempts=5, **extra):
         """One model call inside the budget. Every attempt is reserved at its worst case
@@ -263,7 +268,7 @@ class Session:
         return f"written (version {self.version}, {len(content)} bytes)"
 
     DECL = re.compile(r"^(?:@\[[^\]]*\]\s*)?(?:private\s+|protected\s+|noncomputable\s+)*"
-                      r"(?:theorem|lemma|def|instance|abbrev)\s+([^\s:({\[]+)", re.M)
+                      r"(?:theorem|lemma|def|instance|abbrev|structure|inductive)\s+([^\s:({\[]+)", re.M)
 
     def _source(self):
         return (self.ws / "candidate/Solution.lean").read_text()
@@ -414,8 +419,11 @@ class Session:
         return banked
 
     def theorem_status(self, names=None):
-        """Per-declaration status from `#print axioms` on the compiled candidate."""
+        """Per-declaration status from `#print axioms` on the compiled candidate. A status of
+        every required theorem also updates the best compiling version seen so far."""
+        whole = not names
         names = names or self.theorems
+        src = self._source()
         probe = "import Solution\n" + "\n".join(f"#print axioms {self.ns}.{t}" for t in names) + "\n"
         (self.ws / "Status.lean").write_text(probe)
         r = judge.in_container(self.ws, "lake env lean Status.lean 2>&1", timeout=300)
@@ -428,7 +436,19 @@ class Session:
                 status[t] = "SORRY"
             else:
                 status[t] = "PROVED"
+        if whole and judge.TIMEOUT_MARK not in r["output_tail"]:
+            self.note_best(status, src)
         return status
+
+    def note_best(self, status, src):
+        """Remember the compiling version that proves the most required theorems (the newest
+        one on ties)."""
+        score = sum(v == "PROVED" for v in status.values())
+        if self.best is None or score >= self.best[0]:
+            self.best = (score, self.version, src)
+
+    def best_score(self):
+        return self.best[0] if self.best else 0
 
     def check_status(self, names=None):
         r = self.compile(2000)
@@ -556,44 +576,72 @@ def orchestrate(s, a):
     s.log(kind="phase", phase="implement", ok=ok0)
     if ok0:
         structured(s, a, system, spec)
-    # Phase 3: spend the rest of the budget on whole-file repair from the current file,
-    # with the same protocol as the compile-and-retry baseline.
     if not s.accepted:
-        import baseline
-        s.log(kind="phase", phase="whole-file")
-        baseline.run(s, argparse.Namespace(model=a.model, effort=a.effort, max_turns=200),
-                     state="current, partly implemented" if impl else "current, partly repaired")
+        whole_file(s, a, impl)
+
+
+def whole_file(s, a, impl):
+    """Phase 3: spend the rest of the budget on whole-file repair with the protocol of the
+    compile-and-retry baseline. It starts from the best compiling version, with helper
+    theorems that nothing uses removed, and the run's result remains the best version
+    (finish), so a rewrite that loses proofs cannot replace them."""
+    import baseline
+    s.log(kind="phase", phase="whole-file")
+    if s.best and s.best[2] != s._source():
+        s._save(s.best[2], f"restore best version {s.best[1]} ({s.best[0]} proved)")
+    compact(s)
+    baseline.run(s, argparse.Namespace(model=a.model, effort=a.effort, max_turns=200),
+                 state="current, partly implemented" if impl else "current, partly repaired", track_best=True)
+
+
+def progress(s):
+    """(required theorems proved, helper theorems with a complete proof of their own)."""
+    st = s.check_status()
+    helpers = [m.group(1).split(".")[-1] for m in s.DECL.finditer(s._source())
+               if re.search(r"\b(?:theorem|lemma)\s", m.group(0))]
+    return (sum(v == "PROVED" for v in st.values()),
+            sum(1 for n in helpers if n not in s.theorems and own_sorry_free(s, n)))
 
 
 def structured(s, a, system, spec):
-    """Phases 1 and 2: per-obligation dialogs, then planner-assisted resolution rounds."""
-    # Phase 1: one focused dialog per obligation, in the task's listed order.
+    """Phase 1: one short direct dialog per obligation, in the task's listed order, which
+    settles the easy ones. Phase 2: rounds that first design one proof architecture for
+    everything still open (shared invariants, helper lemmas, and the required theorems
+    derived from them, checked by Lean before it is kept), then resolve every open
+    declaration, decomposing hard ones with the planner (A2); repeated while a round
+    makes progress."""
     status = s.check_status()
     for t in s.theorems:
         if status.get(t) == "PROVED" or own_sorry_free(s, t):
             continue
-        prove_target(s, a, system, spec, t, a.obligation_turns, "pass1")
+        prove_target(s, a, system, spec, t, a.pass1_turns, "pass1")
         status = s.check_status()
-    # Phase 2: resolve what is left, decomposing hard goals with the planner (A2), and
-    # repeat while a round makes progress.
     pending = [t for t, v in s.check_status().items() if v != "PROVED"]
-    for _ in range(a.rounds):
+    for rnd in range(a.rounds):
         if not pending:
             break
+        before = progress(s)
+        s.tried = set()
+        if a.architect != "none":
+            architect(s, a, spec, pending, rnd)
         for t in pending:
             resolve(s, a, system, spec, t, 0)
         prune(s)
-        now = [t for t, v in s.check_status().items() if v != "PROVED"]
-        progress = len(now) < len(pending)
-        pending = now
-        if not progress:
+        pending = [t for t, v in s.check_status().items() if v != "PROVED"]
+        after = progress(s)
+        s.log(kind="round", round=rnd, before=before, after=after, pending=pending)
+        if after <= before:
             break
     s.check()
 
 
-def decl_text(s, name):
-    m = re.search(rf"^(?:@\[[^\]]*\]\s*)?(?:private\s+)?(?:theorem|lemma|def)\s+{re.escape(name)}(?=[\s:({{\[]).*?"
-                  rf"(?=^{s.boundary})", s._source(), re.S | re.M)
+DECL_TEXT = (r"^(?:@\[[^\]]*\]\s*)?(?:private\s+|protected\s+|noncomputable\s+)*"
+             r"(?:theorem|lemma|def|abbrev|instance|structure|inductive)\s+{name}(?=[\s:({{\[]).*?(?=^{boundary})")
+
+
+def decl_text(s, name, src=None):
+    m = re.search(DECL_TEXT.format(name=re.escape(name), boundary=s.boundary),
+                  s._source() if src is None else src, re.S | re.M)
     return m.group(0) if m else ""
 
 
@@ -615,10 +663,17 @@ def pending_deps(s, name):
 
 
 def resolve(s, a, system, spec, name, depth, plan_text=""):
-    """Make `name` sorry-free: try directly, then decompose with the planner (bounded depth)."""
-    if not own_sorry_free(s, name):
+    """Make `name` sorry-free: try directly, then decompose with the planner (bounded depth),
+    then resolve the open helpers its proof uses. Each declaration is attempted once per
+    round. When an earlier direct dialog on `name` failed and a planner is available, the
+    decomposition comes first."""
+    if name in s.tried:
+        return own_sorry_free(s, name) and not pending_deps(s, name)
+    s.tried.add(name)
+    can_plan = a.planner != "none" and depth < a.max_depth
+    if not own_sorry_free(s, name) and not (can_plan and name in s.notes):
         prove_target(s, a, system, spec, name, a.obligation_turns, f"d{depth}", plan_text)
-    if not own_sorry_free(s, name) and depth < a.max_depth and a.planner != "none":
+    if not own_sorry_free(s, name) and can_plan:
         lemmas, text = plan(s, a, spec, name, s.plan_count)
         for l in lemmas:
             resolve(s, a, system, spec, l, depth + 1, text)
@@ -649,19 +704,249 @@ def prune(s):
                 break
 
 
+def compact(s):
+    """Remove helper theorems that nothing else in the file mentions, proved or not, so that
+    whole-file rewrites stay short. Declarations with attributes are kept (simp lemmas can
+    be used without being named). Kept only if the file still compiles and proves as many
+    required theorems."""
+    before = s._source()
+    want = s.best_score()
+    src, removed, changed = before, [], True
+    while changed:
+        changed = False
+        lines = src.split("\n")
+        for m in list(s.DECL.finditer(src)):
+            n = m.group(1).split(".")[-1]
+            if n in s.theorems or not re.search(r"\b(?:theorem|lemma)\s", m.group(0)) or "@[" in m.group(0):
+                continue
+            line = src[:m.start()].count("\n")
+            if line > 0 and lines[line - 1].lstrip().startswith("@["):
+                continue
+            text = decl_text(s, n, src)
+            if text and not re.search(rf"(?<![\w.]){re.escape(n)}(?![\w?!'])", src.replace(text, "")):
+                src, _ = s._replace_in(src, n, "")
+                removed.append(n)
+                changed = True
+                break
+    if not removed:
+        return
+    s._save(src, f"compact: removed {len(removed)} unused helper theorems")
+    st = s.check_status()
+    if "ERROR" in st.values() or sum(v == "PROVED" for v in st.values()) < want:
+        s._save(before, "revert compact")
+        return
+    s.log(kind="compact", removed=removed)
+
+
+STRUCTURE_GUIDANCE = """How to structure proofs of requirements like these:
+- A requirement that quantifies over every sequence of operations or events (a fold over a list) is proved through an invariant: one predicate on states that holds at the start, is preserved by every single step, and implies the requirement. Prove preservation with one lemma per operation or event constructor, then the statement for every list by induction on the list (generalizing the starting state, or with an induction lemma the spec provides), then derive the requirement in a few lines.
+- The invariant is usually stronger than the requirement. Add what a single step needs: equalities between the implementation's state and the quantities the specification computes, bounds that are preserved, lengths, index ranges and well-formedness of every record. Several requirements can share one invariant.
+- For an upper bound on a quantity that only accumulates, prove a potential inequality instead: the accumulated amount plus everything still owed is at most the starting amount plus everything added since; each step then only moves value from owed to accumulated or adds new value.
+- When a requirement starts from a state reached by an earlier sequence, state the invariant for every reachable state and apply it at the intermediate state; a fold over `l₁ ++ l₂` is a fold over `l₂` starting from the result of `l₁`.
+- A requirement about a single call follows from a lemma that computes that call's result: unfold the definition once and case on its branches."""
+
+
 PLANNER_SYSTEM = """You are a Lean 4 proof architect (Lean v4.35.0 core library only, no Mathlib).
 Given a specification, a candidate implementation, and a required theorem that a prover failed to prove,
 you design a chain of helper lemmas that makes the proof routine. Each lemma must be TRUE, stated in
 Lean 4 syntax that elaborates against the given file, and small enough to prove by induction or simp/omega.
 Prefer general lemmas over specific ones. Avoid Mathlib names (no Finset, no linarith, no BigOperators)."""
 
+ARCHITECT_SYSTEM = """You are a Lean 4 proof architect (Lean v4.35.0 core library only, no Mathlib).
+Given a specification, a candidate implementation and the required theorems that are not yet proved,
+you design how they are proved together: shared definitions such as invariants, helper lemmas that are
+TRUE and each small enough for one focused proof, and the derivation of each required theorem from them.
+Everything you write must elaborate against the given file. Avoid Mathlib names (no Finset, no linarith,
+no BigOperators)."""
+
+
+def notes_text(s, name, limit=1600):
+    notes = s.notes.get(name) or []
+    return "\n".join(f"- {n}" for n in notes)[-limit:]
+
+
+def remember(s, name, messages):
+    """Keep the end of a dialog that did not prove `name`: the model's last words and the
+    last tool result, for the next attempt at the same declaration and for the architect."""
+    said = next((m["content"] for m in reversed(messages) if m["role"] == "assistant" and m.get("content")), "")
+    got = next((m["content"] for m in reversed(messages) if m["role"] == "tool"), "")
+    note = said.strip()[:600]
+    if got:
+        note += ("\n  Last tool result: " if note else "Last tool result: ") + got.strip()[-1000:]
+    if note:
+        s.notes[name] = (s.notes.get(name, []) + [note])[-2:]
+
+
+def outline(s, keep=()):
+    """The candidate with the proofs of proved theorems replaced by a marker, so prompts stay
+    short; definitions, the declarations in `keep` and anything that still uses sorry are
+    shown in full. The full file stays available through read_file."""
+    src = s._source()
+    pat = re.compile(r"^(?:@\[[^\]]*\]\s*)?(?:private\s+|protected\s+)*(?:theorem|lemma)\s+([^\s:({\[]+).*?"
+                     rf"(?=^{s.boundary})", re.S | re.M)
+    pieces, pos = [], 0
+    for m in pat.finditer(src):
+        name, text = m.group(1).split(".")[-1], m.group(0)
+        head = re.match(r"(.*?):=\s*by\b", text, re.S)
+        if name in keep or "sorry" in text or not head:
+            continue
+        pieces += [src[pos:m.start()], head.group(1).rstrip() + " := by\n  -- proved; proof omitted here\n\n"]
+        pos = m.end()
+    return "".join(pieces) + src[pos:]
+
+
+def split_decls(s, code):
+    """Top-level declarations of a code block as (name, text), comments removed."""
+    code = re.sub(r"/-.*?-/", "", code, flags=re.S)
+    lines = code.strip("\n").split("\n")
+    starts = [i for i, l in enumerate(lines) if s.DECL.match(l)]
+    out = []
+    for k, i in enumerate(starts):
+        a = i
+        while a > 0 and lines[a - 1].startswith("@["):
+            a -= 1
+        b = starts[k + 1] if k + 1 < len(starts) else len(lines)
+        while b - 1 > a and (lines[b - 1].startswith("@[") or not lines[b - 1].strip()):
+            b -= 1
+        text = "\n".join(lines[a:b]).strip("\n")
+        if text.strip() not in ("", s.end) and not text.startswith(("namespace", "end ")):
+            out.append((s.DECL.match(lines[i]).group(1).split(".")[-1], text.replace(f"\n{s.end}", "")))
+    return out
+
+
+def install_architecture(s, code, status):
+    """Install a proof architecture into the current source. New definitions and helper
+    lemmas are appended in the given order (an existing helper that still uses sorry is
+    replaced; a proved one is kept); a required theorem that is not PROVED takes the given
+    proof under its locked statement. Returns (source, helpers left as sorry, required
+    theorems given a proof)."""
+    src = s._source()
+    helpers, derived, append = [], [], []
+    for name, text in split_decls(s, code):
+        if name in s.theorems:
+            if status.get(name) == "PROVED" or "sorry" in text:
+                continue
+            head = re.match(r"(.*?):=", decl_text(s, name, src), re.S)
+            body = re.match(r".*?(:=.*)$", text, re.S)
+            if head and body:
+                src, _ = s._replace_in(src, name, head.group(1).rstrip() + " " + body.group(1))
+                derived.append(name)
+            continue
+        cur = decl_text(s, name, src)
+        if cur and "sorry" not in cur:
+            continue
+        if cur:
+            src, _ = s._replace_in(src, name, "")
+        append.append(text)
+        if "sorry" in text and re.search(r"\b(?:theorem|lemma)\s", text.split("\n")[0] + " "):
+            helpers.append(name)
+    for text in append:
+        lines = src.split("\n")
+        ends = [i for i, l in enumerate(lines) if l.startswith(s.end)]
+        e = ends[-1] if ends else len(lines)
+        src = "\n".join(lines[:e] + text.split("\n") + [""] + lines[e:])
+    return src, helpers, derived
+
+
+def stuck_text(s, limit=6):
+    """Helper theorems in the file that still use sorry, with notes from failed attempts."""
+    out = []
+    for m in s.DECL.finditer(s._source()):
+        n = m.group(1).split(".")[-1]
+        if n in s.theorems or own_sorry_free(s, n) or not re.search(r"\b(?:theorem|lemma)\s", m.group(0)):
+            continue
+        stmt = re.split(r":=\s*(?:by\b|sorry)", decl_text(s, n), maxsplit=1)[0].strip()
+        out.append(f"`{stmt}`" + (f"\n  Attempts so far:\n{notes_text(s, n, 900)}" if n in s.notes else ""))
+    return "\n".join(out[:limit])
+
+
+def statement(s, t):
+    m = re.search(rf"theorem\s+{re.escape(t)}\s*:[^\n]*", s.read_file(f"{s.task.spec_dir}/Challenge.lean"))
+    return m.group(0).replace(" := sorry", "").strip() if m else t
+
+
+def architect(s, a, spec, pending, rnd):
+    """Ask for one proof architecture covering every pending required theorem and install
+    it. It is kept only if the whole file compiles with it: the required theorems it
+    derives then follow from its helper lemmas, which become targets of their own."""
+    if a.architect == "auto":
+        model = a.planner if a.planner != "none" else a.model
+    else:
+        model = a.architect
+    status = s.check_status()
+    defs = ", ".join(f"`{d}`" for d in s.task.definitions)
+    req_notes = "\n".join(f"Earlier attempts at {t}:\n{notes_text(s, t, 900)}" for t in pending if t in s.notes)
+    stuck = stuck_text(s)
+    user = (f"{spec}\n\n=== candidate/Solution.lean (current; proofs of proved theorems omitted) ===\n{outline(s)}\n\n"
+            f"Requirement status: {', '.join(f'{k}={v}' for k, v in status.items())}\n\n"
+            "Required theorems not yet proved:\n" + "\n".join(f"- `{statement(s, t)}`" for t in pending) + "\n\n"
+            + (f"{req_notes}\n\n" if req_notes else "")
+            + (f"Helper lemmas in the file that are still unproved (restate or replace them if they are false or too hard):\n{stuck}\n\n" if stuck else "")
+            + f"Design the proof of these required theorems together.\n{STRUCTURE_GUIDANCE}\n\n"
+            "Reply with (1) a short plan in prose: the shared facts or invariant and how each required theorem follows, "
+            "then (2) exactly one ```lean code block, inserted inside "
+            f"`namespace {s.ns}` after the current helpers, containing in dependency order: new definitions you need, with "
+            "complete bodies; helper lemmas, each `theorem <name> ... := by sorry`, each small enough for one focused proof "
+            "(one operation or one case where possible); and every required theorem above that follows from them, with "
+            "exactly its statement and a complete proof that uses the helpers and contains no sorry. New names start with "
+            f"`arch{rnd}_` and contain no `?` or `!`. You may use every declaration already in the file without restating "
+            f"it. Do not change {defs}.")
+    messages = [{"role": "system", "content": ARCHITECT_SYSTEM}, {"role": "user", "content": user}]
+    extra = {} if a.planner_effort == "default" else {"reasoning_effort": a.planner_effort}
+    for tries in range(3):
+        try:
+            r, _ = s.call(model, messages, f"arch:{s.task.id}:{rnd}:{tries}", timeout=900, **extra)
+        except APIError as e:
+            s.log(kind="api_error", status=e.status, body=e.body[:300])
+            s.pause(20)
+            continue
+        text = r["choices"][0]["message"].get("content") or ""
+        messages.append({"role": "assistant", "content": text})
+        m = re.search(r"```lean\s*\n(.*?)```", text, re.S)
+        if not m:
+            messages.append({"role": "user", "content": "Your reply had no ```lean code block. Reply again in the required format."})
+            continue
+        before = s._source()
+        new, helpers, derived = install_architecture(s, m.group(1), status)
+        if new == before:
+            messages.append({"role": "user", "content": "Nothing in the code block was new: every declaration in it already exists "
+                             "and is proved. Reply with helper lemmas and derivations for the unproved required theorems."})
+            continue
+        s._save(new, f"architect {rnd}")
+        out = s.compile(8000)
+        if "error:" in out["output_tail"]:
+            s._save(before, f"revert architect {rnd}")
+            messages.append({"role": "user", "content": "The file does not compile with your code, so nothing was kept. Fix it and "
+                             "reply with the complete corrected code block. Compiler output:\n" + s._clean(out["output_tail"])[-4000:]})
+            continue
+        if not derived and tries < 2:
+            s._save(before, f"revert architect {rnd}")
+            messages.append({"role": "user", "content": "Your code compiles but derives none of the unproved required theorems, so "
+                             "nothing was kept. Include each required theorem with exactly its statement and a complete proof "
+                             "from your helper lemmas."})
+            continue
+        prose = text[: m.start()].strip()[-3000:]
+        s.targets.update(helpers)
+        for h in helpers:
+            s.plan_for[h] = prose
+        (s.out / f"arch_{rnd}.md").write_text(text)
+        s.log(kind="architect", round=rnd, attempt=tries, model=model, helpers=helpers, derived=derived,
+              prose=prose[:3000], code=m.group(1)[:8000])
+        print(f"[architect {rnd}] derived {derived}, helpers {helpers}", flush=True)
+        return helpers, derived
+    s.log(kind="architect", round=rnd, model=model, helpers=[], derived=[], failed=True)
+    return [], []
+
 
 def plan(s, a, spec, t, attempt):
     """Ask the planner model for helper lemma statements; install them as sorry targets."""
     stmt = re.search(rf"theorem\s+{re.escape(t)}\s*:[^\n]*",
                      s.read_file(f"{s.task.spec_dir}/Challenge.lean") + s._source())
-    user = (f"{spec}\n\n=== candidate/Solution.lean (current) ===\n{s._source()}\n\n"
+    tried = notes_text(s, t)
+    user = (f"{spec}\n\n=== candidate/Solution.lean (current; proofs of proved theorems omitted) ===\n{outline(s, {t})}\n\n"
             f"The prover could not prove `{stmt.group(0).replace(' := sorry', '') if stmt else t}`.\n"
+            + (f"Its last attempts ended like this:\n{tried}\n" if tried else "")
+            + f"\n{STRUCTURE_GUIDANCE}\n\n"
             "Reply with (1) a short proof plan in prose, then (2) exactly one ```lean code block containing 2 to 6 "
             "helper lemmas, each written as `theorem <unique_name> ... := by sorry`, in dependency order, inside no "
             f"namespace (the code is inserted inside `namespace {s.ns}`). Use names prefixed with `plan"
@@ -699,6 +984,8 @@ def plan(s, a, spec, t, attempt):
         s.targets.update(names)
         s.plan_count += 1
         prose = text[: m.start()].strip()[-3000:]
+        for n in names:
+            s.plan_for[n] = prose
         (s.out / f"plan_{t}_{attempt}.md").write_text(text)
         s.log(kind="plan", theorem=t, attempt=attempt, lemmas=names, model=a.planner, prose=prose[:3000], code=code[:6000])
         print(f"[plan {t}] {names}", flush=True)
@@ -712,9 +999,13 @@ def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
     stmt = (m.group(0).split(":= by")[0].split(":= sorry")[0] if m else t).strip()
     status = s.check_status()
     defs = ", ".join(f"`{d}`" for d in s.task.definitions)
-    user = (f"{spec}\n\n=== candidate/Solution.lean (current) ===\n{src}\n\n"
+    plan_text = plan_text or s.plan_for.get(t, "")
+    tried = notes_text(s, t)
+    user = (f"{spec}\n\n=== candidate/Solution.lean (current; proofs of proved theorems omitted, read_file shows the "
+            f"full file) ===\n{outline(s, {t})}\n\n"
             f"Current requirement status: {', '.join(f'{k}={v}' for k, v in status.items())}\n\n"
             + (f"Proof plan from the architect:\n{plan_text}\n\n" if plan_text else "")
+            + (f"Earlier attempts at this target ended like this (the file may have changed since):\n{tried}\n\n" if tried else "")
             + f"Your task now: prove `{stmt}`. Do not change {defs} or anything already proved. "
             "Develop the proof with try_snippet; a clean snippet that proves "
             f"`{t}` replaces its sorry automatically. You may use the other helper lemmas in the file even if "
@@ -723,19 +1014,28 @@ def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
         """The target's own proof is sorry-free and the file compiles (dependencies may be pending)."""
         m2 = re.search(rf"^(?:private\s+)?theorem\s+{re.escape(t)}\b.*?(?=^{s.boundary})", s._source(), re.S | re.M)
         return bool(m2) and "sorry" not in m2.group(0) and s.check_status([t]).get(t) != "ERROR"
-    ok, _ = dialog(s, a.model, a.effort, system, user, {"try_snippet", "replace_declaration", "check", "read_file"},
-                   budget, own_proof_done, f"{label}:{t}")
+    ok, messages = dialog(s, a.model, a.effort, system, user, {"try_snippet", "replace_declaration", "check", "read_file"},
+                          budget, own_proof_done, f"{label}:{t}")
+    if not ok:
+        remember(s, t, messages)
     s.log(kind="obligation", label=label, theorem=t, ok=ok)
     return ok
 
 
-def finish(s, out, arm, extra):
+def finish(s, out, arm, extra, select="newest"):
     """Write summary.json and the final candidate; final judging is done by the evaluator.
-    A final file that does not compile is replaced by the newest version that did; this
-    selection among already produced versions happens after the deadline."""
+    A final file that does not compile is replaced by the newest version that did. With
+    select="best" (the harness), the result is instead the compiling version that proves
+    the most required theorems, the newest one on ties; the statuses compared were all
+    computed during the run. This selection among already produced versions happens after
+    the deadline."""
     judge.DEADLINE = None
     if "error:" in s.compile(2000)["output_tail"] and s.last_good is not None:
         s._save(s.last_good, "restore last compiling version")
+    status = s.check_status()
+    if select == "best" and s.best and s.best[0] > sum(v == "PROVED" for v in status.values()):
+        s._save(s.best[2], f"restore best version {s.best[1]} ({s.best[0]} proved)")
+        status = s.check_status()
     shutil.copy(s.ws / "candidate/Solution.lean", out / "final.lean")
     writes = [e for e in s.events if e.get("kind") == "write"]
     snapshot = {"sha256": taskmod.sha256(out / "final.lean"), "version": s.version,
@@ -743,7 +1043,7 @@ def finish(s, out, arm, extra):
                 "written_at_s": round(writes[-1]["t"] - s.events[0]["t"], 1) if writes else 0.0}
     summary = {"task": s.task.id, "arm": arm, "model": s.model, **extra, "final_snapshot": snapshot,
                "accepted_in_session": s.accepted,
-               "versions": s.version, "budget": s.budget.summary(), "final_status": s.check_status()}
+               "versions": s.version, "budget": s.budget.summary(), "final_status": status}
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
     shutil.rmtree(s.ws, ignore_errors=True)
     return summary
@@ -761,11 +1061,17 @@ def main():
     ap.add_argument("--loop", default="orchestrated", choices=["orchestrated", "free"])
     ap.add_argument("--max-turns", type=int, default=40, help="free mode only")
     ap.add_argument("--phase0-turns", type=int, default=12)
+    ap.add_argument("--pass1-turns", type=int, default=8, help="turns of the first direct dialog per obligation")
     ap.add_argument("--obligation-turns", type=int, default=12)
     ap.add_argument("--start", help="starting candidate (default: the task's candidate/Solution.lean)")
     ap.add_argument("--effort", default="medium", choices=["low", "medium", "high", "default"])
     ap.add_argument("--planner", default="muse-wonder-1.0", help="planner model, or 'none' (arm A1)")
     ap.add_argument("--planner-effort", default="high", choices=["low", "medium", "high", "default"])
+    ap.add_argument("--architect", default="auto",
+                    help="model that designs the joint proof architecture at the start of each phase 2 round: "
+                         "'auto' (the planner, or the prover model when --planner none), a model id, or 'none'")
+    ap.add_argument("--select", default="best", choices=["best", "newest"],
+                    help="final candidate: the compiling version proving the most required theorems, or the newest")
     ap.add_argument("--max-depth", type=int, default=2)
     ap.add_argument("--rounds", type=int, default=3, help="phase 2 rounds while they make progress")
     ap.add_argument("--budget-usd", type=float, help="cap at standard-tier list prices")
@@ -798,7 +1104,8 @@ def main():
     except BudgetExceeded as e:
         s.log(kind="budget_stop", reason=str(e))
         print(f"budget exhausted: {e}", flush=True)
-    summary = finish(s, out, arm, {"mode": a.loop, "task_mode": a.mode, "effort": a.effort, "planner": a.planner})
+    summary = finish(s, out, arm, {"mode": a.loop, "task_mode": a.mode, "effort": a.effort, "planner": a.planner,
+                                   "architect": a.architect}, select=a.select)
     print(json.dumps(summary))
 
 

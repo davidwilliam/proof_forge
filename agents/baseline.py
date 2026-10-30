@@ -47,7 +47,10 @@ def audit(s):
     return s.accepted, verdict
 
 
-def run(s, a, state="current, buggy"):
+def run(s, a, state="current, buggy", track_best=False):
+    """Compile-and-retry loop. With track_best (the harness's whole-file phase), feedback on an
+    attempt that proves fewer required theorems than the best version so far says so; the
+    baseline arm A0 runs without it."""
     system = repair.task_brief(s.task, getattr(s, "mode", "repair")) + PROTOCOL
     user = (repair.spec_text(s) + f"\n\n=== candidate/Solution.lean ({state}) ===\n" + s._source())
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
@@ -69,7 +72,12 @@ def run(s, a, state="current, buggy"):
         else:
             s._save(m[-1].strip() + "\n", "attempt")
             ok, feedback = audit(s)
-            s.log(kind="attempt", turn=turn, version=s.version, accepted=ok)
+            if track_best and not ok and s.best and s.best[1] != s.version:
+                feedback += (f"\n\nThe best version so far (version {s.best[1]}) proves {s.best[0]} of "
+                             f"{len(s.theorems)} required theorems; it remains the result unless a later version "
+                             "proves more. Keep the proofs that worked there.")
+            s.log(kind="attempt", turn=turn, version=s.version, accepted=ok,
+                  **({"best": s.best_score()} if track_best else {}))
             print(f"[A0] turn {turn}: version {s.version} accepted={ok}", flush=True)
             if ok:
                 return
