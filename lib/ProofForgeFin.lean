@@ -5,6 +5,7 @@ import ProofForgeFin.Shares
 import ProofForgeFin.Seq
 import ProofForgeFin.Ledger
 import ProofForgeFin.Trading
+import ProofForgeFin.Machine
 /-!
 # ProofForgeFin
 
