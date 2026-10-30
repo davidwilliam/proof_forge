@@ -7,8 +7,9 @@ change (its namespace body, with every doc string). The task files are not impor
 
 The second section proves, for every implementation, that REQ-BATCH-KEEPS-VALUE follows from
 REQ-SWAP-KEEPS-VALUE, and that the rounding requirements REQ-GIVEN-IN-PAYS-AT-MOST and
-REQ-GIVEN-OUT-CHARGES-AT-LEAST make a swap keep the pool's value, with
-`ProofForgeFin.DeFi.AMM.scaled_dominates` and `AMM.invariant_le_of_dominates`.
+REQ-GIVEN-OUT-CHARGES-AT-LEAST make a swap keep the pool's value, with the library's pool-math
+interface (`ProofForgeFin.DeFi.AMM.WellBehaved.scaled_swapIn`, `scaled_swapOut`). It also re-proves
+`constantProduct_wellBehaved` of `spec/BalancerSwap/Sanity.lean` from the library's instance.
 -/
 
 namespace ProofForgeFinDemo.DeFi.Balancer
@@ -257,8 +258,9 @@ batch. Here, for every implementation:
   implementation meets REQ-GIVEN-IN-PAYS-AT-MOST (`given_in_keeps_value`), and a given-out swap
   does when it meets REQ-GIVEN-OUT-CHARGES-AT-LEAST and the exact amount out rounded up is below
   the pool's scaled balance (`given_out_keeps_value`, the condition the reference implementation
-  checks before pricing). The domination is `AMM.scaled_dominates` and the conclusion
-  `AMM.invariant_le_of_dominates`. -/
+  checks before pricing), with `AMM.WellBehaved.scaled_swapIn` and `scaled_swapOut`;
+* the task's constant product is well behaved (`constantProduct_wellBehaved`, proved in
+  `spec/BalancerSwap/Sanity.lean`), from the library's `AMM.constantProduct_wellBehaved`. -/
 
 /-- One is positive. -/
 theorem one_pos : 0 < ONE := by unfold ONE; decide
@@ -274,6 +276,27 @@ theorem scaleUp_eq (a r : Nat) : scaleUp a r = ProofForgeFin.scaleUp ONE a r := 
 
 /-- The task's `update2` is the library's. -/
 theorem update2_eq : update2 = ProofForgeFin.DeFi.AMM.update2 := rfl
+
+/-- The task's pool math as the library's. -/
+def toLib (m : PoolMath) : ProofForgeFin.DeFi.AMM.PoolMath := ⟨m.invariant, m.outGivenIn, m.inGivenOut⟩
+
+/-- The task's contract is the library's. -/
+theorem wellBehaved_iff (m : PoolMath) (n : Nat) :
+    WellBehaved m n ↔ ProofForgeFin.DeFi.AMM.WellBehaved (toLib m) n :=
+  ⟨fun h => ⟨h.monotone, h.outGivenIn, h.inGivenOut⟩, fun h => ⟨h.monotone, h.outGivenIn, h.inGivenOut⟩⟩
+
+/-- The task's constant product is the library's. -/
+theorem toLib_constantProduct : toLib constantProduct = ProofForgeFin.DeFi.AMM.constantProduct := by
+  simp only [toLib, constantProduct, ProofForgeFin.DeFi.AMM.constantProduct,
+    ProofForgeFin.DeFi.AMM.PoolMath.mk.injEq, true_and]
+  funext b i j x
+  split
+  · rw [ProofForgeFin.ceilDiv_eq_add_pred _ _ (by omega)]
+  · rfl
+
+/-- `BalancerSwap.Sanity.constantProduct_wellBehaved`, from the library's instance. -/
+theorem constantProduct_wellBehaved : WellBehaved constantProduct 2 :=
+  (wellBehaved_iff _ _).2 (toLib_constantProduct ▸ ProofForgeFin.DeFi.AMM.constantProduct_wellBehaved)
 
 /-- The task's batch is the library's atomic run. -/
 theorem run_eq (impl : Impl) (m : PoolMath) (p : Pool) (ss : List Swap) :
@@ -350,13 +373,10 @@ theorem given_in_keeps_value (hIn : GivenInPaysAtMost impl) {m : PoolMath} {p p'
   rw [eOut] at hle
   rw [eIn, eOut]
   have hy := hIn m p s c hpm hk hv hc
-  have hsound := (hw.outGivenIn (scaledBalances p) s.tokenIn s.tokenOut (netInDown p s) hv.1
-    hv.2.1 hv.2.2).2
   unfold value
   rw [scaled_with, update2_eq]
-  exact ProofForgeFin.DeFi.AMM.invariant_le_of_dominates hw.monotone hsound
-    (fun k _ => ProofForgeFin.DeFi.AMM.scaled_dominates ONE one_pos p.balance p.rate hv.1 hle
-      (netInDown_le p s) (by rw [Nat.mul_comm _ ONE]; exact hy) k)
+  exact ((wellBehaved_iff m p.n).1 hw).scaled_swapIn one_pos p.balance p.rate hv.1 hv.2.1 hv.2.2
+    (netInDown_le p s) (by rw [Nat.mul_comm _ ONE]; exact hy) hle
 
 /-- A given-out swap keeps the value when the implementation charges at least what the math prices
 the exact amount out rounded up (REQ-GIVEN-OUT-CHARGES-AT-LEAST) and that amount is below the
@@ -371,8 +391,6 @@ theorem given_out_keeps_value (hOut : GivenOutChargesAtLeast impl) {m : PoolMath
   rw [eOut] at hle
   rw [eIn, eOut]
   have hch := hOut m p s c hpm hk hv hc
-  have hsound := hw.inGivenOut (scaledBalances p) s.tokenIn s.tokenOut
-    (scaleUp s.amount (p.rate s.tokenOut)) hv.1 hv.2.1 hv.2.2 hb
   have hgain : outPrice m p s * ONE ≤ c * p.rate s.tokenIn := by
     have h1 : c * (ONE - p.fee) * p.rate s.tokenIn ≤ c * ONE * p.rate s.tokenIn :=
       Nat.mul_le_mul_right _ (Nat.mul_le_mul_left _ (Nat.sub_le _ _))
@@ -385,9 +403,8 @@ theorem given_out_keeps_value (hOut : GivenOutChargesAtLeast impl) {m : PoolMath
     rw [scaleUp_eq]; exact ProofForgeFin.le_mulUp_mul ONE _ _ one_pos
   unfold value
   rw [scaled_with, update2_eq]
-  exact ProofForgeFin.DeFi.AMM.invariant_le_of_dominates hw.monotone hsound
-    (fun k _ => ProofForgeFin.DeFi.AMM.scaled_dominates ONE one_pos p.balance p.rate hv.1 hle
-      hgain hloss k)
+  exact ((wellBehaved_iff m p.n).1 hw).scaled_swapOut one_pos p.balance p.rate hv.1 hv.2.1 hv.2.2
+    hb hloss hgain hle
 
 end Requirements
 

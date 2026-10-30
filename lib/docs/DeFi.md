@@ -6,8 +6,8 @@ ERC-4626 vaults. It builds on `Rounding`, `FixedPoint`, `Seq`, `Shares` and `Led
 the Lean core library only, and every theorem is proved with no axiom beyond `propext`,
 `Classical.choice` and `Quot.sound`.
 
-Five modules declare 159 theorems and 71 definitions (structures and inductive types included).
-Four demonstrations under `lib/ProofForgeFinDemo/DeFi/` (92 theorems) re-prove requirements of
+Five modules declare 165 theorems and 77 definitions (structures and inductive types included).
+Four demonstrations under `lib/ProofForgeFinDemo/DeFi/` (95 theorems) re-prove requirements of
 `rw-compound-comp`, `rw-euler-donate`, `rw-hundred-vault` and `rw-balancer-upscale` over
 definitions copied from the task specifications. Each demonstration proves its requirements for
 every implementation that meets the task's per-call requirements, where the reference solution
@@ -98,7 +98,9 @@ harvest, and `distributeSupplierComp` do. Emission over zero units is discarded.
   computes them; `Healthy`. `Healthy.exact`: a healthy position satisfies
   `debt * debtPrice * one ≤ collateral * collPrice * factor`. `healthy_mono`,
   `healthy_of_debt_eq_zero`, `healthy_of_params` (higher collateral price, lower debt price, higher
-  factor keep health).
+  factor keep health). `healthFactor` (borrow limit over debt value at scale `one`, Aave's
+  `healthFactor`) and `one_le_healthFactor_iff` (a position with debt is healthy exactly when its
+  health factor is at least 1).
 * Liquidation: `seize incentive repay = repay * debtPrice * incentive / (collPrice * one)`
   (Compound's `liquidateCalculateSeizeTokens`). `seize_value_le`:
   `seize * collPrice * one ≤ repay * debtPrice * incentive` (seized value at most the repaid value
@@ -149,6 +151,12 @@ Constant product with fee `fee / D`, `g = D - fee`, as in `UniswapV2Library`:
   follows from `gain * one ≤ ain * rate i` and `aout * rate j ≤ loss * one`: the math credited at
   most the amount in rounded down and debited at least the amount out), and `runAll_invariant_le`
   (a batch keeps the invariant when each swap does).
+* The pool-math interface: `PoolMath` (invariant, `outGivenIn`, `inGivenOut`), `OutGivenInSound`,
+  `InGivenOutSound`, `WellBehaved` (the contract of Balancer's swap specification, stated the same
+  way, so a specification can use it directly); `WellBehaved.scaled_swapIn` and
+  `WellBehaved.scaled_swapOut` (a swap settled in raw units keeps the invariant of the scaled
+  balances, from the credit rounded down and the debit rounded up); `constantProduct` and
+  `constantProduct_wellBehaved` (the two-token constant product meets the contract).
 
 ## `ProofForgeFin.DeFi.Vault`: ERC-4626 with virtual shares and assets
 
@@ -187,7 +195,8 @@ counted by the same script for both sides.
 | `Compound.lean` (`rw-compound-comp`) | `bounds_of_calls`: REQ-REWARDS-BOUNDED, REQ-ACCOUNT-BOUNDED and REQ-NO-BACKDATED-REWARDS for every implementation meeting REQ-CALLS-SUCCEED, REQ-SUPPLY-HOOK, REQ-BORROW-HOOK, REQ-CLAIM, REQ-SET-SPEEDS | 984 (list lemmas 126, potentials and bounds 858), its own implementation only | 626 |
 | `Euler.lean` (`rw-euler-donate`) | `stays_healthy`, `no_bad_debt` for every implementation meeting REQ-EFFECTS and REQ-ACTOR-HEALTHY | 57 (`healthy_mono`, `healthy_zero`, `req_stays_healthy`, `req_no_bad_debt`) | 68 |
 | `Hundred.lean` (`rw-hundred-vault`) | `share_value`: REQ-SHARE-VALUE for every implementation meeting the effect and rounding requirements of deposit, redeem and withdraw | 57 (`value_trans`, `exec_value`, `run_value`, `req_share_value`) | 56 |
-| `Balancer.lean` (`rw-balancer-upscale`) | `batch_keeps_value` (REQ-BATCH-KEEPS-VALUE from REQ-SWAP-KEEPS-VALUE), `given_in_keeps_value`, `given_out_keeps_value` (a swap keeps value under REQ-GIVEN-IN-PAYS-AT-MOST, REQ-GIVEN-OUT-CHARGES-AT-LEAST) | 122 (scaling helpers, `settle_balance`, `step_some`, `dominates`, the two requirements) | 101 |
+| `Balancer.lean` (`rw-balancer-upscale`) | `batch_keeps_value` (REQ-BATCH-KEEPS-VALUE from REQ-SWAP-KEEPS-VALUE), `given_in_keeps_value`, `given_out_keeps_value` (a swap keeps value under REQ-GIVEN-IN-PAYS-AT-MOST, REQ-GIVEN-OUT-CHARGES-AT-LEAST) | 122 (scaling helpers, `settle_balance`, `step_some`, `dominates`, the two requirements) | 95 |
+| `Balancer.lean`, Sanity | `constantProduct_wellBehaved` of `spec/BalancerSwap/Sanity.lean` | 56 (`cp_out_le` to `constantProduct_wellBehaved`) | 13 (bridge to `AMM.constantProduct_wellBehaved`) |
 
 Notes on the comparison:
 
@@ -204,7 +213,8 @@ Notes on the comparison:
   `Rewards.sum_le_of_index_le₂` and `Ledger.sum_map_modify_le`.
 * For Euler, Hundred and Balancer the library-based proofs are about the size of the reference
   proofs and more general; their per-call reasoning is case analysis on the specification's
-  effects, which the library does not shorten.
+  effects, which the library does not shorten. Where the task needs a fact the library states
+  generally, the proof is a bridge: the constant product's contract is 13 lines against 56.
 
 Axioms of the main results (`#print axioms`, pinned image):
 
@@ -239,7 +249,7 @@ Axioms of the main results (`#print axioms`, pinned image):
 ```
 
 With the DeFi modules and demonstrations the audit of the whole library reports
-`audit: 3366 constants, 964 theorems, 0 violations` and `axioms used: [Classical.choice,
+`audit: 3418 constants, 984 theorems, 0 violations` and `axioms used: [Classical.choice,
 Quot.sound, propext]`, and `tests/test_fin_lib.py` passes.
 
 ## Limits
