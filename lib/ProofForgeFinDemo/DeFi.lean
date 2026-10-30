@@ -1,6 +1,7 @@
 import ProofForgeFinDemo.DeFi.Compound
 import ProofForgeFinDemo.DeFi.Euler
 import ProofForgeFinDemo.DeFi.Hundred
+import ProofForgeFinDemo.DeFi.Balancer
 /-!
 # DeFi demonstrations
 
@@ -15,4 +16,7 @@ reference implementation.
   REQ-ACTOR-HEALTHY.
 * `Hundred`: REQ-SHARE-VALUE of `rw-hundred-vault`, from the effect and rounding requirements of
   the three calls.
+* `Balancer`: REQ-BATCH-KEEPS-VALUE of `rw-balancer-upscale` from REQ-SWAP-KEEPS-VALUE, and the
+  value kept by a swap from the rounding requirements REQ-GIVEN-IN-PAYS-AT-MOST and
+  REQ-GIVEN-OUT-CHARGES-AT-LEAST.
 -/
