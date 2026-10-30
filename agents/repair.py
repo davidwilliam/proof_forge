@@ -893,6 +893,19 @@ def statement(s, t):
     return m.group(0).replace(" := sorry", "").strip() if m else t
 
 
+def architecture_prose(replies, limit=3000):
+    """The plan to pass to the dialogs on an architecture's helpers: the prose of the first
+    reply that has any (the plan), followed by the prose of later replies (corrections made
+    after compiler feedback), so a correction never replaces the plan."""
+    proses = [re.split(r"```lean", r, maxsplit=1)[0].strip() for r in replies]
+    proses = [p for p in proses if p]
+    if not proses:
+        return ""
+    plan, later = proses[0], [p for p in proses[1:] if p != proses[0]]
+    tail = "".join(f"\n\nRevision after compiler feedback: {p[:600]}" for p in later)
+    return plan[: max(limit - len(tail), limit // 2)] + tail[:limit // 2]
+
+
 def architect(s, a, spec, pending, rnd):
     """Ask for one proof architecture covering every pending required theorem and install
     it. It is kept only if the whole file compiles with it: the required theorems it
@@ -921,6 +934,7 @@ def architect(s, a, spec, pending, rnd):
             f"it. Do not change {defs}.")
     messages = [{"role": "system", "content": ARCHITECT_SYSTEM}, {"role": "user", "content": user}]
     extra = {} if a.planner_effort == "default" else {"reasoning_effort": a.planner_effort}
+    replies = []
     for tries in range(3):
         try:
             limits = {} if model == a.model else {"max_tokens": PLANNER_MAX_TOKENS, "attempts": PLANNER_ATTEMPTS}
@@ -935,6 +949,7 @@ def architect(s, a, spec, pending, rnd):
             continue
         text = r["choices"][0]["message"].get("content") or ""
         messages.append({"role": "assistant", "content": text})
+        replies.append(text)
         m = re.search(r"```lean\s*\n(.*?)```", text, re.S)
         if not m:
             messages.append({"role": "user", "content": "Your reply had no ```lean code block. Reply again in the required format."})
@@ -958,13 +973,13 @@ def architect(s, a, spec, pending, rnd):
                              "nothing was kept. Include each required theorem with exactly its statement and a complete proof "
                              "from your helper lemmas."})
             continue
-        prose = text[: m.start()].strip()[-3000:]
+        prose = architecture_prose(replies)
         s.targets.update(helpers)
         for h in helpers:
             s.level[h] = 1
         for h in helpers:
             s.plan_for[h] = prose
-        (s.out / f"arch_{rnd}.md").write_text(text)
+        (s.out / f"arch_{rnd}.md").write_text("\n\n".join(replies))
         s.log(kind="architect", round=rnd, attempt=tries, model=model, helpers=helpers, derived=derived,
               prose=prose[:3000], code=m.group(1)[:8000])
         print(f"[architect {rnd}] derived {derived}, helpers {helpers}", flush=True)

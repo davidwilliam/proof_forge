@@ -185,7 +185,8 @@ def test_architect_reverts_code_that_does_not_compile_and_keeps_a_fix():
         print("skip (no Lean image)")
         return
     s = session()
-    replies = [reply("```lean\ntheorem arch0_core : Conserves step ∧ (1 : Nat) = true := by sorry\n```"), reply(SKELETON)]
+    replies = [reply("Plan: conservation follows from one core lemma.\n\n```lean\ntheorem arch0_core : Conserves step ∧ (1 : Nat) = true := by sorry\n```"),
+               reply(SKELETON.replace("Plan: one helper carries the statement.", "Fixed the statement."))]
     try:
         with patch.object(repair.Session, "call", lambda self, *x, **k: replies.pop(0)):
             helpers, derived = repair.architect(s, args(), repair.spec_text(s), ["req_conservation"], 0)
@@ -197,8 +198,22 @@ def test_architect_reverts_code_that_does_not_compile_and_keeps_a_fix():
         assert st["req_conservation"] == "SORRY" and "ERROR" not in st.values(), st
         assert repair.own_sorry_free(s, "req_conservation") and repair.pending_deps(s, "req_conservation") == ["arch0_core"]
         assert (s.out / "arch_0.md").exists()
+        plan = s.plan_for["arch0_core"]   # the correction does not replace the plan
+        assert plan.startswith("Plan: conservation follows from one core lemma.") and "Fixed the statement." in plan, plan
     finally:
         close(s)
+
+
+def test_architecture_prose_keeps_the_plan_and_adds_corrections():
+    replies = ["The plan: an invariant and one lemma per operation.\n```lean\ntheorem a : True := trivial\n```",
+               "```lean\ntheorem a : True := trivial\n```",
+               "Fixed a rewrite direction.\n```lean\ntheorem a : True := trivial\n```"]
+    got = repair.architecture_prose(replies)
+    assert got.startswith("The plan: an invariant and one lemma per operation."), got
+    assert got.endswith("Revision after compiler feedback: Fixed a rewrite direction."), got
+    assert repair.architecture_prose(["```lean\nx\n```"]) == ""
+    long = repair.architecture_prose(["p" * 5000 + "\n```lean\nx\n```", "fix\n```lean\nx\n```"])
+    assert len(long) <= 3000 and long.endswith("fix")
 
 
 def test_planner_failure_ends_the_plan_without_more_retries():
