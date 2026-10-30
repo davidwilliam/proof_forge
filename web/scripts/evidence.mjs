@@ -55,6 +55,7 @@ function passport(ref) {
 }
 
 function realCode(f) {
+  if (!f.realCode) return null;
   const r = readExact(f.realCode.report);
   const rows = f.realCode.rows.map((row) => ({
     code: row.label,
@@ -65,7 +66,8 @@ function realCode(f) {
     note: row.note,
   }));
   // Totals come from the report, not the data module.
-  const total = f.key === "cetus" ? r.cases : f.key === "euler" ? r.versions.b1ee326.sequences : f.key === "hundred" ? r.comparison.cases : f.realCode.total;
+  const totals = { cetus: () => r.cases, euler: () => r.versions.b1ee326.sequences, hundred: () => r.comparison.cases, balancer: () => r.comparison.batches };
+  const total = totals[f.key] ? totals[f.key]() : f.realCode.total;
   return { summary: f.realCode.short, result: f.realCode.result, method: f.realCode.how, unit: f.realCode.unit, total, results: rows, report: f.realCode.report, witnesses_checked_in_lean: f.realCode.confirmedInLean };
 }
 
@@ -76,9 +78,12 @@ function flagship(f) {
     incident: f.incident,
     date: f.date,
     system: f.system,
+    domain: f.domain,
     language: f.language,
+    reconstructed: f.reconstruction ?? undefined,
     loss: { amount: f.loss.amount, basis: f.loss.basis, sources: f.loss.citations, quoted_from: `${f.task}/README.md` },
     bug: f.bug,
+    context: f.context ?? undefined,
     property_proved: { text: f.property, requirement: f.propertyId },
     task: f.task,
     readme: `${f.task}/README.md`,
@@ -92,6 +97,7 @@ function flagship(f) {
     muse_repair: {
       model: f.repair.model,
       tier: f.repair.tier,
+      planner: f.repair.planner,
       arm: f.repair.arm,
       attempt: f.repair.attempt,
       change: f.repair.change,
@@ -102,21 +108,25 @@ function flagship(f) {
       usd_list_price: run.usdList,
       usd_charged: run.usdCharged,
       passport: passport(f.repair.passport),
+      reproduced_by: f.repair.verifyLog,
     },
+    unresolved_attempts: f.unresolved.length
+      ? f.unresolved.map((u) => ({ attempt: u.label, run: u.run, required_theorems_proved: u.proved, stopped_by: u.stop, passport: passport(u.passport) }))
+      : undefined,
     versions: f.timeline.length
       ? f.timeline.map((v) => ({ version: v.title, detail: v.detail, commit: v.commit, merged: v.merged ?? undefined, code: v.code, verdict: v.verdict, finding: v.finding, passport: passport(v.passport) }))
       : undefined,
     muse_repair_equivalent_to_upstream_fix: f.equivalence ?? undefined,
     attack: f.attack.length ? f.attack.map((s, i) => ({ step: i + 1, ...s })) : undefined,
     kernel_checked_outcome: f.outcome || undefined,
-    real_code: realCode(f),
+    real_code: realCode(f) ?? "none: the code is not public",
     not_proved: f.limits,
   };
 }
 
 const flagships = F.FLAGSHIPS.map(flagship);
 const notClaimed = [
-  "The Solidity and Move code are not themselves proved. Each incident's Lean 4 port is a reviewed hand translation, tested against the real code on the stated inputs; the translation is not machine-checked.",
+  "The deployed Solidity and Move code is not itself proved. Each incident's Lean 4 port is a reviewed hand translation, tested against the real code on the stated inputs; the translation is not machine-checked.",
   "A requirement covers exactly what its Lean statement says. Each port models only the logic named in its task README.",
   "Loss figures are quoted from the sources each task README cites.",
   "The JSON wrapper around each proved function is tested, not proved.",
@@ -134,6 +144,7 @@ const evidence = {
     judge: "lake comparator --paranoid in a fresh bubblewrap sandbox with six kernels (Lean default and paranoid, lean4lean, nanoda, con-leche, con-ron), then leanchecker and an axiom audit; the executable rebuilt from the same source runs generated property cases",
     statuses: ["VERIFIED", "REFUTED", "UNRESOLVED"],
   },
+  loss_total: { phrase: F.lossTotalPhrase(), usd_millions_rounded_down: F.lossTotalMillions(), note: "the sum of the loss figures quoted for the incidents, each rounded down; the figures measure different things (taken, net profit to the attacker, realized loss), as each states" },
   flagships,
   implements: F.IMPLEMENTS ?? undefined,
   implemented_flagships: F.IMPLEMENTED_FLAGSHIPS.map((i) => ({
@@ -181,23 +192,33 @@ function llms() {
   const L = [];
   L.push("# ProofForge", "", `> ${F.HEADLINE} ${F.SUMMARY}`, "");
   L.push(
-    `${count(flagships.length)} real exploits, each repaired by Muse Spark 1.3 (Meta) and checked by ProofForge. Machine-readable version: /evidence.json. Source: ${F.REPO_URL}`,
+    `${count(flagships.length)} real financial failures with ${F.lossTotalPhrase()} taken or lost, as the cited sources report. Each vulnerable version is refuted by a kernel-checked counterexample, and each was repaired by Muse Spark 1.3 (Meta), with Muse Wonder 1.0 planning where stated, and checked by ProofForge. Machine-readable version: /evidence.json. Source: ${F.REPO_URL}`,
     "",
   );
   for (const f of flagships) {
     L.push(`## ${f.incident}, ${f.date}`, "");
+    if (f.reconstructed) L.push(`- Reconstructed: ${f.reconstructed}`);
     L.push(`- Loss: ${f.loss.amount} ${f.loss.basis}. Sources: ${f.loss.sources.map((s) => s.url).join(", ")}`);
     L.push(`- Bug: ${f.bug}`);
+    if (f.context) L.push(`- Context: ${f.context}`);
     L.push(`- Property proved in Lean 4 (${f.property_proved.requirement}): ${f.property_proved.text}`);
     const vp = f.vulnerable_code.passport;
     L.push(`- Vulnerable code (${f.vulnerable_code.label}): ${f.vulnerable_code.verdict}. ${f.vulnerable_code.finding} Kernel-checked counterexample: ${f.vulnerable_code.kernel_checked_counterexample}${vp ? `. Passport ${vp.sha256} (${vp.path})` : ""}`);
     for (const v of f.versions ?? []) if (v.passport.sha256 !== vp?.sha256 && v.passport.sha256 !== f.muse_repair.passport.sha256) L.push(`- ${v.version} (${v.detail}): ${v.verdict}. ${v.finding} Passport ${v.passport.sha256} (${v.passport.path})`);
     const m = f.muse_repair;
     const reqs = Object.keys(m.passport.requirements).length;
-    L.push(`- Muse repair: ${m.verdict}, ${reqs} of ${reqs} requirements, ${m.passport.kernels} kernels, ${m.passport.property_cases} property cases; attempt ${m.attempt}, ${m.seconds} s, ${m.model_calls} model calls, $${m.usd_list_price} at list prices, $${m.usd_charged} charged. Passport ${m.passport.sha256} (${m.passport.path})`);
+    L.push(`- Muse repair${m.planner ? `, planned by ${m.planner}` : ""}: ${m.verdict}, ${reqs} of ${reqs} requirements, ${m.passport.kernels} kernels, ${m.passport.property_cases} property cases; attempt ${m.attempt}, ${m.seconds} s, ${m.model_calls} model calls, $${m.usd_list_price} at list prices, $${m.usd_charged} charged. Passport ${m.passport.sha256} (${m.passport.path})`);
     const eq = f.muse_repair_equivalent_to_upstream_fix;
     if (eq) L.push(`- Proved separately (${eq.file}, axioms ${eq.axioms}): ${eq.theorem}`);
+    for (const u of f.unresolved_attempts ?? [])
+      L.push(`- Earlier attempt ${u.attempt}: ${u.passport.status}; its executable ${u.passport.executable === "PASS" ? `passed all ${u.passport.property_cases} property cases` : u.passport.executable}, but it proved ${u.required_theorems_proved} of ${reqs} requirements before its ${u.stopped_by}, so no VERIFIED Passport. Passport ${u.passport.sha256} (${u.passport.path})`);
     L.push(`- Reproduce: ${m.passport.reproduce}`);
+    if (typeof f.real_code === "string") {
+      L.push(`- Real code: ${f.real_code}`);
+      L.push(`- Not proved: ${f.not_proved.join(" ")}`);
+      L.push(`- Task: ${f.readme}`, "");
+      continue;
+    }
     L.push(`- Real code: ${f.real_code.method}`);
     for (const r of f.real_code.results) {
       const u = f.real_code.unit;
