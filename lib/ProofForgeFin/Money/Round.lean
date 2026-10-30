@@ -272,10 +272,15 @@ def rdiv : RoundingMode → Int → Int → Int
   | .halfCeil, n, d => divHalfCeil n d
   | .halfFloor, n, d => divHalfFloor n d
 
+/-- `floor` is Lean's division `n / d`. -/
 @[simp] theorem rdiv_floor (n d : Int) : rdiv .floor n d = n / d := rfl
+/-- `ceil` is `divCeil`. -/
 @[simp] theorem rdiv_ceil (n d : Int) : rdiv .ceil n d = divCeil n d := rfl
+/-- `halfEven` is `divHalfEven`. -/
 @[simp] theorem rdiv_halfEven (n d : Int) : rdiv .halfEven n d = divHalfEven n d := rfl
+/-- `halfCeil` is `divHalfCeil`. -/
 @[simp] theorem rdiv_halfCeil (n d : Int) : rdiv .halfCeil n d = divHalfCeil n d := rfl
+/-- `halfFloor` is `divHalfFloor`. -/
 @[simp] theorem rdiv_halfFloor (n d : Int) : rdiv .halfFloor n d = divHalfFloor n d := rfl
 
 /-- `towardZero` is `floor` on a nonnegative numerator. -/

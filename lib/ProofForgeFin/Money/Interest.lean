@@ -71,13 +71,17 @@ def compoundUp (rn rd : Nat) : Nat → Nat → Nat
   | 0, P => P
   | n + 1, P => compoundUpStep rn rd (compoundUp rn rd n P)
 
+/-- No period of compounding leaves the principal. -/
 @[simp] theorem compound_zero (rn rd P : Nat) : compound rn rd 0 P = P := rfl
 
+/-- One more period adds the interest on the balance, rounded down. -/
 @[simp] theorem compound_succ (rn rd n P : Nat) :
     compound rn rd (n + 1) P = compound rn rd n P + compound rn rd n P * rn / rd := rfl
 
+/-- No period of compounding leaves the principal. -/
 @[simp] theorem compoundUp_zero (rn rd P : Nat) : compoundUp rn rd 0 P = P := rfl
 
+/-- One more period adds the interest on the balance, rounded up. -/
 @[simp] theorem compoundUp_succ (rn rd n P : Nat) :
     compoundUp rn rd (n + 1) P = compoundUp rn rd n P + ceilDiv (compoundUp rn rd n P * rn) rd := rfl
 
