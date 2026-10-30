@@ -5,6 +5,7 @@ import ProofForgeFin.Evm.FullMath
 import ProofForgeFin.Evm.FixedQ
 import ProofForgeFin.Evm.SqrtPrice
 import ProofForgeFin.Evm.Signed
+import ProofForgeFin.Evm.Pow
 /-!
 # EVM and machine arithmetic
 
@@ -24,4 +25,6 @@ Machine words as `BitVec w`, with every result characterized through `toNat` in 
   and `getNextSqrtPriceFromAmount0RoundingUp`, with exact rounding bounds.
 * `ProofForgeFin.Evm.Signed`: truncated, floor and ceiling integer division and their bounds;
   checked `intN` arithmetic, `SafeCast` conversions, `SignedMath.abs`, `LiquidityMath.addDelta`.
+* `ProofForgeFin.Evm.Pow`: fixed-point exponentiation by squaring (`rpow`) with each rounding,
+  an invariant principle for it, and error bounds.
 -/
