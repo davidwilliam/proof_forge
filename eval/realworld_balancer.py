@@ -151,9 +151,8 @@ def forge_project():
     return d
 
 
-def run_real(cases):
-    d = forge_project()
-    (d / "io" / "setup.txt").write_text("".join(f"{i} {j} {a}\n" for i, j, a in SETUP))
+def run_chunk(d, cases):
+    """One forge run (a fresh fork) on `cases`; returns the header, start states and outputs."""
     (d / "io" / "cases.txt").write_text("".join(encode(c) + "\n" for c in cases))
     (d / "io" / "out.txt").unlink(missing_ok=True)
     r = sh(["forge", "test", "--match-test", "test_replay"], cwd=d, env={**os.environ, "PF_ETH_RPC": RPC}, timeout=7200)
@@ -174,6 +173,25 @@ def run_real(cases):
             cur = []
             continue
         cur.append({"ok": f[0] == "1", "quote": int(f[1]) if f[0] == "1" else None, "balances": [int(f[2]), int(f[3])]})
+    if len(outs) != len(cases):
+        raise RuntimeError(f"forge reported {len(outs)} batches for {len(cases)}")
+    return pool, starts, outs
+
+
+def run_real(cases, chunk=100):
+    """Every batch on the deployed contracts, in forge runs of `chunk` batches (each a fresh fork
+    of the same state; one run holds all its output in EVM memory)."""
+    d = forge_project()
+    (d / "io" / "setup.txt").write_text("".join(f"{i} {j} {a}\n" for i, j, a in SETUP))
+    pool = starts = None
+    outs = []
+    for k in range(0, len(cases), chunk):
+        p, s, o = run_chunk(d, cases[k:k + chunk])
+        if pool is None:
+            pool, starts = p, s
+        elif (p, s) != (pool, starts):
+            raise RuntimeError("the fork's pool parameters or start states differ between runs")
+        outs += o
     return pool, starts, outs, sh(["forge", "--version"]).stdout.splitlines()[0]
 
 
@@ -267,7 +285,9 @@ def main():
     rep = {"batches": len(cases), "documented": len(documented), "swaps": sum(len(c["swaps"]) for c in cases),
            "real_same_as_port": 0, "real_differs_from_port": [], "real_same_as_proved": 0,
            "swaps_real_charged_less_than_proved": 0, "batches_lowering_D_real": 0, "batches_lowering_D_proved": 0,
-           "batches_lowering_rate_real": 0, "documented_results": [], "witnesses": []}
+           "batches_lowering_rate_real": 0, "batches_ok_real": 0, "batches_ok_proved": 0,
+           "by_start": {k: {"batches": 0, "ok_real": 0, "D_falls_real": 0, "rate_falls_real": 0} for k in (0, 1)},
+           "documented_results": [], "witnesses": []}
     for i, (c, r, p, q) in enumerate(zip(cases, real, port_outs, ref_outs)):
         rs = [(s["ok"], s["quote"], s["balances"]) for s in r["steps"]]
         ps = [(s["ok"], s["quote"] if s["ok"] else None, s["balances"]) for s in p.get("steps", [])]
@@ -286,14 +306,23 @@ def main():
         b1 = tuple(r["steps"][-1]["balances"]) if ok and r["steps"] else b0
         d0, d1 = D.get(b0), D.get(b1)
         lowered = d0 is not None and d1 is not None and d1 < d0
+        bs = rep["by_start"][c["start"]]
+        bs["batches"] += 1
+        if ok:
+            rep["batches_ok_real"] += 1
+            bs["ok_real"] += 1
+        if q.get("ok"):
+            rep["batches_ok_proved"] += 1
         if lowered:
             rep["batches_lowering_D_real"] += 1
+            bs["D_falls_real"] += 1
         if q.get("ok") and q.get("value_before") is not None and q.get("value_after") is not None and \
                 q["value_after"] < q["value_before"]:
             rep["batches_lowering_D_proved"] += 1
         r0 = starts[c["start"]]["rate"]
         if ok and r0 is not None and r["rate_after"] is not None and r["rate_after"] < r0:
             rep["batches_lowering_rate_real"] += 1
+            bs["rate_falls_real"] += 1
         if i < len(documented):
             rep["documented_results"].append({
                 "case": i, "label": c["label"], "swaps": len(c["swaps"]),

@@ -60,6 +60,7 @@ interface IPool {
     function getScalingFactors() external view returns (uint256[] memory);
     function getSwapFeePercentage() external view returns (uint256);
     function getAmplificationParameter() external view returns (uint256, bool, uint256);
+    function updateTokenRateCache(address token) external;
 }
 
 /// Runs swap batches through Balancer V2's deployed Vault and the deployed osETH/WETH Composable
@@ -72,7 +73,8 @@ interface IPool {
 /// attack's first 22 swaps, which bring the pool to 67,000 wei of each token).
 ///
 /// io/cases.txt: one batch per line, `start n k1 i1 j1 a1 ... kn in jn an`. `start` 0 is the
-/// state after the setup batch, 1 the state before it (the fork itself). Kind k is 0 for
+/// state after the setup batch, 1 the state before it (the fork itself, with the pool's expired
+/// osETH rate cache refreshed). Kind k is 0 for
 /// GIVEN_IN and 1 for GIVEN_OUT; tokens i and j are 0 for WETH and 1 for osETH.
 ///
 /// io/out.txt: a header line `pool ...` with the scaling factors, fee and amplification, a line
@@ -168,8 +170,10 @@ contract Replay is Test {
         IERC20(WETH).approve(address(VAULT), type(uint256).max);
         IERC20(OSETH).approve(address(VAULT), type(uint256).max);
         IERC20(POOL).approve(address(VAULT), type(uint256).max);
-        // State 1 is the fork itself. The setup batch's first swap refreshes the pool's cached
-        // osETH rate, as the attack's first swap did, so the scaling factors are read after it.
+        // State 1 is the fork itself, with the pool's cached osETH rate refreshed (it had expired;
+        // the attack's first swap refreshed it the same way), so that getRate() before and after a
+        // batch uses the same scaling factors.
+        IPool(POOL).updateTokenRateCache(OSETH);
         snap1 = vm.snapshotState();
         string memory state1 = stateLine(1, rateString());
         setupBatch();
