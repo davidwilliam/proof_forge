@@ -84,7 +84,15 @@ def check_binary(arg, n_cases=2000, seed=0, task=None):
     task = task or taskmod.load()
     ws = judge.load_workspace(arg)
     files = judge.candidate_files(ws)
-    project = judge.fresh_project(ws, files, task)
+    try:
+        project = judge.fresh_project(ws, files, task)
+    except RuntimeError as e:   # the ProofForgeFin build failed or was stopped by the time limit
+        f = judge.setup_failure(e)
+        timed_out = f["exit_code"] == 124
+        return {"task": task.id, "candidate": str(arg), "cases": 0, "violations": {}, "witnesses": [],
+                "build": {"exit_code": f["exit_code"], "elapsed_ms": 0, "output_tail": f["output_tail"]},
+                "status": "TIMEOUT" if timed_out else "BUILD_FAILED",
+                "elapsed_ms": int((time.monotonic() - t0) * 1000)}
     b = build(project, task)
     result = {"task": task.id, "candidate": str(arg),
               "build": {k: b[k] for k in ("exit_code", "elapsed_ms")},

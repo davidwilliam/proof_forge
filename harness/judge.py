@@ -3,8 +3,11 @@
 
 Pipeline:
   1. tree check       protected files in the workspace match spec/locked.json
-  2. impl scan        candidate source has no code overrides or meta-programming
-  3. fresh container  locked project + candidate files only, never built before
+  2. impl scan        candidate source has no code overrides or meta-programming; the
+                      ProofForgeFin modules it imports, transitively, pass the library scan
+  3. fresh container  locked project + candidate files only, never built before; ProofForgeFin
+                      vendored from the committed lib/ sources when the candidate imports it
+                      (harness/fin_lib.py)
   4. comparator       `lake comparator --paranoid` with bubblewrap: Lean default and
                       paranoid kernels plus lean4lean, nanoda, con-leche, con-ron
                       (mandatory for VERIFIED)
@@ -30,12 +33,39 @@ FORBIDDEN = [
     r"\belab\b", r"\bsyntax\b", r"\binitialize\b", r"\bbuiltin_initialize\b",
     r"#eval", r"\brun_cmd\b", r"\brun_elab\b", r"\brun_meta\b", r"\bnative_decide\b",
     r"\bset_option\b", r"\bopaque\b", r"\baxiom\b", r"@\[\s*csimp",
+    # Metaprograms: importing ProofForgeFin brings `Lean` (its tactics are metaprograms) into
+    # scope, so every way for candidate code to define or run elaboration-time code is refused.
+    r"\belab_rules\b", r"\bmacro_rules\b", r"\brun_tac\b", r"\bby_elab\b", r"\bd?simprocs?\w*",
+    r"\bsevalprocs?\b", r"\bregister_\w+", r"\bdeclare_\w+", r"\bbuiltin_\w+", r"(?m)^\s*module\b",
+    r"\bmeta\s+(?:def|import|theorem|instance|section|structure|inductive|abbrev|partial)\b",
 ]
+# Attributes that register code run during elaboration or compilation (`implemented_by`, `extern`,
+# `export` and `csimp` are matched by FORBIDDEN above).
+FORBIDDEN_ATTRS = {
+    "tactic", "term_elab", "command_elab", "macro", "elab", "delab", "app_delab", "app_unexpander", "init",
+    "simproc", "dsimproc", "sevalproc", "env_extension",
+    "code_action_provider", "command_code_action", "hole_code_action", "widget_module",
+    "term_parser", "tactic_parser", "command_parser", "combinator_formatter", "combinator_parenthesizer",
+    "category_parenthesizer", "category_formatter", "run_builtin_parser_attribute_hooks",
+    "run_parser_attribute_hooks", "cpass", "incremental", "deriving_handler",
+}
+FORBIDDEN_ATTR_RE = re.compile(r"^(builtin_\w*|\w*_(elab|parser|formatter|parenthesizer|delab|unexpander|hooks)|\w*proc)$")
+
+
+def attribute_problems(code):
+    """Attribute names in `@[...]` and `attribute [...]` that register or replace code."""
+    out = []
+    for m in re.finditer(r"(?:@\[|\battribute\s*\[)([^\]]*)\]", code):
+        for part in m.group(1).split(","):
+            words = [w for w in re.findall(r"[\w.]+", part) if w not in ("local", "scoped")]
+            if words and (words[0] in FORBIDDEN_ATTRS or FORBIDDEN_ATTR_RE.match(words[0])):
+                out.append((m.start(), words[0]))
+    return out
 
 
 def allowed_imports(task):
     lib = re.escape(task.lib)
-    return re.compile(rf"^({lib}\.Spec|{lib}\.Lemmas|Init(\..+)?|Std(\..+)?)$")
+    return re.compile(rf"^({lib}\.Spec|{lib}\.Lemmas|Init(\..+)?|Std(\..+)?|ProofForgeFin(\..+)?)$")
 
 
 def sha256_bytes(b: bytes) -> str:
@@ -151,6 +181,8 @@ def impl_scan(files, task) -> dict:
             for m in re.finditer(pat, code):
                 line = code[: m.start()].count("\n") + 1
                 problems.append(f"{f.name}:{line}: forbidden construct `{m.group(0)}`")
+        for pos, name in attribute_problems(code):
+            problems.append(f"{f.name}:{code[:pos].count(chr(10)) + 1}: forbidden attribute `{name}`")
         for m in re.finditer(r"^\s*import\s+(\S+)", code, flags=re.M):
             if not allowed_imports(task).match(m.group(1)):
                 problems.append(f"{f.name}: import not allowed: {m.group(1)}")
@@ -162,7 +194,8 @@ def impl_scan(files, task) -> dict:
 
 
 def fresh_project(ws: pathlib.Path, files, task) -> pathlib.Path:
-    """Locked project files from the repository + the candidate files, nothing else."""
+    """Locked project files from the repository + the candidate files, and ProofForgeFin when a
+    candidate file imports it; nothing else."""
     d = pathlib.Path(tempfile.mkdtemp(prefix="pf-judge-"))
     for rel in taskmod.PROJECT_FILES:
         src = task.root / rel
@@ -174,6 +207,10 @@ def fresh_project(ws: pathlib.Path, files, task) -> pathlib.Path:
         dst = d / f.relative_to(ws)
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(f, dst)
+    # ProofForgeFin, only when a candidate file imports it (harness/fin_lib.py); otherwise the
+    # project is exactly the locked files and the candidate.
+    import fin_lib
+    fin_lib.vendor(d, files)
     return d
 
 
@@ -253,6 +290,15 @@ def in_container(project: pathlib.Path, script: str, timeout=900):
                    on_timeout=lambda: subprocess.run(["docker", "kill", name], capture_output=True))
 
 
+def setup_failure(err) -> dict:
+    """A run record for a fresh project that could not be set up (the ProofForgeFin build
+    failed or was stopped by the time limit): exit 124 when the time limit stopped it."""
+    msg = str(err)
+    return {"command": ["harness/fin_lib.py vendor"], "exit_code": 124 if TIMEOUT_MARK in msg else 1,
+            "elapsed_ms": 0, "stdout_sha256": sha256_bytes(b""), "stderr_sha256": sha256_bytes(msg.encode()),
+            "output_tail": msg[-4000:]}
+
+
 def parse_axioms(output: str, task) -> dict:
     """Map each required theorem to the axioms `#print axioms` reports for it."""
     out = {}
@@ -284,10 +330,21 @@ def judge(arg: str, scan: bool = True, task=None) -> dict:
         c["tree"]["passed"] = False
         c["tree"]["problems"].append("no candidate/Solution.lean")
     c["impl_scan"] = impl_scan(files, task) if scan else {"passed": True, "problems": [], "skipped": True}
+    # The library version this candidate is judged with; the library modules it imports,
+    # transitively, must pass the library scan.
+    import fin_lib
+    result["library"] = fin_lib.record(files)
+    if result["library"]["vendored"]:
+        c["library_scan"] = result["library"]["scan"]
 
-    gate_ok = c["tree"]["passed"] and c["impl_scan"]["passed"]
+    gate_ok = c["tree"]["passed"] and c["impl_scan"]["passed"] and c.get("library_scan", {"passed": True})["passed"]
+    project = None
     if gate_ok:
-        project = fresh_project(ws, files, task)
+        try:
+            project = fresh_project(ws, files, task)
+        except RuntimeError as e:   # the library could not be built or copied
+            c["comparator"] = setup_failure(e)
+    if project is not None:
         c["comparator"] = in_container(
             project, "lake comparator --paranoid --config spec/comparator.json")
         if c["comparator"]["exit_code"] == 0:
@@ -320,7 +377,8 @@ if __name__ == "__main__":
     if a.json:
         pathlib.Path(a.json).write_text(json.dumps(r, indent=2) + "\n")
     verdict = "ACCEPTED" if r["accepted"] else "REJECTED"
-    reasons = r["checks"]["tree"]["problems"] + r["checks"]["impl_scan"]["problems"]
+    reasons = (r["checks"]["tree"]["problems"] + r["checks"]["impl_scan"]["problems"]
+               + r["checks"].get("library_scan", {}).get("problems", []))
     if "comparator" in r["checks"] and r["checks"]["comparator"]["exit_code"] != 0:
         reasons.append(f"comparator exit {r['checks']['comparator']['exit_code']}")
     if "leanchecker" in r["checks"] and r["checks"]["leanchecker"]["exit_code"] != 0:
