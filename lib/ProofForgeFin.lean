@@ -3,6 +3,7 @@ import ProofForgeFin.FixedPoint
 import ProofForgeFin.Word
 import ProofForgeFin.Shares
 import ProofForgeFin.Seq
+import ProofForgeFin.Ledger
 /-!
 # ProofForgeFin
 
@@ -16,4 +17,5 @@ no dependency beyond the Lean core library.
 * `ProofForgeFin.Shares`: vault share conversions and share value.
 * `ProofForgeFin.Seq`: runs of operations, traces, atomic runs, reachable states, invariants and
   accumulated bounds.
+* `ProofForgeFin.Ledger`: sums over accounts and conservation under transfers, mints and burns.
 -/
