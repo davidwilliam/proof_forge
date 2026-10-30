@@ -94,6 +94,59 @@ def test_malformed_tool_arguments_return_an_error_to_the_model():
     assert s.budget.lost_attempts == 0 and s.version == 0     # nothing written
 
 
+def timed_session(wall):
+    out = pathlib.Path(tempfile.mkdtemp(prefix="pf-drill-"))
+    t = taskmod.load()
+    return repair.Session(t, MODEL, t.start, out, budget.Budget(5.0, wall))
+
+
+OK_REPLY = {"choices": [{"message": {"content": "done"}}], "usage": {"prompt_tokens": 10, "completion_tokens": 5}}
+
+
+def test_attempt_timeout_before_the_deadline_is_retried_not_a_wall_stop():
+    s = timed_session(3600)
+    replies = [meta_client.DeadlineReached("no complete response within 600.0 s"), OK_REPLY]
+    def fake_chat(*a, **k):
+        r = replies.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+    with patch.object(repair, "chat", fake_chat):
+        r, u = s.call(MODEL, [{"role": "user", "content": "x"}], "drill")
+    assert r is OK_REPLY and s.budget.stop is None
+    assert s.budget.lost_attempts == 1   # the timed-out attempt keeps its worst-case charge
+    assert any(e["kind"] == "api_error" and "attempt timeout" in e["body"] for e in s.events)
+
+
+def test_persistent_attempt_timeouts_raise_a_transient_error():
+    s = timed_session(3600)
+    def fake_chat(*a, **k):
+        raise meta_client.DeadlineReached("no complete response within 600.0 s")
+    with patch.object(repair, "chat", fake_chat):
+        try:
+            s.call(MODEL, [{"role": "user", "content": "x"}], "drill", attempts=2)
+            raise AssertionError("expected an APIError")
+        except budget.BudgetExceeded:
+            raise AssertionError("a per-attempt timeout must not be a wall stop")
+        except meta_client.APIError as e:
+            assert e.status == 0
+    assert s.budget.stop is None and s.budget.lost_attempts == 2
+
+
+def test_reaching_the_run_deadline_is_the_wall_stop():
+    s = timed_session(3600)
+    def fake_chat(*a, **k):
+        s.budget.t0 -= 3600   # the run's deadline passes while the request is open
+        raise meta_client.DeadlineReached()
+    with patch.object(repair, "chat", fake_chat):
+        try:
+            s.call(MODEL, [{"role": "user", "content": "x"}], "drill")
+            raise AssertionError("expected the wall stop")
+        except budget.BudgetExceeded as e:
+            assert str(e) == "wall"
+    assert s.budget.stop == "wall" and s.budget.lost_attempts == 1
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

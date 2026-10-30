@@ -223,7 +223,10 @@ class Session:
         before the deadline. A network failure or timeout leaves the worst case charged (the
         request may have been processed). HTTP failures also retain their reservation:
         an error response does not establish that upstream usage was zero.
-        A response completed after the deadline is discarded."""
+        A response completed after the deadline is discarded. An attempt that ends at its own
+        timeout before the run's deadline is a lost attempt like a network failure (charged at
+        its worst case, retried within `attempts`); only reaching the run's deadline is the
+        wall stop."""
         payload_bytes = len(json.dumps({"messages": messages, "tools": tools}).encode())
         for i in range(attempts):
             mt, to = self.budget.call_limits(model, payload_bytes, len(messages), max_tokens, timeout)
@@ -231,10 +234,16 @@ class Session:
             try:
                 r = chat(model, messages, purpose, tools=tools, max_tokens=mt, timeout=to, retries=0,
                          deadline=self.budget.deadline(), **extra)
-            except DeadlineReached:
+            except DeadlineReached as e:
                 self.budget.lost(tok)
-                self.budget.stop = "wall"
-                raise BudgetExceeded("wall")
+                left = self.budget.remaining_wall()
+                if left is not None and left < 1:
+                    self.budget.stop = "wall"
+                    raise BudgetExceeded("wall")
+                self.log(kind="api_error", status=0, body=f"attempt timeout: {e.body}"[:300], attempt=i)
+                if i < attempts - 1:
+                    continue
+                raise
             except APIError as e:
                 self.budget.lost(tok)
                 if e.status in (0, 429, 500, 502, 503, 504) and i < attempts - 1:
