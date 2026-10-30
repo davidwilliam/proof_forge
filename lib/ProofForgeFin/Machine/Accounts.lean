@@ -281,4 +281,121 @@ theorem sum_map_ite_eq [DecidableEq κ] {l : List κ} (hl : l.Nodup) (x : κ) (c
   · next h => simp only [h, ite_true] at this; exact Int.ofNat.inj this
   · next h => simp only [h, ite_false] at this; exact Int.ofNat.inj this
 
+/-! ## Per-key totals of a list of records
+
+Specifications often keep the facts as a list of records (child orders with their parent and
+executed shares, log entries with their account and amount) and define a per-key total by
+recursion over the list (`sentFor`, `execFor`, `logSum`). `keyTotal key f l j` is that total:
+the sum of `f x` over the records `x` of `l` with `key x = j`. -/
+
+section KeyTotal
+
+variable {ρ : Type v}
+
+/-- The sum of `f x` over the records `x` of `l` whose key is `j`. -/
+def keyTotal [DecidableEq κ] (key : ρ → κ) (f : ρ → Nat) (l : List ρ) (j : κ) : Nat :=
+  (l.map fun x => if key x = j then f x else 0).sum
+
+variable [DecidableEq κ] (key : ρ → κ) (f : ρ → Nat)
+
+/-- No records, no total. -/
+@[simp, machine_simps] theorem keyTotal_nil (j : κ) : keyTotal key f [] j = 0 := rfl
+
+/-- The total of `x :: l`: `f x` if `x` has the key, plus the total of `l`. -/
+@[simp, machine_simps] theorem keyTotal_cons (x : ρ) (l : List ρ) (j : κ) :
+    keyTotal key f (x :: l) j = (if key x = j then f x else 0) + keyTotal key f l j := by
+  simp [keyTotal]
+
+/-- The total of a concatenation. -/
+@[simp, machine_simps] theorem keyTotal_append (l₁ l₂ : List ρ) (j : κ) :
+    keyTotal key f (l₁ ++ l₂) j = keyTotal key f l₁ j + keyTotal key f l₂ j := by
+  simp [keyTotal]
+
+/-- Records with other keys contribute nothing. -/
+theorem keyTotal_eq_zero {l : List ρ} {j : κ} (h : ∀ x ∈ l, key x ≠ j) : keyTotal key f l j = 0 := by
+  induction l with
+  | nil => rfl
+  | cons x l ih =>
+    rw [keyTotal_cons, ite_eq_right_of_eq_false _ _ (eq_false (h x (by simp))),
+      ih (fun y hy => h y (List.mem_cons_of_mem _ hy))]
+
+/-- Records whose field is zero contribute nothing (newly recorded child orders with nothing
+executed yet, for example). -/
+theorem keyTotal_eq_zero_of_field {l : List ρ} (h : ∀ x ∈ l, f x = 0) (j : κ) :
+    keyTotal key f l j = 0 := by
+  induction l with
+  | nil => rfl
+  | cons x l ih =>
+    rw [keyTotal_cons, h x (by simp), ih (fun y hy => h y (List.mem_cons_of_mem _ hy))]; simp
+
+/-- A pointwise bound on the field gives a bound on every per-key total. -/
+theorem keyTotal_le_keyTotal {g : ρ → Nat} {l : List ρ} (h : ∀ x ∈ l, f x ≤ g x) (j : κ) :
+    keyTotal key f l j ≤ keyTotal key g l j :=
+  Ledger.sum_map_le_sum_map l (fun x hx => by split <;> simp [h x hx])
+
+/-- A record's field, when the record has the key, is at most the total. -/
+theorem le_keyTotal {l : List ρ} {x : ρ} (hx : x ∈ l) : f x ≤ keyTotal key f l (key x) := by
+  have := Ledger.le_sum_map (fun y => if key y = key x then f y else 0) hx
+  simp only [ite_true] at this
+  exact this
+
+/-- Replacing the record at position `k`: the new total plus the old record's contribution is the
+old total plus the new record's contribution. -/
+theorem keyTotal_set {l : List ρ} {k : Nat} {x : ρ} (h : l[k]? = some x) (x' : ρ) (j : κ) :
+    keyTotal key f (l.set k x') j + (if key x = j then f x else 0) =
+      keyTotal key f l j + (if key x' = j then f x' else 0) := by
+  induction l generalizing k with
+  | nil => simp at h
+  | cons y l ih =>
+    cases k with
+    | zero =>
+      simp only [List.getElem?_cons_zero, Option.some.injEq] at h
+      subst h
+      simp only [List.set_cons_zero, keyTotal_cons]
+      omega
+    | succ k =>
+      simp only [List.getElem?_cons_succ] at h
+      simp only [List.set_cons_succ, keyTotal_cons]
+      have := ih h
+      omega
+
+/-- Replacing a record by one with the same key and a field larger by `d` raises the total of
+that key by `d` and leaves the other keys unchanged. -/
+theorem keyTotal_set_add {l : List ρ} {k : Nat} {x x' : ρ} (h : l[k]? = some x)
+    (hk : key x' = key x) {d : Nat} (hd : f x' = f x + d) (j : κ) :
+    keyTotal key f (l.set k x') j = keyTotal key f l j + (if key x = j then d else 0) := by
+  have := keyTotal_set key f h x' j
+  rw [hk, hd] at this
+  split at this <;> simp_all <;> omega
+
+/-- Replacing a record by one with the same key and the same field leaves every total unchanged. -/
+theorem keyTotal_set_eq {l : List ρ} {k : Nat} {x x' : ρ} (h : l[k]? = some x)
+    (hk : key x' = key x) (hf : f x' = f x) (j : κ) :
+    keyTotal key f (l.set k x') j = keyTotal key f l j := by
+  rw [keyTotal_set_add key f h hk (d := 0) (by rw [hf]; rfl)]; simp
+
+/-- The total of zero is zero. -/
+theorem sum_map_zero {β : Type u} (l : List β) : (l.map fun _ => (0 : Nat)).sum = 0 := by
+  induction l with
+  | nil => rfl
+  | cons a l ih => simp [ih]
+
+/-- Conservation across keys: summing the per-key totals over a duplicate-free list containing
+every record's key gives the total of the field over all records. -/
+theorem sum_keyTotal {keys : List κ} (hk : keys.Nodup) {l : List ρ} (h : ∀ x ∈ l, key x ∈ keys) :
+    (keys.map (keyTotal key f l)).sum = (l.map f).sum := by
+  induction l with
+  | nil => simp only [List.map_nil, List.sum_nil]; exact sum_map_zero keys
+  | cons x l ih =>
+    have e : keyTotal key f (x :: l) =
+        fun j => (if j = key x then f x else 0) + keyTotal key f l j := by
+      funext j; rw [keyTotal_cons]; by_cases hj : j = key x
+      · subst hj; simp
+      · simp [hj, Ne.symm hj]
+    rw [e, sum_map_add, sum_map_ite_eq hk, ite_eq_left_of_eq_true _ _ (eq_true (h x (by simp))),
+      ih (fun y hy => h y (List.mem_cons_of_mem _ hy))]
+    simp
+
+end KeyTotal
+
 end ProofForgeFin.Machine
