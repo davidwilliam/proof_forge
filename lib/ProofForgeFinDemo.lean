@@ -7,6 +7,7 @@ import ProofForgeFinDemo.Machine
 import ProofForgeFinDemo.Evm
 import ProofForgeFinDemo.Money
 import ProofForgeFinDemo.DeFi
+import ProofForgeFinDemo.Tactic
 /-!
 # ProofForgeFin demonstrations
 
