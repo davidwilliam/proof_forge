@@ -9,6 +9,7 @@ import ProofForgeFin.Machine
 import ProofForgeFin.Evm
 import ProofForgeFin.Money
 import ProofForgeFin.DeFi
+import ProofForgeFin.Tactic
 /-!
 # ProofForgeFin
 
