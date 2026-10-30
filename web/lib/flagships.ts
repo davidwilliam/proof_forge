@@ -985,6 +985,24 @@ export const IMPLEMENTED_FLAGSHIPS: ImplementedFlagship[] = [
       },
       reproduce: "bin/proofforge verify results/balancer-1/implement-2/passport.json --candidate results/balancer-1/implement-2/final.lean",
     },
+  },  {
+    key: "knight",
+    // results/implement-flagships-1/rc-knight-router-A2-1/passport.json and summary.json; arm A2, Muse Wonder 1.0 as planner
+    run: "results/implement-flagships-1/rc-knight-router-A2-1",
+    passport: {
+      path: "results/implement-flagships-1/rc-knight-router-A2-1/passport.json",
+      sha256: "80721c043007d8408614e403852651ec45a4bc4ed0dd2ede71f8900bc28b73ae",
+      status: "VERIFIED",
+      requirements: {
+        "REQ-NORMAL-ORDER-ROUTED": "VERIFIED",
+        "REQ-ROUTES-AVAILABLE": "VERIFIED",
+        "REQ-NEVER-OVERROUTE": "VERIFIED",
+        "REQ-STOP-WHEN-FILLED": "VERIFIED",
+        "REQ-NO-EXCESS-EXECUTION": "VERIFIED",
+        "REQ-FILL-ACCOUNTING": "VERIFIED",
+      },
+      reproduce: "bin/proofforge verify results/implement-flagships-1/rc-knight-router-A2-1/passport.json --candidate results/implement-flagships-1/rc-knight-router-A2-1/final.lean",
+    },
   },
 ];
 
