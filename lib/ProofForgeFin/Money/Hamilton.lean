@@ -5,9 +5,9 @@ import ProofForgeFin.Money.Allocation
 `largestRemainder a rs` is Hamilton apportionment: every party first receives the floor of its
 exact share `a * r / S`, then each leftover unit goes to the party whose share is currently
 furthest below exact, the first such party on ties. A party that has received its extra unit
-is above exact and is not chosen again, so this is the "sort by remainder, largest first, and
-give one unit to each of the first `leftover` parties" loop of moneyphp's `Money::allocate`
-from 3.3 on and of Spliit's fixed split.
+is above exact and is not chosen again while units remain, which is the selection rule of
+moneyphp's `Money::allocate` from 3.2.1 on (pull request 526: the largest fractional parts
+first); the equality with a sort-based implementation is not proved here.
 
 For every amount (negative ones too, under the floor convention of
 `ProofForgeFin.Money.Allocation`) and every ratio list with a positive sum, the result has one

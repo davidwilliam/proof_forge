@@ -14,7 +14,7 @@ allocation methods that hand the leftover units to the first parties:
 
 * `allocFirst a rs`: every party receives the floor `a * r / S`; the leftover
   `a - Σ floors` (between `0` and the number of parties) goes one unit each to the first
-  parties in list order, whatever their ratio. This is moneyphp's `Money::allocate` up to
+  parties in list order, whatever their ratio. This is moneyphp's `Money::allocate` in
   3.0.9, go-money's `Allocate` for a nonnegative amount, and the weighted payout of
   `tasks/payouts-weighted-*`.
 * `allocFirstNonzero a rs`: the same, skipping parties whose ratio is zero (moneyphp 3.1.3
