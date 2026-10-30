@@ -6,7 +6,7 @@ ERC-4626 vaults. It builds on `Rounding`, `FixedPoint`, `Seq`, `Shares` and `Led
 the Lean core library only, and every theorem is proved with no axiom beyond `propext`,
 `Classical.choice` and `Quot.sound`.
 
-Five modules declare 165 theorems and 77 definitions (structures and inductive types included).
+Six modules declare 186 theorems and 96 definitions (structures and inductive types included).
 Four demonstrations under `lib/ProofForgeFinDemo/DeFi/` (95 theorems) re-prove requirements of
 `rw-compound-comp`, `rw-euler-donate`, `rw-hundred-vault` and `rw-balancer-upscale` over
 definitions copied from the task specifications. Each demonstration proves its requirements for
@@ -84,6 +84,23 @@ harvest, and `distributeSupplierComp` do. Emission over zero units is discarded.
 * The proof pieces are reusable for other potentials: `pot_step`, `potTo_step`, `pot_update`,
   `pot_modify`, `term_le_of_settled`, `run_le_of_pot` (the sequence bound for any potential that
   each operation raises by at most `one` times its emission).
+
+## `ProofForgeFin.DeFi.Chef`: MasterChef's `rewardDebt` accounting
+
+A one-pool model of SushiSwap's `MasterChef` (`State`: `accSushiPerShare`, rewards emitted and not
+yet in the index, accounts with `amount`, `rewardDebt` and rewards paid; `step one`: emit,
+`updatePool`, deposit, withdraw, harvest). Every interaction updates the pool, pays
+`amount * index / one - rewardDebt` and records `rewardDebt = amount' * index / one`, both rounded
+down, as the contract does.
+
+* `run_paid_le`: from a state with the invariant `Inv` (no debt above `units * index / one`), for
+  every sequence, `(run s ops).paid ≤ s.paid + s.owed one + allowed ops`, where `allowed` is the
+  rewards emitted plus one unit per deposit or withdrawal. The extra unit per stake change is the
+  rounding that MasterChef's `safeSushiTransfer` ("just in case if rounding error causes pool to
+  not have enough SUSHIs") absorbs.
+* `run_paidTo_le`: the same for each account.
+* Per step: `term_harvest_le` (a harvest keeps the potential term exactly), `term_restake_le` (a
+  stake change raises it by less than one unit), `pot_step`, `potTo_step`, `inv_step`.
 
 ## `ProofForgeFin.DeFi.Lending`: health, liquidation, interest, solvency
 
@@ -227,7 +244,10 @@ Axioms of the main results (`#print axioms`, pinned image):
 'ProofForgeFin.DeFi.Distributor.run_credited_le' depends on axioms: [propext, Quot.sound]
 'ProofForgeFin.DeFi.Distributor.run_creditedTo_le' depends on axioms: [propext, Classical.choice, Quot.sound]
 'ProofForgeFin.DeFi.Distributor.run_creditedTo_le_of_units_eq_zero' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ProofForgeFin.DeFi.Chef.run_paid_le' depends on axioms: [propext, Quot.sound]
+'ProofForgeFin.DeFi.Chef.run_paidTo_le' depends on axioms: [propext, Classical.choice, Quot.sound]
 'ProofForgeFin.DeFi.Lending.reachable_healthy' does not depend on any axioms
+'ProofForgeFin.DeFi.Lending.Params.one_le_healthFactor_iff' depends on axioms: [propext, Quot.sound]
 'ProofForgeFin.DeFi.Lending.Params.Healthy.exact' depends on axioms: [propext, Classical.choice, Quot.sound]
 'ProofForgeFin.DeFi.Lending.Params.seize_value_le' depends on axioms: [propext]
 'ProofForgeFin.DeFi.Lending.Params.liquidate_shortfall_le' depends on axioms: [propext, Quot.sound]
@@ -238,6 +258,8 @@ Axioms of the main results (`#print axioms`, pinned image):
 'ProofForgeFin.DeFi.AMM.amountOut_avg_le' depends on axioms: [propext, Classical.choice, Quot.sound]
 'ProofForgeFin.DeFi.AMM.run_kPerL_of_pos' depends on axioms: [propext, Quot.sound]
 'ProofForgeFin.DeFi.AMM.scaled_dominates' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ProofForgeFin.DeFi.AMM.WellBehaved.scaled_swapOut' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ProofForgeFin.DeFi.AMM.constantProduct_wellBehaved' depends on axioms: [propext, Classical.choice, Quot.sound]
 'ProofForgeFin.DeFi.Vault.maxWithdraw_le_assets' depends on axioms: [propext, Quot.sound]
 'ProofForgeFin.DeFi.Vault.no_zero_shares_of_le' depends on axioms: [propext, Classical.choice, Quot.sound]
 'ProofForgeFin.DeFi.Vault.run_value_oz' depends on axioms: [propext, Classical.choice, Quot.sound]
@@ -249,7 +271,7 @@ Axioms of the main results (`#print axioms`, pinned image):
 ```
 
 With the DeFi modules and demonstrations the audit of the whole library reports
-`audit: 3418 constants, 984 theorems, 0 violations` and `axioms used: [Classical.choice,
+`audit: 3632 constants, 1038 theorems, 0 violations` and `axioms used: [Classical.choice,
 Quot.sound, propext]`, and `tests/test_fin_lib.py` passes.
 
 ## Limits
@@ -257,9 +279,9 @@ Quot.sound, propext]`, and `tests/test_fin_lib.py` passes.
 * Arithmetic is unbounded `Nat`: no overflow of 256-bit words, of the 224-bit Compound index, or of
   Uniswap's 112-bit reserves is modelled; `ProofForgeFin.Word` states when a word operation is
   exact.
-* Rewards: the distributor model has one index; the two-sided Compound case is the demonstration,
-  built from the kit. MasterChef's `rewardDebt` accounting has its per-step lemmas but no sequence
-  model; its sequence bound would add one reward unit per stake change. Reward rates that change
+* Rewards: the distributor and MasterChef models have one index and one pool; the two-sided
+  Compound case is the demonstration, built from the kit. The MasterChef per-account bound counts
+  the stake changes of all accounts, not only the account's own. Reward rates that change
   over time are the emission amounts of `emit`; reward periods, reward tokens that the contract
   does not hold, and transfers of the reward token are not modelled.
 * Lending: one collateral and one debt asset with fixed prices; no oracle, price movement over time,
