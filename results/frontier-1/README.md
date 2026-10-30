@@ -13,7 +13,7 @@ No measured attempt was accepted, so no Passport is VERIFIED and none was reprod
 | Run | Task | Arm | Harness commit | Stopped by | Elapsed s | Proved | List $ | Charged $ | Passport |
 |---|---|---|---|---|---|---|---|---|---|
 | `rc-knight-router/A2-1` | rc-knight-router | A2 | 624796d | dollar cap | 7,275 | 1 of 6 | 9.69 | 2.10 | UNRESOLVED, `3a01b72e0e0cf2fa` |
-| `rw-compound-comp/A2-1` | rw-compound-comp | A2 | 624796d | recorded as wall cap; in fact one request's 600 s timeout (see "Defect") | 5,318 | 0 of 8 | 3.81 | 0.93 | UNRESOLVED, `5306eac95da7f950` |
+| `rw-compound-comp/A2-1` | rw-compound-comp | A2 | 624796d | recorded as wall cap; in fact one request's 600 s timeout (see "Defect") | 5,318 | 0 of 8 | 3.81 | 0.93 | UNRESOLVED, `e94bfd572208431f` |
 
 Per model: Knight A2-1 Spark $8.07 list ($0.48 charged), Wonder $1.62; Compound A2-1 Spark $3.05 list ($0.17 charged), Wonder $0.76.
 
