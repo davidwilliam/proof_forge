@@ -3,6 +3,7 @@ import ProofForgeFinDemo.BatchTransfer
 import ProofForgeFinDemo.Compound
 import ProofForgeFinDemo.Euler
 import ProofForgeFinDemo.Trading
+import ProofForgeFinDemo.Machine
 /-!
 # ProofForgeFin demonstrations
 
