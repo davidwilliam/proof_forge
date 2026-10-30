@@ -3,7 +3,7 @@
 
   proofforge check  --task T [--candidate PATH] [--out passport.json] [--comment comment.md]
                     [--no-counterexample]
-  proofforge verify passport.json --candidate PATH
+  proofforge verify passport.json --candidate PATH [--strict-image]
   proofforge tasks  [--split S]
 
 `check` runs the official pipeline (tree check, implementation scan, Comparator in a fresh
@@ -13,17 +13,22 @@ each refuted requirement's witness becomes a Lean refutation of the locked requi
 by Comparator's kernels, leanchecker and the axiom audit, and recorded under `counterexamples`.
 `verify` re-runs the pipeline on the candidate and compares every recorded hash and status
 with the given Passport; for a Passport with `counterexamples` it re-checks each recorded
-refutation in a fresh container against a challenge regenerated from the locked files. Exit
+refutation in a fresh container against a challenge regenerated from the locked files. It also
+compares the Lean toolchain and the ProofForgeFin library record (whether the library was
+vendored and, if so, its source tree hash, the modules imported and the library scan); a Passport
+without a library record requires a candidate that does not import the library. A Passport whose
+library version is not the checkout's is reproduced with the library sources of the commit it
+records. The judge image digest is reported, and counted as a difference with --strict-image. Exit
 code 0 means VERIFIED (check) or reproduced (verify).
 
 The harness and locked tasks are read from this repository checkout, so in CI it must be a
 trusted checkout (the base branch), with only candidate files taken from the change.
 """
-import argparse, json, pathlib, sys
+import argparse, contextlib, json, pathlib, sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "harness"))
-import counterexample as cexmod, passport, task as taskmod  # noqa: E402
+import counterexample as cexmod, fin_lib, passport, task as taskmod  # noqa: E402
 
 
 def cmd_check(a):
@@ -49,8 +54,29 @@ def cmd_verify(a):
         return 1
     t = taskmod.load(old["task"]["id"])
     cand = pathlib.Path(a.candidate)
+    # The library version the Passport binds. A Passport issued before the library was integrated
+    # has no `library` record; its candidate must not import the library now either. A Passport
+    # whose library version is not this checkout's is reproduced with that version's sources,
+    # extracted from the commit it records, when git has it.
+    lib_old = old.get("library") or {"vendored": False}
+    lib_root = None
+    if lib_old.get("vendored") and lib_old.get("source_tree_sha256") != fin_lib.tree_sha256():
+        if lib_old.get("git_commit"):
+            lib_root = fin_lib.materialize(lib_old["git_commit"], lib_old["source_tree_sha256"])
+        if lib_root:
+            print(f"note  the Passport's library version {lib_old['source_tree_sha256'][:16]} is not this checkout's; "
+                  f"using the library sources of commit {lib_old['git_commit'][:12]}")
+        else:
+            print(f"note  the Passport's library version {lib_old['source_tree_sha256'][:16]} is not this checkout's "
+                  "and no recorded commit provides it; check out the commit that has it")
+    with fin_lib.using(lib_root) if lib_root else contextlib.nullcontext():
+        return _verify(a, old, t, cand, lib_old)
+
+
+def _verify(a, old, t, cand, lib_old):
     new = passport.run(cand, t, cases=old["checks"]["property_tests"]["cases"] - (1 if hasattr(t.oracle, "FLAGSHIP") else 0),
                        seed=old["checks"]["property_tests"].get("seed") or 0)
+    lib_new = new.get("library") or {"vendored": False}
     # An executable's hash depends on the CPU architecture it was built for; compare it only
     # when this machine builds for the Passport's platform. Its test result is always compared.
     old_platform, new_platform = old["executable"].get("platform"), new["executable"].get("platform")
@@ -62,7 +88,20 @@ def cmd_verify(a):
         ("executable tests", old["executable"]["status"], new["executable"]["status"]),
         ("component status", old["status"], new["status"]),
     ] + [(f"{r['id']} status", r["status"], n["status"]) for r, n in zip(old["requirements"], new["requirements"])] \
-      + [(f"{r['id']} statement", r["statement_sha256"], n["statement_sha256"]) for r, n in zip(old["requirements"], new["requirements"])]
+      + [(f"{r['id']} statement", r["statement_sha256"], n["statement_sha256"]) for r, n in zip(old["requirements"], new["requirements"])] \
+      + [("Lean toolchain", old["toolchain"]["lean"], new["toolchain"]["lean"]),
+         ("library vendored", bool(lib_old.get("vendored")), bool(lib_new.get("vendored")))]
+    if lib_old.get("vendored"):
+        checks += [
+            ("library source tree", lib_old.get("source_tree_sha256"), lib_new.get("source_tree_sha256")),
+            ("library imports", lib_old.get("imported"), lib_new.get("imported")),
+            ("library scan", (lib_old.get("scan") or {}).get("passed"), (lib_new.get("scan") or {}).get("passed")),
+        ]
+    # The judge image digest depends on the apt packages at build time, so a rebuilt image can
+    # differ; it is compared and reported, and counted only with --strict-image.
+    old_image, new_image = old["toolchain"].get("judge_image"), new["toolchain"].get("judge_image")
+    if getattr(a, "strict_image", False):
+        checks.append(("judge image", old_image, new_image))
     # A Passport issued with the counterexample stage: re-check every recorded refutation.
     recorded = old.get("counterexamples")
     if recorded:
@@ -89,6 +128,9 @@ def cmd_verify(a):
     elif old_platform is None and old["executable"]["sha256"] != new["executable"]["sha256"]:
         print(f"note  the Passport does not record its build platform; this machine builds for {new_platform}, "
               "and an executable built for another CPU architecture has a different hash")
+    if not getattr(a, "strict_image", False):
+        print(f"{'same' if old_image == new_image else 'note':<9}  judge image: {str(old_image)[:27]}"
+              + ("" if old_image == new_image else f" vs {str(new_image)[:27]} (not counted; --strict-image counts it)"))
     if bad:
         print(f"NOT reproduced: {bad} differences")
     else:
@@ -117,6 +159,8 @@ def main():
     v = sub.add_parser("verify")
     v.add_argument("passport")
     v.add_argument("--candidate", required=True)
+    v.add_argument("--strict-image", action="store_true",
+                   help="count a different judge image digest as a difference")
     s = sub.add_parser("tasks")
     s.add_argument("--split")
     a = ap.parse_args()

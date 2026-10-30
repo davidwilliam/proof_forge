@@ -29,6 +29,23 @@ TRUST = [
     "the judge image (digest recorded below)",
     "the executable wrapper (app/Main.lean) is TESTED_ONLY, not proved",
 ]
+LIBRARY_TRUST = ("the ProofForgeFin library sources at the recorded source tree hash, built in the judge image; "
+                 "its tactics only search for proofs, and Comparator's kernels check every library declaration "
+                 "the required theorems depend on")
+
+
+def library_record(j):
+    """The library version the candidate was judged with (harness/fin_lib.py). When the candidate
+    imports the library, the record also names the image and toolchain the vendored build was
+    made with."""
+    rec = dict(j.get("library") or {"vendored": False})
+    if rec.get("vendored"):
+        import fin_lib
+        built = fin_lib.cache_dir(rec["source_tree_sha256"]) / "built.json"
+        if built.is_file():
+            b = json.loads(built.read_text())
+            rec["built_with"] = {k: b.get(k) for k in ("judge_image", "platform", "lean", "index_sha256")}
+    return rec
 
 
 def reconstruction(task):
@@ -91,7 +108,7 @@ def build(task, candidate, j, b, provenance=None, counterexamples=None):
     component = "VERIFIED" if all(r["status"] == "VERIFIED" for r in reqs) else \
         "REFUTED" if any(r["status"] == "REFUTED" for r in reqs) else "UNRESOLVED"
     c = j["checks"]
-    reasons = c["tree"]["problems"] + c["impl_scan"]["problems"]
+    reasons = c["tree"]["problems"] + c["impl_scan"]["problems"] + (c.get("library_scan") or {}).get("problems", [])
     if c.get("comparator") and c["comparator"]["exit_code"] != 0:
         errs = [l.strip() for l in c["comparator"]["output_tail"].splitlines() if "error" in l.lower()]
         reasons.append(errs[0][:300] if errs else f"comparator exit {c['comparator']['exit_code']}")
@@ -116,8 +133,10 @@ def build(task, candidate, j, b, provenance=None, counterexamples=None):
         "executable": {"target": task.exe, "sha256": b.get("binary_sha256"), "platform": judge.image_platform(),
                        "status": b["status"],
                        "wrapper": "TESTED_ONLY"},
+        "library": library_record(j),
         "checks": {
             "tree": c["tree"], "impl_scan": c["impl_scan"],
+            **({"library_scan": c["library_scan"]} if "library_scan" in c else {}),
             "comparator": check_record(c.get("comparator")),
             "comparator_kernels": re.findall(r"^(.+?) kernel accepts the solution$",
                                              c.get("comparator", {}).get("output_tail", ""), re.M),
@@ -138,10 +157,12 @@ def build(task, candidate, j, b, provenance=None, counterexamples=None):
     }
     if counterexamples is not None:
         p["counterexamples"] = counterexamples
+    if p["library"].get("vendored"):
+        p["trust_assumptions"] = TRUST + [LIBRARY_TRUST]
     note = reconstruction(task)
     if note:
         p["reconstruction"] = note
-        p["trust_assumptions"] = TRUST + [note]
+        p["trust_assumptions"] = p["trust_assumptions"] + [note]
     p["passport_sha256"] = content_hash(p)
     return p
 
@@ -178,6 +199,11 @@ def markdown(p):
             else:
                 lines.append(f"{c['requirement']:<{w}}  not kernel-checked: {c.get('reason')}")
         lines += ["```"]
+    lib = p.get("library") or {}
+    if lib.get("vendored"):
+        lines += ["", f"Library {lib.get('library')} source tree sha256:{lib['source_tree_sha256'][:16]}, imported: "
+                  f"{', '.join(lib.get('imported') or [])} ({lib.get('modules')} modules, library scan "
+                  f"{'passed' if (lib.get('scan') or {}).get('passed') else 'FAILED'})"]
     lines += ["", f"Reproduce: `{p['reproduce']}`"]
     if not p["proof_check"]["accepted"]:
         lines += ["", "Proof check rejected:"] + [f"- {x}" for x in p["proof_check"]["reasons"]]
