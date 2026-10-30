@@ -139,7 +139,7 @@ have e2 := h2.2.2
 subst e1
 subst e2
 revert h1 h2 h3
-decide"""}
+first | decide | decide +kernel"""}
     who = {"REQ-SUPPLY-HOOK": "supplyHook", "REQ-BORROW-HOOK": "borrowHook"}
     if requirement in who:
         # ∀ s who s', comptroller s (.hook who) = some s' → Distributed s who s'
@@ -147,7 +147,7 @@ decide"""}
         if ops[i]["op"] == "transfer":
             targets = [(S, cs[0]), (f"((comptroller {S} {cs[0]}).getD {S})", cs[1])]
         alts = [f"(have hx := h {s} {c.split()[1].rstrip(')')} _ (Option.some_get (by decide)).symm\n"
-                f"     revert hx\n     decide)" for s, c in targets]
+                f"     revert hx\n     first | decide | decide +kernel)" for s, c in targets]
         return {"preamble": INSTANCES, "note": note,
                 "proof": "intro h\nfirst\n" + "\n".join(f"  | {a}" for a in alts)}
     if requirement == "REQ-SET-SPEEDS" and ops[i]["op"] == "setSpeeds":

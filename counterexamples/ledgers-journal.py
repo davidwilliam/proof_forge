@@ -7,9 +7,14 @@ every account or ID (REQ-EFFECTS, REQ-IDEMPOTENCY) are refuted at one of them, t
 REQ-IDEMPOTENCY witness found on the repeated posting is refuted at the state before the first
 posting (the witness's origin).
 """
-from counterexample import int_, lst, nat, struct
+from counterexample import int_, lst, nat, observing, struct
 
-OBSERVE = "fun p : Outcome × State => (p.1, p.2.accounts, p.2.accounts.map p.2.balance, p.2.posted)"
+OBSERVE = [
+    "fun p : Outcome × State => p.1",
+    "fun p : Outcome × State => p.2.accounts",
+    "fun p : Outcome × State => p.2.accounts.map p.2.balance",
+    "fun p : Outcome × State => p.2.posted",
+]
 
 
 def state_term(s):
@@ -44,10 +49,10 @@ def instance(task, requirement, case, out, origin=None):
         if origin:
             S0 = state_term(origin["input"]["state"])
             return {"note": "the repeated posting of the case's entry after it succeeded",
-                    "proof": f"intro h\nhave hx := congrArg ({OBSERVE}) (h {S0} {E} (by decide)).2\nrevert hx\ndecide"}
+                    "proof": f"intro h\nhave hx := (h {S0} {E} (by decide)).2\n" + observing("hx", OBSERVE)}
         ids = sorted({e["id"], *s["posted"], *((out or {}).get("state") or {}).get("posted", [])})
         alts = [f"exact absurd ((hx.1 {nat(x)}).mp) (by decide)" for x in ids]
         alts += [f"exact absurd ((hx.1 {nat(x)}).mpr) (by decide)" for x in ids]
-        alts += [f"(have hy := congrArg ({OBSERVE}) hx.2; revert hy; decide)"]
+        alts += [f"(have hy := congrArg ({o}) hx.2; revert hy; first | decide | decide +kernel)" for o in OBSERVE]
         return {"note": note, "proof": f"intro h\nhave hx := h {S} {E} (by decide)\n" + first(alts)}
     return None

@@ -84,7 +84,7 @@ def instance(task, requirement, case, out):
 have := h _ (cex_reachable_of_run {ops} genesis _ Reachable.genesis
   (Option.some_get (by decide : (runAll step genesis {ops}).isSome = true)).symm) {nat(bad[0])}
 revert this
-decide""",
+first | decide | decide +kernel""",
                     "note": f"the {len(done)} operations that succeed up to step {k} leave account {bad[0]} unhealthy"}
     if requirement == "REQ-HONEST-FLOW":
         return {"args": [], "note": "the honest session"}

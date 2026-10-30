@@ -8,8 +8,13 @@ existential; the proof reads the dequeued value off the outcome the kernel compu
 """
 from counterexample import lst, nat, struct
 
-OBSERVE = ("fun p : Outcome × State => (p.1, p.2.capacity, p.2.head, p.2.count, "
-           "(List.range p.2.capacity).map p.2.buf)")
+OBSERVE = [
+    "fun p : Outcome × State => p.1",
+    "fun p : Outcome × State => p.2.capacity",
+    "fun p : Outcome × State => p.2.head",
+    "fun p : Outcome × State => p.2.count",
+    "fun p : Outcome × State => (List.range p.2.capacity).map p.2.buf",
+]
 
 
 def instance(task, requirement, case, out, origin=None):
@@ -37,5 +42,5 @@ have e := congrArg (fun o : Outcome => match o with | .got y => y | _ => 0) h1
 dsimp only at e
 subst e
 revert h1 h2
-decide"""}
+first | decide | decide +kernel"""}
     return None

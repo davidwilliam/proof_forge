@@ -7,11 +7,16 @@ account (REQ-EFFECTS, REQ-IDEMPOTENCY) are refuted at one account, pair or ID, t
 A REQ-IDEMPOTENCY witness found on the resubmission is refuted at the state before the first
 submission (the witness's origin).
 """
-from counterexample import int_, lst, nat, struct
+from counterexample import int_, lst, nat, observing, struct
 
-OBSERVE = ("fun p : Outcome × State => (p.1, p.2.accounts, p.2.accounts.map p.2.balance, "
-           "p.2.accounts.map p.2.limit, "
-           "p.2.accounts.flatMap (fun a => p.2.accounts.map (fun b => p.2.auth a b)), p.2.applied)")
+OBSERVE = [
+    "fun p : Outcome × State => p.1",
+    "fun p : Outcome × State => p.2.accounts",
+    "fun p : Outcome × State => p.2.accounts.map p.2.balance",
+    "fun p : Outcome × State => p.2.accounts.map p.2.limit",
+    "fun p : Outcome × State => p.2.accounts.flatMap (fun a => p.2.accounts.map (fun b => p.2.auth a b))",
+    "fun p : Outcome × State => p.2.applied",
+]
 
 
 def state_term(s):
@@ -53,10 +58,10 @@ def instance(task, requirement, case, out, origin=None):
         if origin:
             S0 = state_term(origin["input"]["state"])
             return {"note": "the resubmission of the case's request after it succeeded",
-                    "proof": f"intro h\nhave hx := congrArg ({OBSERVE}) (h {S0} {R} (by decide)).2\nrevert hx\ndecide"}
+                    "proof": f"intro h\nhave hx := (h {S0} {R} (by decide)).2\n" + observing("hx", OBSERVE)}
         ids = sorted({r["txId"], *s["applied"], *((out or {}).get("state") or {}).get("applied", [])})
         alts = [f"exact absurd ((hx.1 {nat(x)}).mp) (by decide)" for x in ids]
         alts += [f"exact absurd ((hx.1 {nat(x)}).mpr) (by decide)" for x in ids]
-        alts += [f"(have hy := congrArg ({OBSERVE}) hx.2; revert hy; decide)"]
+        alts += [f"(have hy := congrArg ({o}) hx.2; revert hy; first | decide | decide +kernel)" for o in OBSERVE]
         return {"note": note, "proof": f"intro h\nhave hx := h {S} {R} (by decide)\n" + first(alts)}
     return None
