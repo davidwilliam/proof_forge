@@ -1,8 +1,10 @@
 """Minimal client for Meta models over OpenAI-compatible Chat Completions, stdlib only.
 
 Model IDs under `meta-models/` (Meta open-weight models such as Muse Spark Open) are served
-by Baseten Model APIs with BASETEN_API_KEY; every other ID goes to the Meta Model API with
-META_API_KEY. Keys come from the environment or the repository's .env file. Every call is
+by Baseten Model APIs with BASETEN_API_KEY; IDs under `glimmer/` (Muse Glimmer 30B) go to the
+self-hosted vLLM server on Modal (infra/modal/) at GLIMMER_API_BASE with GLIMMER_API_KEY;
+every other ID goes to the Meta Model API with META_API_KEY. Keys and the Glimmer base URL
+come from the environment or the repository's .env file. Every call is
 logged to runs/model_calls.jsonl with provider, model, purpose, token usage and latency;
 keys and message contents are never logged.
 """
@@ -15,7 +17,11 @@ LOG = ROOT / "runs" / "model_calls.jsonl"
 
 
 def provider(model) -> str:
-    return "baseten" if model.startswith("meta-models/") else "meta"
+    if model.startswith("meta-models/"):
+        return "baseten"
+    if model.startswith("glimmer/"):
+        return "glimmer"
+    return "meta"
 
 
 def api_key(name="META_API_KEY") -> str:
@@ -33,7 +39,21 @@ def endpoint(model):
     """(base URL, key) for the provider that serves `model`."""
     if provider(model) == "baseten":
         return BASETEN_URL, api_key("BASETEN_API_KEY")
+    if provider(model) == "glimmer":
+        return api_key("GLIMMER_API_BASE").rstrip("/"), api_key("GLIMMER_API_KEY")
     return BASE_URL, api_key()
+
+
+def request_fields(model, extra):
+    """Provider-specific request fields. The Glimmer chat template takes its reasoning level
+    as the template variable `reasoning_strength` (low, medium, high, xhigh) and ignores
+    `reasoning_effort`, so the effort the agent asks for is passed under that name."""
+    extra = dict(extra)
+    if provider(model) == "glimmer" and "reasoning_effort" in extra:
+        kwargs = dict(extra.get("chat_template_kwargs") or {})
+        kwargs["reasoning_strength"] = extra.pop("reasoning_effort")
+        extra["chat_template_kwargs"] = kwargs
+    return extra
 
 
 class APIError(Exception):
@@ -87,7 +107,7 @@ def chat(model, messages, purpose, tools=None, max_tokens=2048, timeout=180, ret
     are retried with backoff (retries=0 for callers that account for each attempt); after
     the last one they raise APIError with status 0. A response that would arrive after the
     deadline is never returned."""
-    payload = {"model": model, "messages": messages, "max_tokens": max_tokens, **extra}
+    payload = {"model": model, "messages": messages, "max_tokens": max_tokens, **request_fields(model, extra)}
     if tools:
         payload["tools"] = tools
     data = json.dumps(payload).encode()
