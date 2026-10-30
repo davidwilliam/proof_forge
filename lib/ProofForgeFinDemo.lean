@@ -4,6 +4,7 @@ import ProofForgeFinDemo.Compound
 import ProofForgeFinDemo.Euler
 import ProofForgeFinDemo.Trading
 import ProofForgeFinDemo.Machine
+import ProofForgeFinDemo.Evm
 /-!
 # ProofForgeFin demonstrations
 
