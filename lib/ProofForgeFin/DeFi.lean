@@ -2,6 +2,7 @@ import ProofForgeFin.DeFi.Rewards
 import ProofForgeFin.DeFi.Distributor
 import ProofForgeFin.DeFi.Lending
 import ProofForgeFin.DeFi.AMM
+import ProofForgeFin.DeFi.Vault
 /-!
 # DeFi primitives
 
@@ -16,4 +17,7 @@ Proved building blocks for specifications and proofs about decentralized-finance
   collateral factors, liquidation bounds, interest indices, and pool solvency.
 * `ProofForgeFin.DeFi.AMM`: constant-product quotes with a fee, the K check, price impact,
   liquidity tokens and a pool model; invariant pools with scaled balances and batches.
+* `ProofForgeFin.DeFi.Vault`: ERC-4626 vaults with virtual shares and assets (OpenZeppelin's
+  decimals offset): previews and their rounding directions, `maxWithdraw` and `maxRedeem`, the
+  inflation-attack bounds, and share value over every sequence of operations.
 -/
