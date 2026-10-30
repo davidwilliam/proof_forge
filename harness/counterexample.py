@@ -46,6 +46,7 @@ the case, or a dict with:
   imports   further modules of the task's specification library to import.
   proof     a complete tactic proof, used instead of the default one.
   note      one sentence describing the instance.
+  unsupported  instead of an instance: why the adapter cannot express one (recorded as the reason).
 
 The default proof instantiates the requirement and decides the rest by kernel evaluation:
 
@@ -300,6 +301,8 @@ def generate(task, witness):
         return {**item, "reason": f"adapter error: {type(e).__name__}: {e}"}
     if not inst:
         return {**item, "reason": "the adapter has no instance for this case"}
+    if inst.get("unsupported"):
+        return {**item, "reason": f"not handled by the adapter: {inst['unsupported']}"}
     try:
         item["lean_source"] = solution_source(task, th, stmt, inst, rid, witness.get("input"))
     except ValueError as e:

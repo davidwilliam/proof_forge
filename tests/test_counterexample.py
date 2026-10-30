@@ -68,6 +68,9 @@ def test_unsafe_adapter_output_and_missing_adapters_are_reasons_not_refutations(
     boom = types.SimpleNamespace(instance=lambda *a, **k: 1 / 0)
     with patch.object(cx, "adapter", return_value=(boom, ROOT / "counterexamples/rw-cetus-shlw.py")):
         assert cx.generate(t, w)["reason"].startswith("adapter error: ZeroDivisionError")
+    skip = types.SimpleNamespace(instance=lambda *a, **k: {"unsupported": "a frame condition"})
+    with patch.object(cx, "adapter", return_value=(skip, ROOT / "counterexamples/rw-cetus-shlw.py")):
+        assert cx.generate(t, w)["reason"] == "not handled by the adapter: a frame condition"
     q = taskmod.load("queues-prio-b1")
     it = cx.generate(q, {"requirement": "REQ-FIFO-TIES", "input": {}, "output": {}})
     assert it["reason"] == "the task has no counterexample adapter" and it["statement"] == "¬ (FifoTies step)"
