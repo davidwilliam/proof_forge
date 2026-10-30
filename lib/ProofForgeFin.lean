@@ -6,6 +6,7 @@ import ProofForgeFin.Seq
 import ProofForgeFin.Ledger
 import ProofForgeFin.Trading
 import ProofForgeFin.Machine
+import ProofForgeFin.Evm
 /-!
 # ProofForgeFin
 
