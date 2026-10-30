@@ -876,6 +876,30 @@ theorem phi_moves (gs gb : Nat) : Moves gs gb (Phi gs gb) where
     simp only [Nat.mul_add]; omega
   drip _ _ := Nat.le_refl _
 
+/-- `Psi` after blocks pass, with the account record and the indices of the state before. -/
+theorem psi_advance_eq (gs gb : Nat) (w : Account) (s : St) (k : Nat) :
+    Psi gs gb w { s with blockNumber := s.blockNumber + k } =
+      term gs gb s.supplyState.index s.borrowState.index (s.acct w) +
+        doubleScale * (if 0 < (s.acct w).supply then unS { s with blockNumber := s.blockNumber + k } else 0) +
+        doubleScale * (if 0 < (s.acct w).borrow then unB { s with blockNumber := s.blockNumber + k } else 0) := rfl
+
+/-- The unindexed supply emission after blocks pass. -/
+theorem unS_advance (s : St) (k : Nat) (h : s.supplyState.block ≤ s.blockNumber) :
+    unS { s with blockNumber := s.blockNumber + k } = unS s + k * s.supplyState.speed := by
+  unfold unS; exact elapsed_add_mul k s.supplyState.speed h
+
+/-- The unindexed borrow emission after blocks pass. -/
+theorem unB_advance (s : St) (k : Nat) (h : s.borrowState.block ≤ s.blockNumber) :
+    unB { s with blockNumber := s.blockNumber + k } = unB s + k * s.borrowState.speed := by
+  unfold unB; exact elapsed_add_mul k s.borrowState.speed h
+
+/-- The arithmetic of blocks passing for one account, at any scale `D`. Stated over a variable
+and instantiated at `doubleScale`, so that no kernel unfolds `doubleScale = 10 ^ 36`. -/
+theorem advance_arith (D T u v a b k : Nat) (c1 c2 : Prop) [Decidable c1] [Decidable c2] :
+    T + D * (if c1 then u + k * a else 0) + D * (if c2 then v + k * b else 0) ≤
+      T + D * (if c1 then u else 0) + D * (if c2 then v else 0) + D * (k * (a + b)) := by
+  split <;> split <;> simp only [Nat.mul_add, Nat.mul_zero, Nat.add_zero] <;> omega
+
 /-- Every `Psi` is such a potential. -/
 theorem psi_moves (gs gb : Nat) (w : Account) : Moves gs gb (Psi gs gb w) where
   supply sp s who hI := by
@@ -928,11 +952,8 @@ theorem psi_moves (gs gb : Nat) (w : Account) : Moves gs gb (Psi gs gb w) where
     have h := speeds_sides s a b
     psi_le h.1.1 h.2.1 h.1.2 h.2.2 (Nat.le_refl _) (Or.inl rfl) (Or.inl rfl)
   advance sp s k hI := by
-    have e1 := elapsed_add_mul k s.supplyState.speed hI.blockS
-    have e2 := elapsed_add_mul k s.borrowState.speed hI.blockB
-    unfold Psi unS unB St.acct; dsimp only
-    rw [e1, e2, ← hI.speedS, ← hI.speedB]
-    split <;> split <;> simp only [Nat.mul_add, Nat.mul_zero, Nat.add_zero] <;> omega
+    rw [psi_advance_eq, unS_advance s k hI.blockS, unB_advance s k hI.blockB, hI.speedS, hI.speedB]
+    exact advance_arith _ _ _ _ _ _ _ _ _
   drip _ _ := Nat.le_refl _
 
 /-! ### One operation -/
@@ -1206,6 +1227,15 @@ theorem phi_upgrade (L : Legacy) (hw : L.WellFormed) :
   rw [e, Nat.add_mul, Nat.add_mul, Nat.mul_comm L.unindexedSupply, Nat.mul_comm L.unindexedBorrow]
   omega
 
+/-- The arithmetic of an account's potential at the upgrade, at any scale `D` (instantiated at
+`doubleScale`). -/
+theorem upgrade_arith (D T u v U V acc P : Nat) (c1 c2 : Prop) [Decidable c1] [Decidable c2]
+    (hT : T ≤ acc * D + P) (hu : D * u ≤ D * U) (hv : D * v ≤ D * V) :
+    T + D * (if c1 then u else 0) + D * (if c2 then v else 0) ≤
+      (acc + ((if c1 then U else 0) + (if c2 then V else 0))) * D + P := by
+  split <;> split <;>
+    simp only [Nat.add_mul, Nat.zero_mul, Nat.mul_zero, Nat.add_zero, Nat.mul_comm U, Nat.mul_comm V] <;> omega
+
 /-- The potential of one account at the upgrade. -/
 theorem psi_upgrade (L : Legacy) (hw : L.WellFormed) (who : Account) :
     Psi (gsOf L) (gbOf L) who (upgrade L) ≤
@@ -1223,13 +1253,9 @@ theorem psi_upgrade (L : Legacy) (hw : L.WellFormed) (who : Account) :
     · rw [hm]; simp [term, noAcct]
   have h2 := Nat.mul_le_mul_left doubleScale (unS_upgrade L)
   have h3 := Nat.mul_le_mul_left doubleScale (unB_upgrade L)
-  rw [Nat.add_mul] at hp
   unfold Psi St.creditedTo
   rw [hacct]
-  by_cases hs : 0 < (L.accts.getD who noAcct).supply <;>
-    by_cases hb : 0 < (L.accts.getD who noAcct).borrow <;>
-    simp only [hs, hb, ↓reduceIte, Nat.add_mul, Nat.zero_mul, Nat.mul_zero, Nat.add_zero,
-      Nat.mul_comm L.unindexedSupply, Nat.mul_comm L.unindexedBorrow] <;> omega
+  exact upgrade_arith _ _ _ _ _ _ _ _ _ _ hp h2 h3
 
 /-- COMP credited, scaled, is covered by the global potential. -/
 theorem credited_le_phi (gs gb : Nat) (s : St) : s.credited * doubleScale ≤ Phi gs gb s := by
@@ -1242,12 +1268,27 @@ theorem creditedTo_le_psi (gs gb : Nat) (w : Account) (s : St) :
     s.creditedTo w * doubleScale ≤ Psi gs gb w s := by
   unfold Psi term St.creditedTo; omega
 
+/-- The arithmetic of the potential of an account without a position, at any scale `D`
+(instantiated at `doubleScale`). -/
+theorem noPosition_arith (D A x y p q u v : Nat) (hx : x = 0) (hy : y = 0) :
+    A * D + x * p + y * q + D * (if 0 < x then u else 0) + D * (if 0 < y then v else 0) = A * D := by
+  subst hx; subst hy
+  rw [if_neg (Nat.lt_irrefl 0), if_neg (Nat.lt_irrefl 0)]
+  simp only [Nat.zero_mul, Nat.mul_zero, Nat.add_zero]
+
 /-- The potential of an account without a position is its COMP credited, scaled. -/
 theorem psi_noPosition (gs gb : Nat) (s : St) (who : Account) (h : NoPosition s who) :
     Psi gs gb who s = s.creditedTo who * doubleScale := by
-  unfold Psi term St.creditedTo
-  rw [h.1, h.2]
-  simp
+  unfold Psi term St.creditedTo pending
+  exact noPosition_arith _ _ _ _ _ _ _ _ h.1 h.2
+
+/-- An equation to a multiple, in the form `run_bound_via_potential` takes, at any scale. -/
+theorem le_mul_add_zero (P Q D : Nat) (h : P = Q * D) : P ≤ Q * D + 0 := by
+  rw [h, Nat.add_zero]; exact Nat.le_refl _
+
+/-- A bound with no remainder, at any scale. -/
+theorem le_of_le_add_zero_div (X Y D : Nat) (h : X ≤ Y + 0 / D) : X ≤ Y := by
+  rw [Nat.zero_div, Nat.add_zero] at h; exact h
 
 /-! ### The three bounds -/
 
@@ -1296,8 +1337,8 @@ theorem no_backdated : NoBackdatedRewards impl := by
     (fun sp s op hI => (exec_step hOK hS hB hC hP (psi_moves _ _ who) sp s op hI).2)
     (fun _ s _ => creditedTo_le_psi _ _ who s) hI
     (B := (Seq.run (exec impl) (upgrade L) history).creditedTo who) (R := 0)
-    (by rw [psi_noPosition _ _ _ _ hpos]; simp) ops
-  simpa using h
+    (le_mul_add_zero _ _ _ (psi_noPosition _ _ _ _ hpos)) ops
+  exact le_of_le_add_zero_div _ _ _ h
 
 /-- The three sequence requirements of `rw-compound-comp` follow from the five per-call
 requirements (REQ-CALLS-SUCCEED, REQ-SUPPLY-HOOK, REQ-BORROW-HOOK, REQ-CLAIM, REQ-SET-SPEEDS), for
