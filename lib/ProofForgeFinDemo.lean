@@ -2,6 +2,7 @@ import ProofForgeFinDemo.ShareVault
 import ProofForgeFinDemo.BatchTransfer
 import ProofForgeFinDemo.Compound
 import ProofForgeFinDemo.Euler
+import ProofForgeFinDemo.Trading
 /-!
 # ProofForgeFin demonstrations
 
