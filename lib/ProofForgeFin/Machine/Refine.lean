@@ -261,6 +261,12 @@ def couple (impl : σ → α → σ × β) (obs : τ → α → β → τ) (p : 
 @[simp, machine_simps] theorem couple_snd (impl : σ → α → σ × β) (obs : τ → α → β → τ)
     (p : σ × τ) (a : α) : (couple impl obs p a).2 = obs p.2 a (impl p.1 a).2 := rfl
 
+/-- Rewriting a coupled step with an equation for the implementation step: the result is a plain
+pair, with no projection of the implementation's result left inside. -/
+theorem couple_of_eq {impl : σ → α → σ × β} {obs : τ → α → β → τ} {s s' : σ} {t : τ} {a : α}
+    {out : β} (h : impl s a = (s', out)) : couple impl obs (s, t) a = (s', obs t a out) := by
+  simp [couple, h]
+
 /-- The implementation part of a coupled run is the run of the implementation alone. -/
 theorem run_couple_fst (impl : σ → α → σ × β) (obs : τ → α → β → τ) (p : σ × τ) (ops : List α) :
     (Seq.run (couple impl obs) p ops).1 = Seq.run (fun s a => (impl s a).1) p.1 ops :=

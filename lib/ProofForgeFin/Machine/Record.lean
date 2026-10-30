@@ -4,9 +4,9 @@ import ProofForgeFin.Machine.Attr
 # Records, function updates and projections
 
 State machine proofs spend their last steps on bookkeeping: reading a function updated at one
-key, pushing a projection through an `if` that builds the next state, and reducing a projection
-of a structure literal such as `{ st := st, tr := tr }.st` that `omega` and `rw` treat as an
-opaque atom. This module states those facts once.
+key, pushing a projection through an `if` that builds the next state, and keeping track of
+projections of structure literals such as `{ st := st, tr := tr }.st`. This module states those
+facts once.
 
 * Function update is `Ledger.upd f k v` (`fun j => if j = k then v else f j`), the form task
   specifications write by hand (`upd` in `rc-knight-router`, `adjust` in the ledger tasks).
@@ -19,8 +19,14 @@ opaque atom. This module states those facts once.
 
 Structure projections of literals and structure eta are definitional in Lean 4: for a structure
 `S` with fields `a` and `b`, `({ a := x, b := y } : S).a = x`, `{ s with a := v }.a = v`,
-`{ s with a := v }.b = s.b` and `{ a := s.a, b := s.b } = s` all hold by `rfl`, and `dsimp only`
-rewrites the first three. Lean generates `S.mk.injEq` for equality of literals.
+`{ s with a := v }.b = s.b` and `{ a := s.a, b := s.b } = s` all hold by `rfl`, and `rw`, `omega`
+and `exact` see through them. What goes wrong in practice is different: after a propositional
+rewrite inside a literal (rewriting the router's output in `⟨(step b x.st e).1,
+x.tr.record (step b x.st e).2⟩`), a hypothesis stated over the literal and a lemma stated over the
+unrewritten term are no longer definitionally equal, and the error message shows both sides with
+unreduced projections. The remedy is to rewrite whole-state equations before projecting (state
+step lemmas as `step b s e = (s', out)` and use `Machine.couple_of_eq`) and to normalize the goal
+and every hypothesis the same way, which `machine_norm` does.
 -/
 
 namespace ProofForgeFin.Machine
@@ -184,13 +190,12 @@ attribute [machine_simps] Ledger.upd_self Seq.run_nil Seq.run_cons Seq.trace_nil
 
 /-! ## The `machine_norm` tactic -/
 
-/-- Normalize the goal and every hypothesis of a state machine proof: `dsimp only` reduces
-projections of structure literals (`{ st := st, tr := tr }.st` to `st`), projections of updated
-structures (`{ s with f := v }.f` to `v`, `{ s with f := v }.g` to `s.g`) and beta redexes, then
-`simp only [machine_simps]` reduces function updates read at the updated key, overwritten
-updates, projections and applications of `if`, and the unfolding equations tagged by the
-library. Neither step fails when it makes no progress. Run it before `omega`, which treats an
-unreduced projection as an atom different from the reduced term. -/
+/-- Normalize the goal and every hypothesis of a state machine proof the same way: `dsimp only`
+reduces projections of structure literals (`{ st := st, tr := tr }.st` to `st`), projections of
+updated structures (`{ s with f := v }.f` to `v`, `{ s with f := v }.g` to `s.g`) and beta
+redexes, then `simp only [machine_simps]` reduces function updates read at the updated key,
+overwritten updates, projections and applications of `if`, and the unfolding equations tagged by
+the library. Neither step fails when it makes no progress. -/
 macro "machine_norm" : tactic =>
   `(tactic| ((try dsimp only at *) <;> (try simp only [machine_simps] at *)))
 
