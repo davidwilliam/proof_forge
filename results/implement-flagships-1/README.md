@@ -12,6 +12,12 @@ in advance, capped at $10 at list prices and 14,400 s.
 | rw-cetus-shlw | 5 of 5 | VERIFIED | `b2cf6c2de4f91b8e` | 122 s | $0.12 | $0.008 |
 | rw-euler-donate | 6 of 6 | VERIFIED | `27d4ec2838e9bbfc` | 1,324 s | $1.22 | $0.066 |
 | rw-hundred-vault | 10 of 10 | VERIFIED | `eee7e2cdbedf658d` | 663 s | $0.60 | $0.033 |
+| rc-knight-router (A2) | 6 of 6 | VERIFIED | `80721c043007d840` | 5,257 s | $6.04 | $1.46 |
+
+`rc-knight-router-A2-1` was added later, after the Knight repair runs in `results/knight-1` had
+shown that the A1 configuration did not finish that task: it used arm A2, with Muse Wonder 1.0 as
+planner (281 Spark calls, 7 Wonder calls), one run, the same $10 and 14,400 s caps. The task is
+reconstructed from the SEC findings in Release No. 34-70694, and its Passport says so.
 
 Each Passport was issued by `bin/proofforge check` and reproduced by `bin/proofforge verify`
 (`verify.txt` in each directory). Reproduce one with the command in its Passport's `reproduce` field,
