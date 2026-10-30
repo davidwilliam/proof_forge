@@ -3,6 +3,7 @@ import ProofForgeFin.Money.Allocation
 import ProofForgeFin.Money.Hamilton
 import ProofForgeFin.Money.Split
 import ProofForgeFin.Money.Currency
+import ProofForgeFin.Money.Fee
 /-!
 # ProofForgeFin.Money
 
@@ -17,4 +18,5 @@ exponents, interest, currency conversion and fees.
 * `ProofForgeFin.Money.Hamilton`: allocation by the largest-remainder method.
 * `ProofForgeFin.Money.Split`: equal splits of signed amounts.
 * `ProofForgeFin.Money.Currency`: currencies, minor units, and rescaling between exponents.
+* `ProofForgeFin.Money.Fee`: percentage fees rounded either way, caps and minimums, gross-up.
 -/
