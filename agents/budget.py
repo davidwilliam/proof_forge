@@ -29,6 +29,19 @@ STANDARD = {
     # Open-weight Muse Spark Open on Baseten Model APIs; Baseten list price as published
     # on 2026-10-23. Confirm against the Baseten dashboard before a measured run.
     "meta-models/muse-spark-open-1026": (1.25, 0.15, 4.25),
+    # Muse Glimmer 30B self-hosted on Modal (infra/modal/glimmer_vllm.py): no list price, so
+    # the GPU cost per token. Container price c = H100 $3.95/h + 4 cores x $0.0473/core/h
+    # + 32 GiB x $0.008/GiB/h = $0.00122089/s (`modal billing rates`, 2026-10-30).
+    # Throughput from infra/modal/bench_glimmer.py on A0 prompts of two dev tasks at medium
+    # effort (results/e1-test-glimmer-1/price-bench.json):
+    #   output: c / 191.6 tok/s, the aggregate decode rate with two requests in flight as
+    #           in E1 (--parallel 2), tail of the longer request included = $6.37 per 1M;
+    #   input:  c / 7,897 tok/s prefill (lower bound: latency of 1-token completions, no
+    #           prefix-cache hits, network included) = $0.155 per 1M;
+    #   cached: a prefix-cache hit costs no prefill compute; charged at 1/10 of input.
+    # Idle GPU time between requests (Lean checks, cold starts) is not in these prices; the
+    # measured Modal bill for a run is reported separately.
+    "glimmer/muse-glimmer-30b": (0.155, 0.0155, 6.37),
 }
 CONTRIBUTOR = {
     "muse-spark-1.3-contributor": ((0.10, 0.002, 0.20), "muse-spark-1.3"),

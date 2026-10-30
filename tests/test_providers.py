@@ -66,6 +66,14 @@ def test_glimmer_reasoning_effort_becomes_the_template_reasoning_strength():
     assert meta_client.request_fields("muse-spark-1.3", {}) == {}
 
 
+def test_glimmer_has_a_gpu_cost_price_for_the_budget():
+    usage = {"prompt_tokens": 1_000_000, "completion_tokens": 1_000_000}
+    assert abs(budget.list_cost(GLIMMER, usage) - (0.155 + 6.37)) < 1e-9
+    assert budget.list_cost(GLIMMER, usage) == budget.actual_cost(GLIMMER, usage)
+    b = budget.Budget(usd=3.0)
+    assert b.call_limits(GLIMMER, 200_000, 4, 32000, 600)[0] == 32000
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
