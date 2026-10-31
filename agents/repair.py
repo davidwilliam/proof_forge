@@ -39,10 +39,15 @@ Tactic portfolio (`--portfolio on`, the default; agents/portfolio.py): before th
 turn on an open goal, a fixed list of Lean tactics is tried on it in one batch, and the first proof
 that closes it is banked like a clean snippet. No dollars; the Lean time counts against the wall cap.
 
+Goal tool (`--goal-tool on`, the default; agents/leanserver.py): a persistent Lean language server
+per session gives the model `goal_at` (the proof state at each `sorry`, error or line of a
+declaration) and answers a try_snippet with an error or a `sorry` from incremental elaboration,
+without compiling the whole file again.
+
 Usage: repair.py [--task T] [--model muse-spark-1.3-contributor] [--planner muse-wonder-1.0|none]
                  [--mode repair|implement] [--loop orchestrated|free|topdown] [--library on|off]
                  [--budget-usd X] [--budget-wall S] [--out DIR] [--start FILE]
-                 [--resume-from DIR[,DIR...]] [--portfolio on|off]
+                 [--resume-from DIR[,DIR...]] [--portfolio on|off] [--goal-tool on|off]
 """
 import argparse, hashlib, json, pathlib, re, shutil, sys, tempfile, time
 
@@ -52,7 +57,7 @@ sys.path.insert(0, str(ROOT / "harness"))
 from meta_client import chat, APIError, DeadlineReached  # noqa: E402
 from budget import Budget, BudgetExceeded, list_cost  # noqa: E402
 import judge, binary_check, fin_lib, task as taskmod  # noqa: E402
-import ledger, portfolio  # noqa: E402
+import ledger, portfolio, leanserver  # noqa: E402
 
 FORBIDDEN_TEXT = ("sorry, axiom, opaque, implemented_by, extern, unsafe, export, macro, elab, syntax, "
                   "initialize, #eval, run_cmd, native_decide, set_option")
@@ -347,6 +352,7 @@ class Session:
     prior_notes = {}
     resume_goals = ()
     round_offset = 0
+    goal_tool = False        # --goal-tool: persistent Lean session (agents/leanserver.py)
 
     def __init__(self, task, model, start, out, budget=None, mode="repair", library=False):
         self.task, self.model, self.out, self.mode = task, model, out, mode
@@ -615,6 +621,11 @@ class Session:
             body = "\n".join(bl)
         offset = body.count("\n") + 1
         scratch = body + "\n" + code + f"\n\n{self.end}\n"
+        if self.goal_tool:   # a snippet with an error or a sorry is answered by the persistent session
+            fast = leanserver.fast_snippet(self, scratch, offset, code)
+            if fast and fast[0] is False:
+                self.log(kind="fast_check", version=self.version, ok=False, ms=fast[2])
+                return fast
         (self.ws / "Scratch.lean").write_text(scratch)
         r = judge.in_container(self.ws, f"lake build {self.task.lib} >/dev/null 2>&1; lake env lean Scratch.lean 2>&1 | tail -c 9000", timeout=300)
         out = self._clean(r["output_tail"])
@@ -916,7 +927,8 @@ class Session:
 
 def dialog(s, model, effort, system, user, tool_names, max_turns, done, label):
     """Run one tool-using dialog until done() or the turn budget is spent."""
-    tools = [t for t in tools_for(s.task, s.library, topdown=True, compact=s.topdown) if t["function"]["name"] in tool_names]
+    tools = [t for t in tools_for(s.task, s.library, topdown=True, compact=s.topdown) + [leanserver.GOAL_TOOL]
+             if t["function"]["name"] in tool_names]
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     extra = {} if effort == "default" else {"reasoning_effort": effort}
     for turn in range(max_turns):
@@ -957,7 +969,8 @@ def dialog(s, model, effort, system, user, tool_names, max_turns, done, label):
                   "search_library": lambda: s.search_library(args.get("query", ""), args.get("limit", 10)),
                   "add_import": lambda: s.add_import(args.get("module", "")),
                   "submit_skeleton": lambda: s.submit_skeleton(args.get("code", "")),
-                  "refute_helper": lambda: s.refute_helper(args.get("name", ""), args.get("proof", ""))
+                  "refute_helper": lambda: s.refute_helper(args.get("name", ""), args.get("proof", "")),
+                  "goal_at": lambda: leanserver.goal_at(s, args.get("name", ""), args.get("line"))
                   }.get(name) if name in tool_names else None
             t_tool = time.monotonic()
             result = fn() if fn else f"error: tool {name} is not available in this phase"
@@ -985,6 +998,10 @@ def system_prompt(s):
 
 def lib_tools(s):
     return LIBRARY_TOOLS if s.library else set()
+
+
+def goal_tools(s):
+    return {"goal_at"} if s.goal_tool else set()
 
 
 def obligation_query(s, stmt):
@@ -1264,8 +1281,8 @@ def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
         m2 = re.search(rf"^{DECL_PREFIX}theorem\s+{re.escape(t)}(?![\w.']).*?(?=^{s.boundary})", s._source(), re.S | re.M)
         return bool(m2) and "sorry" not in m2.group(0) and s.check_status([t]).get(t) != "ERROR"
     ok, messages = dialog(s, a.model, a.effort, system, user,
-                          {"try_snippet", "replace_declaration", "check", "read_file"} | lib_tools(s) | s.extra_tools,
-                          budget, own_proof_done, f"{label}:{t}")
+                          {"try_snippet", "replace_declaration", "check", "read_file"} | lib_tools(s) | goal_tools(s)
+                          | s.extra_tools, budget, own_proof_done, f"{label}:{t}")
     ok = ok and t not in s.refuted
     if not ok:
         remember(s, t, messages)
@@ -1691,7 +1708,8 @@ def structure(s, a, system, spec, rnd, feedback=""):
         user += ("\n\nThe architect's last skeleton was rejected:\n" + last[-3000:]
                  + "\nIts plan:\n" + ctx.get("prose", "")[-2000:])
     ok, messages = dialog(s, a.model, a.effort, system, user,
-                          {"submit_skeleton", "read_file", "try_snippet"} | lib_tools(s), a.skeleton_turns,
+                          {"submit_skeleton", "read_file", "try_snippet"} | lib_tools(s) | goal_tools(s),
+                          a.skeleton_turns,
                           lambda: ctx["accepted"] is not None, f"structure{rnd}")
     if ctx["accepted"] is not None:
         ctx["accepted"]["prose"] = architecture_prose([m["content"] for m in messages
@@ -1863,6 +1881,7 @@ def finish(s, out, arm, extra):
     A final file that does not compile is replaced by the newest version that did; this
     selection among already produced versions happens after the deadline."""
     judge.DEADLINE = None
+    leanserver.close(s)
     if "error:" in s.compile(2000)["output_tail"] and s.last_good is not None:
         s._save(s.last_good, "restore last compiling version")
     shutil.copy(s.ws / "candidate/Solution.lean", out / "final.lean")
@@ -1932,13 +1951,22 @@ def parser():
                     help="per-tactic limit of the portfolio, in Lean maxHeartbeats units")
     ap.add_argument("--portfolio-seconds", type=float, default=portfolio.SECONDS,
                     help="wall allowance per portfolio attempt; a batch is stopped after 60 s plus this per attempt")
+    ap.add_argument("--goal-tool", default="on", choices=["on", "off"],
+                    help="on (default): a persistent Lean server per session for goal_at and the fast check of "
+                         "try_snippet; off: every check compiles")
     return ap
 
 
+def configure(s, a):
+    """Session switches from the options: the goal tool."""
+    s.goal_tool = getattr(a, "goal_tool", "on") != "off"
+
+
 def features_summary(s, a):
-    """The summary.json records of the tactic portfolio."""
+    """The summary.json records of the tactic portfolio and the goal tool."""
     return {"portfolio": {"enabled": a.portfolio == "on", "heartbeats": a.portfolio_heartbeats,
-                          "seconds": a.portfolio_seconds, **portfolio.summary(s)}}
+                          "seconds": a.portfolio_seconds, **portfolio.summary(s)},
+            "goal_tool": leanserver.summary(s, a)}
 
 
 def resume_setup(s, a, priors, record):
@@ -1994,6 +2022,7 @@ def main():
         start.write_text(stub_candidate(task))
     s = Session(task, a.model, start, out, Budget(a.budget_usd, a.budget_wall), mode=a.mode,
                 library=a.library == "on")
+    configure(s, a)
     s.log(kind="start", arm=arm, **vars(a))
     try:
         if priors:
@@ -2009,7 +2038,8 @@ def main():
                    "Begin. The current candidate is candidate/Solution.lean."
                    + (f"\n\nPrevious attempts on this task ended as follows; do not repeat what failed:\n"
                       f"{ledger.summary_text(priors)}" if priors else ""),
-                   {t["function"]["name"] for t in tools_for(task, s.library)}, a.max_turns, lambda: s.accepted, "free")
+                   {t["function"]["name"] for t in tools_for(task, s.library)} | goal_tools(s), a.max_turns,
+                   lambda: s.accepted, "free")
     except BudgetExceeded as e:
         s.log(kind="budget_stop", reason=str(e))
         print(f"budget exhausted: {e}", flush=True)
