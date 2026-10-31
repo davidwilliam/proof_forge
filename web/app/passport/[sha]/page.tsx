@@ -68,7 +68,7 @@ export default async function PassportPage({ params }: { params: Promise<{ sha: 
   } catch (e) {
     const notFound = e instanceof ApiError && e.status === 404;
     return (
-      <main className="page">
+      <main id="main" className="page">
         <ErrorBox title={notFound ? `No Passport with sha256 ${sha}.` : "Could not load the Passport."} message={notFound ? undefined : (e as Error).message} />
       </main>
     );
@@ -82,7 +82,7 @@ export default async function PassportPage({ params }: { params: Promise<{ sha: 
   const violationCount = Object.values(pt.violations ?? {}).reduce((a, b) => a + (typeof b === "number" ? b : 0), 0);
 
   return (
-    <main className="page passport">
+    <main id="main" className="page passport">
       <div className="cert" data-status={p.status}>
         <h1>Proof Passport for {p.task.id}</h1>
         <p className="cert-status">

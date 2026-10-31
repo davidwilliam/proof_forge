@@ -12,16 +12,23 @@ const LINKS = [
   { href: "/results", label: "Results" },
 ];
 
+/** The kit's horizontal lockup, primary on light grounds and reversed on dark ones; never recomposed. */
+export function Lockup({ className = "" }: { className?: string }) {
+  return (
+    <span className={`lockup ${className}`.trim()} role="img" aria-label="ProofForge">
+      <img className="lockup-primary" src="/brand/proofforge-horizontal-primary.svg" alt="" width={624} height={106} />
+      <img className="lockup-reversed" src="/brand/proofforge-horizontal-reversed.svg" alt="" width={624} height={106} />
+    </span>
+  );
+}
+
 export function SiteHeader() {
   const path = usePathname();
+  // The home page opens on the Void hero band, so its header is dark in both themes.
   return (
-    <header className="site-header">
-      <Link href="/" className="brand">
-        <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
-          <rect width="32" height="32" rx="8" fill="var(--fg)" />
-          <path d="M9 16.5l4.5 4.5L23 11.5" fill="none" stroke="var(--bg)" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-        ProofForge
+    <header className="site-header" data-tone={path === "/" ? "dark" : undefined}>
+      <Link href="/" className="brand" aria-label="ProofForge, overview">
+        <Lockup />
       </Link>
       <nav className="site-nav" aria-label="Main">
         {LINKS.map((l) => (

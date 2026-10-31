@@ -1,7 +1,9 @@
 import Link from "next/link";
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import { CheckFix } from "@/components/CheckFix";
 import { Pipeline } from "@/components/Pipeline";
+import { ProofGraph } from "@/components/ProofGraph";
 import { Status } from "@/components/ui";
 import {
   CETUS_HOTFIX,
@@ -38,6 +40,7 @@ import {
   type RealCodeRow,
 } from "@/lib/flagships";
 import { readRealworld } from "@/lib/generated";
+import { PROOF_GRAPH, layoutGraph } from "@/lib/proofgraph";
 import { EXPECTED_PROJECTS, describeInput, listWords, pendingProjects, type RwProject, type RwVersion } from "@/lib/realworld";
 
 const fmt = (n: number) => n.toLocaleString("en-US");
@@ -75,37 +78,48 @@ const longDay = (iso: string) =>
 export default function Home() {
   const rw = readRealworld();
   return (
-    <main className="page home">
-      <section className="hero" aria-labelledby="home-title">
-        <h1 id="home-title">{HEADLINE}</h1>
-        <p className="hero-sub">{SUMMARY.replace("Lean 4", "Lean 4")}</p>
-        <HeadlineFacts />
-        <div className="hero-grid">
-          <HeroCase f={FEATURED} />
-          <TrustModel />
-        </div>
-        <div className="hero-foot">
-          <div className="hero-facts">
-            <p>
-              Built during the {HACKATHON.event}: everything in the repository, from the judge, the Passport and the counterexample stage to the
-              real-world tasks, the ProofForgeFin library and this site, was created on or after the day of the first commit, {longDay(HACKATHON.firstCommit)};
-              submissions close {longDay(HACKATHON.submissionsDue)} (<a href={githubFile("ORIGIN.md")}>ORIGIN.md</a>).
-            </p>
-            <p>{SCOPE}</p>
+    <main id="main" className="home">
+      <section className="hero-band tone-dark" aria-labelledby="home-title">
+        <div className="hero-band-inner">
+          <div className="hero-top">
+            <div className="hero-copy">
+              <h1 id="home-title">{HEADLINE}</h1>
+              <p className="hero-sub">{SUMMARY.replace("Lean 4", "Lean 4")}</p>
+              <div className="hero-actions">
+                <a className="btn btn-primary" href="#check">
+                  Check a fix now
+                </a>
+                <a className="btn" href={githubFile(CETUS_HOTFIX.passport)}>
+                  Open the hotfix Passport
+                </a>
+                <Link className="btn" href="/results">
+                  Read the results
+                </Link>
+              </div>
+            </div>
+            <HeroFigures />
+            <HeroGraph />
           </div>
-          <div className="hero-actions">
-            <a className="btn btn-primary" href="#check">
-              Check a fix now
-            </a>
-            <a className="btn" href={githubFile(CETUS_HOTFIX.passport)}>
-              Open the hotfix Passport
-            </a>
-            <Link className="btn" href="/results">
-              Read the results
-            </Link>
-          </div>
+          <HeadlineFacts />
+          <GraphCaption />
         </div>
       </section>
+
+      <div className="page home-body">
+      <div className="hero-grid">
+        <HeroCase f={FEATURED} />
+        <TrustModel />
+      </div>
+      <div className="hero-foot">
+        <div className="hero-facts">
+          <p>
+            Built during the {HACKATHON.event}: everything in the repository, from the judge, the Passport and the counterexample stage to the
+            real-world tasks, the ProofForgeFin library and this site, was created on or after the day of the first commit, {longDay(HACKATHON.firstCommit)};
+            submissions close {longDay(HACKATHON.submissionsDue)} (<a href={githubFile("ORIGIN.md")}>ORIGIN.md</a>).
+          </p>
+          <p>{SCOPE}</p>
+        </div>
+      </div>
 
       <Comparison />
 
@@ -202,87 +216,197 @@ export default function Home() {
           </p>
         </div>
       </section>
+      </div>
     </main>
+  );
+}
+
+/** The live proof graph of the verified Balancer repair (generated/proof-graph.json), computed on the server. */
+function HeroGraph() {
+  const g = PROOF_GRAPH;
+  const layout = layoutGraph(g);
+  return (
+    <ProofGraph
+      layout={layout}
+      uses={g.edges}
+      readings={{
+        passport: g.passport.sha256,
+        status: g.passport.status,
+        requirements: g.passport.requirements,
+        verified: g.passport.verified,
+        kernels: g.passport.kernels,
+        propertyCases: g.passport.propertyCases,
+        axioms: g.passport.axioms,
+        declarations: g.counts.nodes,
+      }}
+      passportHref={githubFile(g.passport.file)}
+    />
+  );
+}
+
+/** The graph's caption, under the facts so the first screen holds the figures. */
+function GraphCaption() {
+  const g = PROOF_GRAPH;
+  return (
+    <p id="pg-caption" className="pg-caption">
+      The graph: the verified Muse repair of Balancer V2 (Passport {g.passport.sha256.slice(0, 8)}), its {g.passport.requirements} requirement
+      theorems around the conclusion and the {g.counts.nodes - g.passport.requirements} lemmas, definitions and types they use, extracted from
+      the Lean kernel&apos;s record of what each declaration uses. Kernels: {g.passport.kernels.join(", ")}.{" "}
+      <a href={githubFile("web/generated/proof-graph.json")}>Graph data</a>
+    </p>
   );
 }
 
 /** Short incident names for running text: "Euler Finance" becomes "Euler". */
 const shortIncident = (name: string) => name.replace(/ (Finance|V2|Proposal 62)$/, "");
 
-/** The four strongest measured facts, each with its evidence, directly under the hero sentence. */
-function HeadlineFacts() {
+interface HeadlineFact {
+  key: string;
+  figure: ReactNode;
+  text: ReactNode;
+  note: ReactNode;
+  source: ReactNode;
+}
+
+/** The four strongest measured facts, each with its evidence. */
+function headlineFacts(): HeadlineFact[] {
   const refutedFailures = COMPARISON.filter((r) => r.refutations.some((x) => x.kernelChecked > 0));
   const refuted = COMPARISON.reduce((n, r) => n + r.refutations.reduce((m, x) => m + x.refuted, 0), 0);
   const checked = COMPARISON.reduce((n, r) => n + r.refutations.reduce((m, x) => m + x.kernelChecked, 0), 0);
   const e2 = (key: string) => E2.arms.find((a) => a.key === key)!;
   const balancer = COST_PER_VERIFIED.find((c) => c.key === "balancer")!;
   const ss = SPEC_STRENGTH;
+  return [
+    {
+      key: "refuted",
+      figure: (
+      <>
+            {refutedFailures.length} of {COMPARISON.length}
+      </>
+    ),
+      text: (
+      <>
+            Real failures, {lossTotalPhrase()} in reported losses, refuted with counterexamples the Lean kernel checks.
+      </>
+    ),
+      note: (
+      <>
+            {listWords(COMPARISON.map((r) => shortIncident(r.incident)))}. The losses are quoted for {count(FLAGSHIPS.length)} of them and
+            measure different things; see the notes under <a href="#compare">the comparison</a>. {checked} of the {refuted} refuted requirements
+            have a kernel-checked counterexample.
+      </>
+    ),
+      source: (
+      <>
+            <a href={githubFile("results/counterexamples-1/README.md")}>results/counterexamples-1</a>
+      </>
+    ),
+    },
+    {
+      key: "e2",
+      figure: (
+      <>
+            {e2("proofforge").badAccepted} of {E2.bad}
+      </>
+    ),
+      text: (
+      <>
+            Bad repairs accepted by ProofForge. Ordinary checking accepted {e2("ordinary").badAccepted}.
+      </>
+    ),
+      note: (
+      <>
+            Ordinary checking: the build passes, the theorem names exist, the axioms are clean. ProofForge rejected {e2("proofforge").goodRejected}{" "}
+            of {E2.good} correct repairs. The bad repairs were written by the build team, so the counts describe this suite.
+      </>
+    ),
+      source: (
+      <>
+            <a href={githubFile(E2.source.replace("e2.json", "e2.md"))}>results/e2-all-1</a>
+      </>
+    ),
+    },
+    {
+      key: "cost",
+      figure: (
+      <>
+            ${balancer.planner.usdPerVerified.toFixed(2)} <span className="fact-figure-alt">vs ${balancer.alone.usdPerVerified.toFixed(2)}</span>
+      </>
+    ),
+      text: (
+      <>
+            Per verified {shortIncident(balancer.incident)} fix: Muse with ProofForge verified {balancer.planner.verified} of{" "}
+            {balancer.planner.runs} runs, Muse alone {balancer.alone.verified} of {balancer.alone.runs}, at the same caps.
+      </>
+    ),
+      note: (
+      <>
+            List prices; caps of ${RUN_CAPS.usdList} and {RUN_CAPS.seconds / 3600} hours per run; Muse Spark 1.3, with the Muse Wonder planner
+            in the ProofForge arm. The difference in verification rate is not statistically significant at these sample sizes (one-sided Fisher exact p ={" "}
+            {balancer.fisherOneSidedP.toFixed(2)}); the difference in cost is the stronger result.
+      </>
+    ),
+      source: (
+      <>
+            <a href={githubFile("results/library-1/README.md")}>results/library-1</a>
+      </>
+    ),
+    },
+    {
+      key: "spec",
+      figure: (
+      <>
+            {fmt(ss.rejected)} of {fmt(ss.compiled)}
+      </>
+    ),
+      text: (
+      <>
+            Wrong variants of the reference code rejected by the {ss.specifications} locked specifications, {fmt(ss.kernelChecked)} with
+            kernel-checked counterexamples.
+      </>
+    ),
+      note: (
+      <>
+            Each variant is a compiling mutant with one change. Of the {ss.compiled - ss.rejected} that pass, {ss.survivedDiffers} behave differently from the reference and are reported as
+            specification gaps.
+      </>
+    ),
+      source: (
+      <>
+            <a href={githubFile(ss.doc)}>{ss.doc}</a>
+      </>
+    ),
+    },
+  ];
+}
+
+/** The facts as cards in the hero band: figure and sentence first, then the note and the source. */
+function HeadlineFacts() {
   return (
     <ul className="headline-facts" aria-label="Measured results">
-      <li className="card fact">
-        <p className="fact-figure">
-          {refutedFailures.length} of {COMPARISON.length}
-        </p>
-        <p className="fact-text">
-          Real failures, {lossTotalPhrase()} in reported losses, refuted with counterexamples the Lean kernel checks.
-        </p>
-        <p className="fact-note">
-          {listWords(COMPARISON.map((r) => shortIncident(r.incident)))}. The losses are quoted for {count(FLAGSHIPS.length)} of them and
-          measure different things; see the notes under <a href="#compare">the comparison</a>. {checked} of the {refuted} refuted requirements
-          have a kernel-checked counterexample.
-        </p>
-        <p className="fact-source">
-          <a href={githubFile("results/counterexamples-1/README.md")}>results/counterexamples-1</a>
-        </p>
-      </li>
-      <li className="card fact">
-        <p className="fact-figure">
-          {e2("proofforge").badAccepted} of {E2.bad}
-        </p>
-        <p className="fact-text">
-          Bad repairs accepted by ProofForge. Ordinary checking accepted {e2("ordinary").badAccepted}.
-        </p>
-        <p className="fact-note">
-          Ordinary checking: the build passes, the theorem names exist, the axioms are clean. ProofForge rejected {e2("proofforge").goodRejected}{" "}
-          of {E2.good} correct repairs. The bad repairs were written by the build team, so the counts describe this suite.
-        </p>
-        <p className="fact-source">
-          <a href={githubFile(E2.source.replace("e2.json", "e2.md"))}>results/e2-all-1</a>
-        </p>
-      </li>
-      <li className="card fact">
-        <p className="fact-figure">
-          ${balancer.planner.usdPerVerified.toFixed(2)} <span className="fact-figure-alt">vs ${balancer.alone.usdPerVerified.toFixed(2)}</span>
-        </p>
-        <p className="fact-text">
-          Per verified {shortIncident(balancer.incident)} fix: Muse with ProofForge verified {balancer.planner.verified} of{" "}
-          {balancer.planner.runs} runs, Muse alone {balancer.alone.verified} of {balancer.alone.runs}, at the same caps.
-        </p>
-        <p className="fact-note">
-          List prices; caps of ${RUN_CAPS.usdList} and {RUN_CAPS.seconds / 3600} hours per run; Muse Spark 1.3, with the Muse Wonder planner
-          in the ProofForge arm. The difference in verification rate is not statistically significant at these sample sizes (one-sided Fisher exact p ={" "}
-          {balancer.fisherOneSidedP.toFixed(2)}); the difference in cost is the stronger result.
-        </p>
-        <p className="fact-source">
-          <a href={githubFile("results/library-1/README.md")}>results/library-1</a>
-        </p>
-      </li>
-      <li className="card fact">
-        <p className="fact-figure">
-          {fmt(ss.rejected)} of {fmt(ss.compiled)}
-        </p>
-        <p className="fact-text">
-          Wrong variants of the reference code rejected by the {ss.specifications} locked specifications, {fmt(ss.kernelChecked)} with
-          kernel-checked counterexamples.
-        </p>
-        <p className="fact-note">
-          Each variant is a compiling mutant with one change. Of the {ss.compiled - ss.rejected} that pass, {ss.survivedDiffers} behave differently from the reference and are reported as
-          specification gaps.
-        </p>
-        <p className="fact-source">
-          <a href={githubFile(ss.doc)}>{ss.doc}</a>
-        </p>
-      </li>
+      {headlineFacts().map((f) => (
+        <li key={f.key} className="card fact">
+          <p className="fact-figure">{f.figure}</p>
+          <p className="fact-text">{f.text}</p>
+          <p className="fact-note">{f.note}</p>
+          <p className="fact-source">{f.source}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Narrow screens only: the four figures and their sentences right under the headline, in a 2 by 2 grid.
+ * The same facts follow in full as cards, so this copy is hidden from assistive technology. */
+function HeroFigures() {
+  return (
+    <ul className="hero-figures" aria-hidden="true">
+      {headlineFacts().map((f) => (
+        <li key={f.key}>
+          <p className="fact-figure">{f.figure}</p>
+          <p className="fact-text">{f.text}</p>
+        </li>
+      ))}
     </ul>
   );
 }

@@ -14,7 +14,7 @@ export default function PayoutsPage() {
   const tests = readPropertyTests();
   const passport = readRepairedPassport();
   return (
-    <main className="page">
+    <main id="main" className="page">
       <h1>Split a payout</h1>
       <p className="lead">
         Enter an amount in dollars and three or more recipients, then run the same request on the buggy build and on the verified repair. Both

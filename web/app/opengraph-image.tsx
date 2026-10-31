@@ -1,71 +1,99 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { ImageResponse } from "next/og";
 import { CETUS_HOTFIX } from "@/lib/contribution";
 import { E2 } from "@/lib/evidence";
 import { FEATURED, HEADLINE } from "@/lib/flagships";
 
-// The card shown when a link to the site is shared (Open Graph and, through twitter-image.tsx, X).
-// Every figure comes from the same data modules as the home page.
+// The card shown when a link to the site is shared (Open Graph and, through twitter-image.tsx, X), in the
+// identity kit: Void ground, the reversed lockup, the headline in Instrument Serif. Every figure comes from
+// the same data modules as the home page.
 
 export const alt = HEADLINE;
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-const ink = "#0d1117";
-const muted = "#566070";
-const bad = "#b3261e";
-const badBg = "#fdeceb";
-const ok = "#0c7339";
-const okBg = "#e8f5ee";
+const VOID = "#05070B";
+const GRAPHITE = "#0E131B";
+const STEEL = "#1C2532";
+const MIST = "#A9B4C2";
+const FROST = "#F2F5F8";
+const INK = "#0B0F15";
+const VERIFIED = "#3DDC97";
+const REFUTED = "#FF5D5D";
 
-export default function OpenGraphImage() {
+
+export default async function OpenGraphImage() {
+  const [serif, display, sans, sansSemi, mono, lockup] = await Promise.all([
+    readFile(path.join(process.cwd(), "assets", "og-fonts", "InstrumentSerif-Regular.ttf")),
+    readFile(path.join(process.cwd(), "assets", "og-fonts", "SpaceGrotesk-SemiBold.ttf")),
+    readFile(path.join(process.cwd(), "assets", "og-fonts", "Inter-Regular.ttf")),
+    readFile(path.join(process.cwd(), "assets", "og-fonts", "Inter-SemiBold.ttf")),
+    readFile(path.join(process.cwd(), "assets", "og-fonts", "JetBrainsMono-Regular.ttf")),
+    readFile(path.join(process.cwd(), "public", "brand", "proofforge-horizontal-reversed.svg")),
+  ]);
+  const lockupSrc = `data:image/svg+xml;base64,${lockup.toString("base64")}`;
   const versions = FEATURED.timeline;
   const ordinary = E2.arms.find((a) => a.key === "ordinary")!;
   const pf = E2.arms.find((a) => a.key === "proofforge")!;
   return new ImageResponse(
     (
-      <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", background: "#f6f7f9", padding: "52px 60px", fontFamily: "sans-serif", color: ink }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, fontSize: 30, fontWeight: 700 }}>
-          <svg width="40" height="40" viewBox="0 0 32 32">
-            <rect width="32" height="32" rx="8" fill={ink} />
-            <path d="M9 16.5l4.5 4.5L23 11.5" fill="none" stroke="#fff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          ProofForge
+      <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", background: VOID, padding: "48px 60px", fontFamily: "Inter", color: FROST }}>
+        {/* The kit's lockup artboard is 624 by 106 with an 8 unit margin. */}
+        <img src={lockupSrc} width={236} height={40} alt="" style={{ marginLeft: -3 }} />
+        <div style={{ display: "flex", fontFamily: "Instrument Serif", fontSize: 78, lineHeight: 1.02, marginTop: 36, width: 1060, color: FROST }}>
+          {HEADLINE}
         </div>
-        <div style={{ display: "flex", fontSize: 58, lineHeight: 1.2, letterSpacing: -1, marginTop: 24, width: 1080 }}>
-          {HEADLINE.replace(/\.$/, "")}
-        </div>
-        <div style={{ display: "flex", fontSize: 26, color: muted, marginTop: 20 }}>
+        <div style={{ display: "flex", fontSize: 25, color: MIST, marginTop: 22 }}>
           {`${FEATURED.incident}, ${FEATURED.loss.amount} ${FEATURED.loss.short}: one specification, four versions of the code`}
         </div>
-        <div style={{ display: "flex", gap: 14, marginTop: 20 }}>
+        <div style={{ display: "flex", gap: 14, marginTop: 30 }}>
           {versions.map((v) => (
             <div
               key={v.key}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                flex: 1,
-                padding: "14px 16px",
-                borderRadius: 12,
-                background: v.verdict === "REFUTED" ? badBg : okBg,
-                borderLeft: `6px solid ${v.verdict === "REFUTED" ? bad : ok}`,
-              }}
+              style={{ display: "flex", flexDirection: "column", flex: 1, padding: "14px 16px", borderRadius: 12, background: GRAPHITE, border: `1px solid ${STEEL}` }}
             >
-              <div style={{ display: "flex", fontSize: 26 }}>{v.title}</div>
-              <div style={{ display: "flex", fontSize: 24, color: v.verdict === "REFUTED" ? bad : ok, marginTop: 8 }}>{v.verdict}</div>
+              <div style={{ display: "flex", fontFamily: "Space Grotesk", fontSize: 24, color: FROST }}>{v.title}</div>
+              <div style={{ display: "flex", marginTop: 10 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontFamily: "JetBrains Mono",
+                    fontSize: 18,
+                    color: INK,
+                    background: v.verdict === "REFUTED" ? REFUTED : VERIFIED,
+                    padding: "2px 10px",
+                    borderRadius: 4,
+                  }}
+                >
+                  <div style={{ width: 8, height: 8, background: INK, borderRadius: 1 }} />
+                  {v.verdict}
+                </div>
+              </div>
             </div>
           ))}
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 25, color: ink, marginTop: 28 }}>
-          <div style={{ display: "flex" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 21, marginTop: 30 }}>
+          <div style={{ display: "flex", fontFamily: "JetBrains Mono", color: FROST, fontSize: 19 }}>
             {`Hotfix counterexample: checkedShlw(2^192) = (0, false), checked by ${CETUS_HOTFIX.kernels} kernels.`}
           </div>
-          <div style={{ display: "flex", color: muted }}>
+          <div style={{ display: "flex", color: MIST }}>
             {`Seeded bad repairs accepted: by ordinary checking ${ordinary.badAccepted} of ${E2.bad}, by ProofForge ${pf.badAccepted} of ${E2.bad}.`}
           </div>
         </div>
       </div>
     ),
-    size,
+    {
+      ...size,
+      fonts: [
+        { name: "Instrument Serif", data: serif, weight: 400, style: "normal" },
+        { name: "Space Grotesk", data: display, weight: 600, style: "normal" },
+        { name: "Inter", data: sans, weight: 400, style: "normal" },
+        { name: "Inter", data: sansSemi, weight: 600, style: "normal" },
+        { name: "JetBrains Mono", data: mono, weight: 400, style: "normal" },
+      ],
+    },
   );
 }

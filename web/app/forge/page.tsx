@@ -21,7 +21,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
     [task, recordings] = await Promise.all([getJson<TaskDetail>(`/api/tasks/${encodeURIComponent(taskId)}`), getJson<string[]>("/api/recordings")]);
   } catch (e) {
     return (
-      <main className="page">
+      <main id="main" className="page">
         <ErrorBox title="Could not load the task from the ProofForge API." message={(e as Error).message}>
           <p className="small" style={{ margin: "8px 0 0" }}>
             Start the API with <code>.venv/bin/uvicorn server.app:app --port 8765</code> and reload this page.

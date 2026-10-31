@@ -151,7 +151,7 @@ export function ForgeSession(props: {
     budget?.elapsed_s ?? passport?.provenance?.elapsed_s ?? (state.recordedStart != null && state.recordedEnd != null ? state.recordedEnd - state.recordedStart : null);
 
   return (
-    <main className="forge" style={{ ["--code-size" as string]: `${codeSize}px`, ["--text-size" as string]: `${codeSize + 1}px` }}>
+    <main id="main" className="forge" style={{ ["--code-size" as string]: `${codeSize}px`, ["--text-size" as string]: `${codeSize + 1}px` }}>
       <div className="segment-bar">
         <span className="segment-label" data-segment={segKind} aria-live="polite">
           {segment}
