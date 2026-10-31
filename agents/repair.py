@@ -20,8 +20,17 @@ tactics, simp sets) with the rule that the candidate may import ProofForgeFin, t
 the library declarations the index ranks highest for it. `--library off` gives the harness
 without the library. A0 (agents/baseline.py) never gets the library.
 
+Loops: `--loop orchestrated` (default) fixes behavior first, then works obligation by obligation
+in the task's listed order (phase 1), resolves what is left with planner decompositions (phase 2)
+and spends the rest on whole-file repair (phase 3). `--loop free` is one tool dialog.
+`--loop topdown` keeps phase 0 and phase 3 and replaces phases 1 and 2 by a structure phase (a
+proof skeleton that derives every open required theorem from named helper theorems, accepted
+only when Lean confirms that no required theorem uses `sorry` except through helpers) and a fill
+phase (the open helpers, found from the compiled candidate's dependency graph, become the
+obligations, shared helpers first); see topdown() and docs/ARCHITECTURE.md.
+
 Usage: repair.py [--task T] [--model muse-spark-1.3-contributor] [--planner muse-wonder-1.0|none]
-                 [--mode repair|implement] [--loop orchestrated|free] [--library on|off]
+                 [--mode repair|implement] [--loop orchestrated|free|topdown] [--library on|off]
                  [--budget-usd X] [--budget-wall S] [--out DIR] [--start FILE]
 """
 import argparse, json, pathlib, re, shutil, sys, tempfile, time
@@ -271,7 +280,18 @@ def library_brief(index, tools=True):
     return "\n".join(lines)
 
 
-def tools_for(task, library=False):
+TOPDOWN_TOOLS = [
+    {"type": "function", "function": {"name": "submit_skeleton", "description": "Install a proof skeleton in candidate/Solution.lean: helper theorems (their proofs may be `sorry`), any definitions they need (complete bodies), and every unproved required theorem with exactly its statement and a proof that uses no `sorry` itself, only helper theorems. Kept only if the file compiles and Lean confirms that no required theorem uses `sorry` except through helper theorems; otherwise the file is unchanged and the reasons are returned.",
+     "parameters": {"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]}}},
+    {"type": "function", "function": {"name": "refute_helper", "description": "Show that a helper theorem of the skeleton is false: give a proof of its negation (`¬ (type_of% @name)`, every binder universally quantified). If Lean accepts the proof with no sorry, the helper is marked false and the skeleton is revised around it.",
+     "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "proof": {"type": "string", "description": "a term or `by` tactic block proving the negation"}},
+                    "required": ["name", "proof"]}}},
+]
+
+
+def tools_for(task, library=False, topdown=False):
+    """Tool definitions. The top-down tools are listed only with `topdown` (dialogs pick their
+    tools by name, so the other loops never see them)."""
     lib = [
         {"type": "function", "function": {"name": "search_library", "description": "Search the ProofForgeFin library index (theorems, definitions, structures, tactics, simp sets, modules) by keywords, declaration names or a statement. Returns the best matches with signature, module to import and doc string.",
          "parameters": {"type": "object", "properties": {"query": {"type": "string"},
@@ -293,7 +313,7 @@ def tools_for(task, library=False):
          "parameters": {"type": "object", "properties": {}}}},
         {"type": "function", "function": {"name": "run_tests", "description": "Build the executable from the current candidate and run property tests against the requirements. Returns violated requirements and counterexamples.",
          "parameters": {"type": "object", "properties": {}}}},
-    ] + lib
+    ] + lib + (TOPDOWN_TOOLS if topdown else [])
 
 
 class Session:
@@ -322,6 +342,13 @@ class Session:
         self.accepted = False
         self.last_good = None  # source of the newest version known to compile
         self.events = []
+        # Top-down loop state (unused by the other loops): helpers shown false with a Lean-checked
+        # refutation, notes from dialogs that did not prove a declaration, and tools added to the
+        # obligation dialogs.
+        self.refuted = {}
+        self.notes = {}
+        self.extra_tools = set()
+        self.skeleton_ctx = None
         # Declaration boundary: the next top-level item, an `open` command or the namespace end.
         self.boundary = (r"(?:@\[|/--|private |protected |noncomputable |theorem |lemma |def |instance |abbrev "
                          rf"|structure |inductive |open |{re.escape(self.end)})")
@@ -686,6 +713,64 @@ class Session:
                 status[t] = "PROVED"
         return status
 
+    def dep_graph(self):
+        """The compiled candidate's declarations from Lean: {full name: {"kind", "sorry", "deps"}},
+        where `sorry` says the declaration's own type or value mentions `sorryAx` and `deps` are
+        the candidate's declarations it mentions. Compiler-generated auxiliaries (`foo.proof_1`,
+        `foo.match_1`, `foo.eq_1`, ...) are merged into their owner. Returns (graph, None), or
+        (None, compiler output) when the file does not compile or the probe fails."""
+        r = self.compile(8000)
+        if "error:" in r["output_tail"]:
+            return None, self._clean(r["output_tail"])
+        (self.ws / "Deps.lean").write_text(DEPS_PROBE)
+        out = self.ws / ".deps.txt"
+        out.unlink(missing_ok=True)
+        p = judge.in_container(self.ws, "lake env lean Deps.lean > .deps.txt 2>&1; tail -c 1500 .deps.txt", timeout=600)
+        text = out.read_text(errors="replace") if out.exists() else ""
+        if "PFDEPS " not in text:
+            return None, "dependency probe failed: " + (p["output_tail"] or text)[-1500:]
+        raw = {}
+        for line in text.split("PFDEPS ", 1)[1].splitlines()[1:]:
+            parts = line.split("\t")
+            if len(parts) == 4:
+                raw[parts[0]] = {"kind": parts[1], "sorry": parts[2] == "1", "deps": set(parts[3].split())}
+        owner = {n: aux_owner(n, raw) for n in raw}
+        graph = {}
+        for n, rec in raw.items():
+            o = owner[n]
+            g = graph.setdefault(o, {"kind": raw[o]["kind"], "sorry": False, "deps": set()})
+            g["sorry"] = g["sorry"] or rec["sorry"]
+            g["deps"] |= {owner.get(d, d) for d in rec["deps"]} - {o}
+        return graph, None
+
+    def refute_helper(self, name, proof):
+        """Lean-checked refutation of a helper theorem: `¬ (type_of% @name)` proved after the
+        current candidate, with no errors, warnings or sorry. Marks the helper false; the
+        candidate is not changed."""
+        short = (name or "").split(".")[-1].strip()
+        text = decl_text(self, short)
+        if not text or not re.search(rf"\b(?:theorem|lemma)\s", text.split(":")[0] + " ") or short in self.theorems:
+            return f"error: `{short}` is not a helper theorem of candidate/Solution.lean"
+        if own_sorry_free(self, short):
+            return f"error: `{short}` is proved, so it cannot be refuted"
+        proof = (proof or "").strip()
+        if not proof or "sorry" in proof:
+            return "error: give a complete proof of the negation, without sorry"
+        code = f"theorem {short}_refuted : ¬ (type_of% @{short}) :=\n{textwrap_indent(proof)}"
+        clean, msgs, ms = self._scratch(code)
+        self.log(kind="refute", name=short, ok=clean, ms=ms, proof=proof[:2000])
+        if not clean:
+            return "refutation not accepted:\n" + "\n".join(msgs)[-4000:]
+        self.refuted[short] = {"proof": proof, "stmt": statement_of(text)}
+        return (f"REFUTED: Lean accepts a proof of ¬ `{short}`. The helper is false; the skeleton will be "
+                "revised without it. Stop working on it.")
+
+    def submit_skeleton(self, code):
+        """Tool of the structure dialog (top-down loop): accept_skeleton() for the current round."""
+        if self.skeleton_ctx is None:
+            return "error: no structure phase is running"
+        return accept_skeleton(self, code or "", self.skeleton_ctx)[1]
+
     def check_status(self, names=None):
         r = self.compile(2000)
         if "error:" in r["output_tail"]:
@@ -775,7 +860,7 @@ class Session:
 
 def dialog(s, model, effort, system, user, tool_names, max_turns, done, label):
     """Run one tool-using dialog until done() or the turn budget is spent."""
-    tools = [t for t in tools_for(s.task, s.library) if t["function"]["name"] in tool_names]
+    tools = [t for t in tools_for(s.task, s.library, topdown=True) if t["function"]["name"] in tool_names]
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     extra = {} if effort == "default" else {"reasoning_effort": effort}
     for turn in range(max_turns):
@@ -814,7 +899,10 @@ def dialog(s, model, effort, system, user, tool_names, max_turns, done, label):
                   "try_snippet": lambda: s.try_snippet(args.get("code", "")),
                   "check": s.check, "run_tests": s.run_tests,
                   "search_library": lambda: s.search_library(args.get("query", ""), args.get("limit", 10)),
-                  "add_import": lambda: s.add_import(args.get("module", ""))}.get(name) if name in tool_names else None
+                  "add_import": lambda: s.add_import(args.get("module", "")),
+                  "submit_skeleton": lambda: s.submit_skeleton(args.get("code", "")),
+                  "refute_helper": lambda: s.refute_helper(args.get("name", ""), args.get("proof", ""))
+                  }.get(name) if name in tool_names else None
             t_tool = time.monotonic()
             result = fn() if fn else f"error: tool {name} is not available in this phase"
             s.log(kind="tool", label=label, name=name,
@@ -855,7 +943,9 @@ def obligation_query(s, stmt):
     return stmt + "\n" + "\n".join(docs)
 
 
-def orchestrate(s, a):
+def orchestrate(s, a, middle=None):
+    """Phase 0 (behavior first), then `middle` (default: phases 1 and 2, structured(); the
+    top-down loop passes topdown_phases()), then phase 3 (whole-file repair) if not accepted."""
     system = system_prompt(s)
     spec = spec_text(s)
     impl = s.mode == "implement"
@@ -878,7 +968,7 @@ def orchestrate(s, a):
                                   a.phase0_turns, lambda: tests_ok["v"], "implement")[0]
     s.log(kind="phase", phase="implement", ok=ok0)
     if ok0:
-        structured(s, a, system, spec)
+        (middle or structured)(s, a, system, spec)
     # Phase 3: spend the rest of the budget on whole-file repair from the current file,
     # with the same protocol as the compile-and-retry baseline.
     if not s.accepted:
@@ -939,17 +1029,20 @@ def pending_deps(s, name):
 
 
 def resolve(s, a, system, spec, name, depth, plan_text=""):
-    """Make `name` sorry-free: try directly, then decompose with the planner (bounded depth)."""
+    """Make `name` sorry-free: try directly, then decompose with the planner (bounded depth).
+    A helper refuted during the attempt (top-down loop) is left alone."""
     if not own_sorry_free(s, name):
         prove_target(s, a, system, spec, name, a.obligation_turns, f"d{depth}", plan_text)
-    if not own_sorry_free(s, name) and depth < a.max_depth and a.planner != "none":
+    if not own_sorry_free(s, name) and depth < a.max_depth and a.planner != "none" and name not in s.refuted:
         lemmas, text = plan(s, a, spec, name, s.plan_count)
         for l in lemmas:
             resolve(s, a, system, spec, l, depth + 1, text)
-        prove_target(s, a, system, spec, name, a.obligation_turns, f"d{depth}", text)
+        if name not in s.refuted:
+            prove_target(s, a, system, spec, name, a.obligation_turns, f"d{depth}", text)
     if own_sorry_free(s, name):
         for dep in pending_deps(s, name):
-            resolve(s, a, system, spec, dep, depth + 1, plan_text)
+            if dep not in s.refuted:
+                resolve(s, a, system, spec, dep, depth + 1, plan_text)
     ok = s.check_status([name]).get(name) == "PROVED"
     s.log(kind="resolve", name=name, depth=depth, ok=ok)
     return ok
@@ -1058,15 +1151,528 @@ def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
             + f"Your task now: prove `{stmt}`. Do not change {defs} or anything already proved. "
             "Develop the proof with try_snippet; a clean snippet that proves "
             f"`{t}` replaces its sorry automatically. You may use the other helper lemmas in the file even if "
-            "they are still sorry; they are proved separately.")
+            "they are still sorry; they are proved separately."
+            + (" If you find that the statement is false, prove its negation with refute_helper; the skeleton "
+               "is then revised without it." if "refute_helper" in s.extra_tools and t not in s.theorems else "")
+            + (f"\n\nEarlier attempts at this target ended like this (the file may have changed since):\n"
+               f"{notes_text(s, t)}" if s.extra_tools and s.notes.get(t) else ""))
     def own_proof_done():
-        """The target's own proof is sorry-free and the file compiles (dependencies may be pending)."""
-        m2 = re.search(rf"^(?:private\s+)?theorem\s+{re.escape(t)}\b.*?(?=^{s.boundary})", s._source(), re.S | re.M)
+        """The target's own proof is sorry-free and the file compiles (dependencies may be pending),
+        or the target was refuted."""
+        if t in s.refuted:
+            return True
+        m2 = re.search(rf"^{DECL_PREFIX}theorem\s+{re.escape(t)}(?![\w.']).*?(?=^{s.boundary})", s._source(), re.S | re.M)
         return bool(m2) and "sorry" not in m2.group(0) and s.check_status([t]).get(t) != "ERROR"
-    ok, _ = dialog(s, a.model, a.effort, system, user, {"try_snippet", "replace_declaration", "check", "read_file"} | lib_tools(s),
-                   budget, own_proof_done, f"{label}:{t}")
+    ok, messages = dialog(s, a.model, a.effort, system, user,
+                          {"try_snippet", "replace_declaration", "check", "read_file"} | lib_tools(s) | s.extra_tools,
+                          budget, own_proof_done, f"{label}:{t}")
+    ok = ok and t not in s.refuted
+    if not ok:
+        remember(s, t, messages)
     s.log(kind="obligation", label=label, theorem=t, ok=ok)
     return ok
+
+
+# Top-down loop (--loop topdown): structure phase, then fill phase
+
+# Harness probe run in the session workspace after `lake build Solution` (never part of a
+# candidate, never judged): one line per declaration of the candidate module.
+DEPS_PROBE = """import Solution
+import Lean
+open Lean
+
+/-! Harness probe: for every declaration of the compiled candidate module, its kind, whether its
+own type or value mentions `sorryAx`, and the candidate declarations it mentions. -/
+#eval show CoreM Unit from do
+  let env ← getEnv
+  let some sol := env.getModuleIdx? `Solution | throwError "module Solution not found"
+  let mut out : Array String := #[]
+  for (n, ci) in env.constants.map₁.toList do
+    if env.getModuleIdxFor? n == some sol then
+      let kind := match ci with
+        | .thmInfo _ => "theorem" | .defnInfo _ => "def" | .inductInfo _ => "inductive"
+        | .ctorInfo _ => "ctor" | .recInfo _ => "rec" | .opaqueInfo _ => "opaque"
+        | .axiomInfo _ => "axiom" | .quotInfo _ => "quot"
+      let used := ci.getUsedConstantsAsSet
+      let deps := used.toList.filter (fun m => env.getModuleIdxFor? m == some sol)
+      out := out.push s!"{n}\\t{kind}\\t{if used.contains ``sorryAx then 1 else 0}\\t{String.intercalate " " (deps.map toString)}"
+  IO.println s!"PFDEPS {out.size}"
+  for l in out do IO.println l
+"""
+
+# Last name components of compiler-generated declarations, merged into their owner.
+AUX_LAST = re.compile(r"^(?:_.*|proof_\d+|match_\d+|eq_\d+|eq_def|induct|mutual_induct|fun_cases|brecOn|below|"
+                      r"binductionOn|ibelow|recOn|casesOn|noConfusion|noConfusionType|sizeOf_spec|injEq|inj|ctorIdx)$")
+
+
+def aux_owner(name, names):
+    """The declaration a compiler-generated auxiliary belongs to (`foo.proof_1` -> `foo`)."""
+    parts = name.split(".")
+    while len(parts) > 1 and AUX_LAST.match(parts[-1]) and ".".join(parts[:-1]) in names:
+        parts = parts[:-1]
+    return ".".join(parts)
+
+
+def short_name(full):
+    """The name the source tools address a declaration by: the last component, with Lean's
+    mangling of private names removed."""
+    full = re.sub(r"^_private\.[^.]+(?:\.[^.]+)*?\.0\.", "", full)
+    return full.split(".")[-1]
+
+
+def textwrap_indent(text, pad="  "):
+    return "\n".join(pad + l if l.strip() else l for l in text.split("\n"))
+
+
+def notes_text(s, name, limit=1600):
+    return "\n".join(f"- {n}" for n in s.notes.get(name) or [])[-limit:]
+
+
+def remember(s, name, messages):
+    """Keep the end of a dialog that did not prove `name` (the model's last words and the last
+    tool result) for the next attempt and for a revised skeleton."""
+    said = next((m["content"] for m in reversed(messages) if m["role"] == "assistant" and m.get("content")), "")
+    got = next((m["content"] for m in reversed(messages) if m["role"] == "tool"), "")
+    note = said.strip()[:600]
+    if got:
+        note += ("\n  Last tool result: " if note else "Last tool result: ") + got.strip()[-1000:]
+    if note:
+        s.notes[name] = (s.notes.get(name, []) + [note])[-2:]
+
+
+def statement_of(text):
+    """A declaration's text up to its proof."""
+    return re.split(r":=\s*(?:by\b|sorry\b)|:=\s*$", text, maxsplit=1)[0].strip() if text else ""
+
+
+def _norm(text):
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def analyze(s, graph):
+    """Required theorems against the dependency graph: `missing` (not in the module), `direct`
+    (their own proof mentions sorry), `proved` (nothing they depend on mentions sorry),
+    `open` (helper declarations whose own proof mentions sorry, with the required theorems that
+    depend on each) and `reach` (every declaration each required theorem depends on)."""
+    req = {t: f"{s.ns}.{t}" for t in s.theorems}
+    reqfull = set(req.values())
+    reach = {}
+    for t, full in req.items():
+        seen, todo = set(), [full]
+        while todo:
+            for d in graph.get(todo.pop(), {}).get("deps", ()):
+                if d not in seen:
+                    seen.add(d)
+                    todo.append(d)
+        reach[t] = seen
+    opens = {}
+    for t in s.theorems:
+        for n in sorted(reach[t]):
+            if n in graph and graph[n]["sorry"] and n not in reqfull:
+                opens.setdefault(n, []).append(t)
+    return {"missing": [t for t, f in req.items() if f not in graph],
+            "direct": [t for t, f in req.items() if f in graph and graph[f]["sorry"]],
+            "proved": [t for t, f in req.items() if f in graph and not graph[f]["sorry"]
+                       and not any(graph.get(n, {}).get("sorry") for n in reach[t])],
+            "open": opens, "reach": reach}
+
+
+def lib_score(s, stmt):
+    """How strongly the library index matches a statement (top BM25 score of a non-module hit);
+    0 without the library."""
+    if not s.lib_index or not stmt:
+        return 0.0
+    hits = [x for x in s.lib_index.scored(obligation_query(s, stmt), limit=8) if x[1]["kind"] != "module"]
+    return round(hits[0][0], 2) if hits else 0.0
+
+
+def open_helpers(s, an):
+    """The open helpers the source tools can address, in fill order: shared by more required
+    theorems first, then the ones the library index matches best, then file order."""
+    src = s._source()
+    out = []
+    for full, users in an["open"].items():
+        short = short_name(full)
+        text = decl_text(s, short, src)
+        if not text:
+            continue
+        stmt = statement_of(text)
+        out.append({"name": short, "full": full, "users": sorted(set(users), key=s.theorems.index),
+                    "lib": lib_score(s, stmt), "pos": src.find(text), "stmt": stmt})
+    out.sort(key=lambda h: (-len(h["users"]), -h["lib"], h["pos"]))
+    return out
+
+
+SCOPE_CMD = re.compile(r"^\s*(namespace|section|end|variable|include|omit|universe|set_option|mutual|noncomputable section)\b")
+
+
+def install_skeleton(s, code, status):
+    """Install a skeleton into the current source (nothing is saved). Returns (source, info,
+    problems): a required theorem that is not PROVED takes the skeleton's proof under its locked
+    statement; a new declaration is appended; a helper that still uses sorry is replaced; a
+    declaration that exists with a complete proof is kept. `import ProofForgeFin...` lines go to
+    the header, top-level `open` lines apply to the later declarations (as in try_snippet)."""
+    src = s._source()
+    problems, notes, derived, helpers = [], [], [], []
+    code = fin_lib.strip_comments(code)   # comments, doc comments included
+    code, hoist, refusal = s._snippet_imports(code, src)
+    if refusal:
+        problems.append(refusal.replace("error: not compiled: ", ""))
+    keep = []
+    for l in code.split("\n"):
+        if re.match(rf"^\s*(?:namespace|end)\s+{re.escape(s.ns)}\s*$", l) or re.match(r"^\s*#\w+", l):
+            continue   # the task's namespace wrapper and #check-style commands are dropped
+        if SCOPE_CMD.match(l):
+            problems.append(f"`{l.strip()}` is not supported in a skeleton: state every helper at the top level of "
+                            f"`namespace {s.ns}` with its hypotheses as explicit binders")
+        keep.append(l)
+    code = s._snippet_opens("\n".join(keep))
+    chunks = s._chunks(code)
+    if not chunks:
+        problems.append("the code block has no declarations")
+    names = [n for n, _ in chunks]
+    for n in sorted({n for n in names if names.count(n) > 1}):
+        problems.append(f"`{n}` is declared more than once")
+    append = []
+    for name, text in chunks:
+        kind = re.match(rf"^{DECL_PREFIX}({DECL_KINDS[3:-1]})\s", text.split("\n", 1)[0] + " ")
+        kind = kind.group(1) if kind else re.search(DECL_KINDS, text).group(0)
+        cur = decl_text(s, name, src)
+        if name in s.task.definitions:
+            if _norm(fin_lib.strip_comments(cur)) != _norm(fin_lib.strip_comments(text)):
+                problems.append(f"`{name}` is a required definition; a skeleton cannot change it (leave it out)")
+            continue
+        if name in s.theorems:
+            if status.get(name) == "PROVED":
+                notes.append(f"`{name}` is already proved and was kept")
+                continue
+            head = re.match(r"(.*?):=", re.sub(r"^open\s[^\n]*?\bin\s+", "", cur), re.S)
+            body = re.match(r".*?(:=.*)$", text, re.S)
+            if not head or not body:
+                problems.append(f"`{name}`: no proof after `:=`")
+                continue
+            pre = re.match(r"^open\s[^\n]*?\bin\s+", text)
+            src, _ = s._replace_in(src, name, (pre.group(0) if pre else "") + head.group(1).rstrip() + " "
+                                   + body.group(1).strip())
+            derived.append(name)
+            continue
+        if cur:
+            if "sorry" not in cur:
+                if _norm(cur) != _norm(text):
+                    notes.append(f"`{name}` already exists with a complete proof; the existing declaration was kept")
+                continue
+            src, _ = s._replace_in(src, name, "")   # an open helper is replaced
+        if "sorry" in text and kind not in ("theorem", "lemma"):
+            problems.append(f"`{name}` is a {kind} with `sorry`: definitions need complete bodies; only theorems may "
+                            "be left open")
+        append.append((name, text))
+        if "sorry" in text:
+            helpers.append(name)
+    for name, text in append:
+        src, _ = s._replace_in(src, name, text)
+    pending = [t for t in s.theorems if status.get(t) != "PROVED"]
+    for t in pending:
+        if t not in derived and "sorry" in decl_text(s, t, src):
+            problems.append(f"`{t}` is not derived: the skeleton must give every unproved required theorem a proof "
+                            "from helper theorems")
+    if hoist:
+        lines = src.split("\n")
+        last = max([i for i, l in enumerate(lines) if re.match(r"^\s*import\s+\S+", l)], default=-1)
+        lines[last + 1:last + 1] = [f"import {m}" for m in hoist]
+        src = "\n".join(lines)
+    return src, {"derived": derived, "helpers": helpers, "hoisted": hoist, "notes": notes}, problems
+
+
+def accept_skeleton(s, code, ctx):
+    """Install a skeleton and keep it only if the file compiles and Lean's dependency graph shows
+    that no required theorem mentions sorry in its own proof (every open obligation is a helper
+    theorem), that no definition is left open and that no refuted helper is used. Returns
+    (accepted, message for the model)."""
+    rnd, before = ctx["round"], s._source()
+
+    def reject(msg):
+        ctx["tries"] += 1
+        s.log(kind="skeleton", round=rnd, source=ctx["source"], attempt=ctx["tries"], accepted=False,
+              problems=msg[:3000], code=code[:8000])
+        return False, ("SKELETON REJECTED; candidate/Solution.lean is unchanged.\n" + msg)
+    src, info, problems = install_skeleton(s, code, ctx["status"])
+    if problems:
+        return reject("\n".join(f"- {p}" for p in problems))
+    if s._normalize(src) == s._normalize(before):
+        return reject("Nothing in the code is new: every declaration in it already exists with a complete proof.")
+    s._save(src, f"skeleton {rnd}")
+    graph, err = s.dep_graph()
+    if graph is None:
+        s._save(before, f"revert skeleton {rnd}")
+        return reject("The file does not compile with the skeleton. Lean output:\n" + err[-5000:])
+    an = analyze(s, graph)
+    bad = [f"`{t}` uses `sorry` in its own proof; move that step into a named helper theorem and use it"
+           for t in an["direct"]]
+    bad += [f"`{t}` is missing from the compiled file" for t in an["missing"]]
+    for full, users in an["open"].items():
+        short = short_name(full)
+        if graph[full]["kind"] != "theorem":
+            bad.append(f"`{short}` ({graph[full]['kind']}) uses `sorry`; only helper theorems may be left open")
+        ref = s.refuted.get(short)
+        if ref and _norm(ref["stmt"]) == _norm(statement_of(decl_text(s, short))):
+            bad.append(f"`{short}` was refuted (Lean accepted a proof of its negation); the skeleton must not use it")
+    if bad:
+        s._save(before, f"revert skeleton {rnd}")
+        return reject("Lean's dependency check:\n" + "\n".join(f"- {b}" for b in bad))
+    hs = open_helpers(s, an)
+    s.targets.update(h["name"] for h in hs)
+    for name in list(s.refuted):   # a name reused for another statement is a new helper
+        if _norm(statement_of(decl_text(s, name))) != _norm(s.refuted[name]["stmt"]):
+            del s.refuted[name]
+    rec = {"round": rnd, "source": ctx["source"], "prose": ctx.get("prose", ""), "derived": info["derived"],
+           "helpers": [h["name"] for h in hs], "version": s.version}
+    ctx["accepted"] = rec
+    (s.out / f"skeleton_{rnd}.lean").write_text(code)
+    s.log(kind="skeleton", round=rnd, source=ctx["source"], attempt=ctx["tries"] + 1, accepted=True,
+          derived=info["derived"], hoisted=info["hoisted"], proved=an["proved"],
+          helpers={h["name"]: h["users"] for h in hs}, notes=info["notes"], code=code[:8000])
+    listing = "\n".join(f"- {h['name']} (used by {len(h['users'])} required theorem(s))" for h in hs)
+    return True, (f"SKELETON ACCEPTED (version {s.version}): Lean confirms every required theorem uses sorry only "
+                  f"through helper theorems. Open helper theorems, in the order they will be proved:\n{listing}"
+                  + ("\nNotes: " + "; ".join(info["notes"]) if info["notes"] else ""))
+
+
+SKELETON_SYSTEM = """You are a Lean 4 proof architect (Lean v4.35.0 core library only, no Mathlib).
+Given a specification, a candidate implementation and the required theorems that are not yet proved,
+you write a proof skeleton: helper theorems, each TRUE and small enough for one focused proof, whose
+proofs may be left as `sorry`, any definitions they need (invariants, potentials) with complete bodies,
+and a proof of every required theorem from them that contains no `sorry` itself. Everything you write
+must elaborate against the given file. Avoid Mathlib names (no Finset, no linarith, no BigOperators)."""
+
+TOPDOWN_GUIDANCE = """How to write the skeleton:
+- Prove each required theorem in a few lines from named helper theorems. A helper's proof may be `sorry`; every `sorry` must sit inside a helper theorem, because a required theorem whose own proof contains `sorry` is rejected (Lean checks this on the compiled file).
+- Prefer helpers that several required theorems share. State each helper with its hypotheses as explicit binders (no `variable`, `section` or `namespace`), small enough for one focused proof: one operation, one call or one case where possible.
+- A requirement about every sequence of operations or every reachable state follows from facts about one step: an invariant that holds at the start, is preserved by every step and implies the requirement, or, for an upper bound on a quantity that only accumulates, a potential (what was accumulated plus what is still owed) that no step raises by more than what the step adds. Such a reduction can be one helper about every implementation that satisfies the per-step facts, taking them as hypotheses.
+- Required theorems that are themselves about single calls are per-step facts: the proof of a required theorem may use the required theorems listed before it. Required theorems stay at the end of the file in the listed order, after every helper, so helpers cannot use them.
+- Definitions you introduce need complete bodies. Do not restate declarations that already exist; use them."""
+
+REDUCTION_QUERY = ("statement for every sequence of operations run from per-step hypotheses: invariant preserved "
+                   "by each step, potential bound, accumulated total")
+
+
+def skeleton_hints(s, pending):
+    """Library declarations for a skeleton: the best matches of each pending requirement and of
+    a fixed query for reduction theorems (per-step hypotheses, conclusion over sequences)."""
+    if not s.lib_index:
+        return ""
+    seen, hits = set(), []
+    queries = [obligation_query(s, statement(s, t)) for t in pending] + [REDUCTION_QUERY]
+    for q in queries:
+        for e in [e for e in s.lib_index.search(q, limit=12) if e["kind"] != "module"][:5]:
+            if e["name"] not in seen:
+                seen.add(e["name"])
+                hits.append(e)
+    s.log(kind="library_hints", theorem="skeleton", hits=[e["name"] for e in hits])
+    return fin_lib.render(hits, sig_chars=300)
+
+
+def statement(s, t):
+    m = re.search(rf"theorem\s+{re.escape(t)}\s*:[^\n]*", s.read_file(f"{s.task.spec_dir}/Challenge.lean"))
+    return m.group(0).replace(" := sorry", "").strip() if m else t
+
+
+def skeleton_user(s, spec, status, pending, rnd, feedback, for_tools):
+    defs = ", ".join(f"`{d}`" for d in s.task.definitions)
+    hints = skeleton_hints(s, pending) if s.library else ""
+    ask = ("Write the skeleton and submit it with submit_skeleton (use read_file, try_snippet"
+           + (" and search_library" if s.library else "") + " as needed). " if for_tools else
+           "Reply with (1) a short plan in prose: the shared facts, invariants or potentials and how each required "
+           "theorem follows; then (2) exactly one ```lean code block, inserted inside "
+           f"`namespace {s.ns}` after the current declarations, containing in dependency order: any `import "
+           "ProofForgeFin...` and `open` lines first, new definitions with complete bodies, helper theorems "
+           "(`theorem <name> ... := by sorry` unless the proof is immediate), and every required theorem listed "
+           "above with exactly its statement and a proof without `sorry`. ")
+    return (f"{spec}\n\n=== candidate/Solution.lean (current) ===\n{s._source()}\n\n"
+            f"Requirement status: {', '.join(f'{k}={v}' for k, v in status.items())}\n\n"
+            "Required theorems not yet proved:\n" + "\n".join(f"- `{statement(s, t)}`" for t in pending) + "\n\n"
+            + (f"ProofForgeFin declarations the library index ranks highest for these requirements and for "
+               f"reduction theorems (hypotheses about one step, conclusion about every sequence):\n{hints}\n\n"
+               if hints else "")
+            + TOPDOWN_GUIDANCE + "\n\n"
+            + (f"{feedback}\n\n" if feedback else "")
+            + "Task: design how these required theorems are proved together, top down. " + ask
+            + f"New helper names start with `td{rnd}_` and contain no `?` or `!`. Do not change {defs}. "
+            "The harness keeps the skeleton only if the file compiles and Lean confirms that no required theorem "
+            "uses `sorry` except through helper theorems; the helpers are then proved one at a time.")
+
+
+def architecture_prose(replies, limit=3000):
+    """The plan passed to the helper dialogs: the prose of the first reply that has any,
+    followed by the prose of later replies (corrections after feedback), so a correction never
+    replaces the plan."""
+    proses = [re.split(r"```lean", r, maxsplit=1)[0].strip() for r in replies]
+    proses = [p for p in proses if p]
+    if not proses:
+        return ""
+    plan_, later = proses[0], [p for p in proses[1:] if p != proses[0]]
+    tail = "".join(f"\n\nRevision after feedback: {p[:600]}" for p in later)
+    return plan_[: max(limit - len(tail), limit // 2)] + tail[:limit // 2]
+
+
+def structure(s, a, system, spec, rnd, feedback=""):
+    """Structure phase: the planner (A2) writes the skeleton, with compiler and dependency
+    feedback, up to --skeleton-tries replies; without a planner, or if it fails, the prover
+    writes it in a tool dialog (submit_skeleton). Returns the accepted skeleton record or None."""
+    status = s.check_status()
+    pending = [t for t, v in status.items() if v != "PROVED"]
+    ctx = {"round": rnd, "status": status, "pending": pending, "tries": 0, "accepted": None, "source": None}
+    s.skeleton_ctx = ctx
+    s.log(kind="phase", phase="structure", round=rnd, pending=pending)
+    if not pending:
+        return None
+    last = ""
+    if a.planner != "none":
+        ctx["source"] = "planner"
+        user = skeleton_user(s, spec, status, pending, rnd, feedback, for_tools=False)
+        messages = [{"role": "system", "content": SKELETON_SYSTEM}, {"role": "user", "content": user}]
+        extra = {} if a.planner_effort == "default" else {"reasoning_effort": a.planner_effort}
+        replies = []
+        for tries in range(a.skeleton_tries):
+            try:
+                r, _ = s.call(a.planner, messages, f"skeleton:{s.task.id}:{rnd}:{tries}", timeout=900, **extra)
+            except APIError as e:
+                s.log(kind="api_error", status=e.status, body=e.body[:300])
+                break   # the prover writes the skeleton instead
+            text = r["choices"][0]["message"].get("content") or ""
+            messages.append({"role": "assistant", "content": text})
+            replies.append(text)
+            blocks = re.findall(r"```lean\s*\n(.*?)```", text, re.S)
+            if not blocks:
+                messages.append({"role": "user", "content": "Your reply had no ```lean code block. Reply again in the required format."})
+                continue
+            ctx["prose"] = architecture_prose(replies)
+            ok, msg = accept_skeleton(s, blocks[-1], ctx)
+            if ok:
+                (s.out / f"skeleton_{rnd}.md").write_text("\n\n".join(replies))
+                return ctx["accepted"]
+            last = msg
+            messages.append({"role": "user", "content": msg + "\n\nReply with the corrected plan and the complete "
+                             "corrected code block."})
+        if replies:
+            (s.out / f"skeleton_{rnd}_rejected.md").write_text("\n\n".join(replies))
+    ctx["source"] = "prover"
+    user = skeleton_user(s, spec, status, pending, rnd, feedback, for_tools=True)
+    if last:
+        user += ("\n\nThe architect's last skeleton was rejected:\n" + last[-3000:]
+                 + "\nIts plan:\n" + ctx.get("prose", "")[-2000:])
+    ok, messages = dialog(s, a.model, a.effort, system, user,
+                          {"submit_skeleton", "read_file", "try_snippet"} | lib_tools(s), a.skeleton_turns,
+                          lambda: ctx["accepted"] is not None, f"structure{rnd}")
+    if ctx["accepted"] is not None:
+        ctx["accepted"]["prose"] = architecture_prose([m["content"] for m in messages
+                                                       if m["role"] == "assistant" and m.get("content")])
+    return ctx["accepted"]
+
+
+def fill(s, a, system, spec, sk):
+    """Fill phase: the open helpers of the compiled candidate (dependency graph) are the
+    obligations, in open_helpers() order, each dispatched through resolve() (dialog with
+    snippets and library hints, planner decomposition in A2). Rounds repeat until no helper is
+    open ("done"), a helper is refuted or every open helper has had --helper-attempts attempts
+    ("restructure", with the details), or --fill-rounds is reached ("stalled")."""
+    s.log(kind="phase", phase="fill", round=sk["round"])
+    attempts = {}
+    hs = []
+    for rnd in range(a.fill_rounds):
+        graph, err = s.dep_graph()
+        if graph is None:
+            s.log(kind="deps", round=rnd, error=(err or "")[-500:])
+            return "stalled", {}
+        an = analyze(s, graph)
+        hs = open_helpers(s, an)
+        s.log(kind="deps", round=rnd, proved=an["proved"], direct=an["direct"],
+              open={h["name"]: h["users"] for h in hs})
+        if not an["open"] and not an["direct"] and not an["missing"]:
+            return "done", {}
+        if not hs:   # open declarations the source tools cannot address (or a required theorem lost its proof)
+            return "stalled", {"stuck": [], "attempts": attempts}
+        refuted = [h for h in hs if h["name"] in s.refuted]
+        todo = [h for h in hs if attempts.get(h["name"], 0) < a.helper_attempts and h["name"] not in s.refuted]
+        if refuted or not todo:
+            return "restructure", {"refuted": [h["name"] for h in refuted], "attempts": attempts,
+                                   "stuck": [h for h in hs if h["name"] not in s.refuted and attempts.get(h["name"])]}
+        s.log(kind="fill_order", round=rnd, order=[{"name": h["name"], "users": len(h["users"]), "lib": h["lib"],
+                                                     "attempts": attempts.get(h["name"], 0)} for h in todo])
+        for h in todo:
+            if own_sorry_free(s, h["name"]):
+                continue
+            attempts[h["name"]] = attempts.get(h["name"], 0) + 1
+            ok = resolve(s, a, system, spec, h["name"], 1, sk.get("prose", ""))
+            s.log(kind="helper", name=h["name"], users=h["users"], ok=ok, attempt=attempts[h["name"]],
+                  refuted=h["name"] in s.refuted)
+            if h["name"] in s.refuted:
+                s.refuted[h["name"]]["stmt"] = h["stmt"]
+                return "restructure", {"refuted": [h["name"]], "stuck": [], "attempts": attempts}
+        prune(s)
+    return "stalled", {"stuck": hs, "attempts": attempts}
+
+
+def restructure_feedback(s, info):
+    """What the revised skeleton is told: refuted helpers with their refutations, stuck helpers
+    with the end of their failed attempts, and the helpers already proved."""
+    lines = ["The previous skeleton did not work out."]
+    for name in info.get("refuted", []):
+        ref = s.refuted.get(name, {})
+        lines.append(f"- FALSE: `{ref.get('stmt') or name}`. Lean accepted this proof of its negation:\n"
+                     f"{textwrap_indent(ref.get('proof', '')[:800], '    ')}")
+    for h in info.get("stuck", []):
+        n = info.get("attempts", {}).get(h["name"], 0)
+        lines.append(f"- STUCK after {n} attempt(s): `{h['stmt']}`"
+                     + (f"\n  Last attempts:\n{textwrap_indent(notes_text(s, h['name'], 1200), '  ')}" if s.notes.get(h["name"]) else ""))
+    proved = [m.group(1).split(".")[-1] for m in s.DECL.finditer(s._source())
+              if m.group(1).split(".")[-1] in s.targets and own_sorry_free(s, m.group(1).split(".")[-1])]
+    if proved:
+        lines.append("Helper theorems already proved (they stay in the file; use them): "
+                     + ", ".join(f"`{p}`" for p in proved[:40]))
+    lines.append("Write a revised skeleton for the unproved required theorems: replace the false and stuck helpers "
+                 "with true statements that are easier to prove, or a different decomposition.")
+    return "\n".join(lines)
+
+
+def topdown_phases(s, a, system, spec):
+    """The top-down loop between phase 0 and phase 3: a structure phase, then fill rounds, with
+    up to --restructures revised skeletons when a helper is refuted or every open helper is
+    stuck. If no skeleton is accepted at all, the run continues with the per-obligation phases
+    of the orchestrated loop (structured())."""
+    s.extra_tools = {"refute_helper"}
+    try:
+        status = s.check_status()
+        if all(v == "PROVED" for v in status.values()):
+            s.check()
+            return
+        feedback = ""
+        for k in range(a.restructures + 1):
+            sk = structure(s, a, system, spec, k, feedback)
+            if sk is None:
+                s.log(kind="phase", phase="structure", round=k, ok=False)
+                if k == 0:
+                    s.log(kind="phase", phase="obligations", reason="no skeleton accepted")
+                    s.extra_tools = set()
+                    structured(s, a, system, spec)
+                    return
+                break
+            prune(s)
+            outcome, info = fill(s, a, system, spec, sk)
+            s.log(kind="fill_end", round=k, outcome=outcome, refuted=info.get("refuted", []),
+                  stuck=[h["name"] for h in info.get("stuck", [])])
+            if outcome != "restructure" or k == a.restructures:
+                break
+            feedback = restructure_feedback(s, info)
+            s.log(kind="restructure", round=k + 1, refuted=info.get("refuted", []),
+                  stuck=[h["name"] for h in info.get("stuck", [])])
+        s.check()
+    finally:
+        s.extra_tools = set()
+
+
+def topdown(s, a):
+    """--loop topdown: phase 0 and phase 3 of the orchestrated loop around topdown_phases()."""
+    orchestrate(s, a, middle=topdown_phases)
 
 
 def library_summary(s):
@@ -1099,7 +1705,7 @@ def finish(s, out, arm, extra):
     return summary
 
 
-def main():
+def parser():
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", help="task id or directory (default: flagship)")
     ap.add_argument("--model", default="muse-spark-1.3-contributor")
@@ -1108,8 +1714,19 @@ def main():
                          "implement: start from a stub generated from the locked challenge and implement "
                          "the definitions from the spec. 'orchestrated' and 'free' are kept for "
                          "compatibility and mean --mode repair with that --loop")
-    ap.add_argument("--loop", default="orchestrated", choices=["orchestrated", "free"])
+    ap.add_argument("--loop", default="orchestrated", choices=["orchestrated", "free", "topdown"],
+                    help="orchestrated (default): obligations in listed order, then planner rounds; free: one "
+                         "dialog; topdown: a proof skeleton checked by Lean, then its open helpers")
     ap.add_argument("--max-turns", type=int, default=40, help="free mode only")
+    ap.add_argument("--skeleton-tries", type=int, default=3,
+                    help="topdown: planner replies per structure phase (compiler and dependency feedback between them)")
+    ap.add_argument("--skeleton-turns", type=int, default=12,
+                    help="topdown: turns of the prover's structure dialog (A1, or when the planner fails)")
+    ap.add_argument("--helper-attempts", type=int, default=2,
+                    help="topdown: resolutions of one open helper before it counts as stuck")
+    ap.add_argument("--fill-rounds", type=int, default=6, help="topdown: fill rounds per skeleton")
+    ap.add_argument("--restructures", type=int, default=2,
+                    help="topdown: revised skeletons after a refuted helper or when every open helper is stuck")
     ap.add_argument("--phase0-turns", type=int, default=12)
     ap.add_argument("--obligation-turns", type=int, default=12)
     ap.add_argument("--start", help="starting candidate (default: the task's candidate/Solution.lean)")
@@ -1124,6 +1741,11 @@ def main():
     ap.add_argument("--library", default="on", choices=["on", "off"],
                     help="on (default): ProofForgeFin in the workspace, its index in the prompt, search_library and "
                          "add_import; off: the harness without the library")
+    return ap
+
+
+def main():
+    ap = parser()
     a = ap.parse_args()
     if a.mode in ("orchestrated", "free"):
         a.loop, a.mode = a.mode, "repair"
@@ -1145,6 +1767,8 @@ def main():
     try:
         if a.loop == "orchestrated":
             orchestrate(s, a)
+        elif a.loop == "topdown":
+            topdown(s, a)
         else:
             dialog(s, a.model, a.effort, system_prompt(s),
                    "Begin. The current candidate is candidate/Solution.lean.",
