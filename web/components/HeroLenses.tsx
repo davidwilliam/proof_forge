@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import type { GraphLayout, PlacedNode } from "@/lib/proofgraph";
-import type { Bell, Guarantee, LayersLayout } from "@/lib/lenses";
+import { bellPoint, type Bell, type Guarantee, type LayersLayout } from "@/lib/lenses";
+import type { HoleView } from "@/lib/hole";
 import { LensEngine, type LensIndex } from "@/components/lens-engine";
 
 export interface Readings {
@@ -31,6 +32,8 @@ export interface HeroLensesProps {
   actions: ReactNode;
   /** Index of the guarantee shown first. */
   initial: number;
+  /** "A guarantee with a hole": one guarantee of a run that did not verify. */
+  hole: HoleView;
 }
 
 const LENSES = ["The whole proof", "The layers", "One guarantee"] as const;
@@ -59,10 +62,28 @@ function radialPath(a: { x: number; y: number }, b: { x: number; y: number }, c:
   return `M${a.x} ${a.y}Q${qx.toFixed(1)} ${qy.toFixed(1)} ${b.x} ${b.y}`;
 }
 
-const quoteOf = (s: string) => (s.startsWith("and ") ? `…${s}` : s);
+const quoteOf = (s: string) => (s.startsWith("and ") ? `\u2026${s}` : s);
+const words = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+const count = (n: number) => words[n] ?? String(n);
+
+/** A node of the run with a hole: the hole is a dark gap, the declarations that use it red. */
+function HoleMark({ n }: { n: HoleView["nodes"][number] }) {
+  if (n.role === "top") return null;
+  if (n.role === "hole")
+    return (
+      <>
+        <circle className="hl-gap" r={19} />
+        <rect className="hl-gap-mark" x={-5} y={-5} width={10} height={10} rx={1} />
+      </>
+    );
+  if (n.kind === "requirement") return <rect x={-6} y={-6} width={12} height={12} rx={1.5} />;
+  if (n.origin === "specification") return <rect x={-3.6} y={-3.6} width={7.2} height={7.2} rx={1} />;
+  if (n.kind === "definition") return <rect x={-3.2} y={-3.2} width={6.4} height={6.4} rx={3.2} />;
+  return <circle r={2.9} />;
+}
 
 export function HeroLenses(props: HeroLensesProps) {
-  const { radial, layers, guarantees, bells, uses, readings, passportHref, text, figures, actions } = props;
+  const { radial, layers, guarantees, bells, uses, readings, passportHref, text, figures, actions, hole } = props;
   const { size, center: c, nodes, edges, kernels, rings, orbit, done } = radial;
   const end = kernels.length ? kernels[kernels.length - 1]!.at + 0.5 : done + 1;
   const index = useMemo(() => new Map(nodes.map((n, i) => [n.id, i])), [nodes]);
@@ -70,6 +91,7 @@ export function HeroLenses(props: HeroLensesProps) {
   const [lens, setLens] = useState<LensIndex>(0);
   const [g, setG] = useState(props.initial);
   const [active, setActive] = useState<string | null>(null);
+  const [holeOn, setHoleOn] = useState(false);
 
   // Dependency cones for hover.
   const usedBy = useMemo(() => {
@@ -98,6 +120,20 @@ export function HeroLenses(props: HeroLensesProps) {
   const coreEl = useRef<SVGGElement | null>(null);
   const stageEl = useRef<HTMLDivElement | null>(null);
   const engine = useRef<LensEngine | null>(null);
+  const holeNodeEls = useRef<(SVGGElement | null)[]>([]);
+  const holeEdgeEls = useRef<(SVGPathElement | null)[]>([]);
+  const holeRingEls = useRef<(SVGEllipseElement | null)[]>([]);
+  const holeCoreEl = useRef<SVGGElement | null>(null);
+  const holeEngine = useRef<LensEngine | null>(null);
+  const inView = useRef(true);
+  const holeOnRef = useRef(false);
+  const holeIndex = useMemo(() => new Map(hole.nodes.map((n, i) => [n.id, i])), [hole]);
+  // Where each node of the run with a hole sits on its bell before it turns.
+  const holeStart = useMemo(() => {
+    const at = new Map<string, { x: number; y: number }>();
+    for (const l of hole.bell.levels) l.ids.forEach((id, i) => at.set(id, bellPoint(l, i, 0.35)));
+    return hole.nodes.map((n) => at.get(n.id)!);
+  }, [hole]);
 
   useEffect(() => {
     const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -125,14 +161,44 @@ export function HeroLenses(props: HeroLensesProps) {
       reduced,
     );
     engine.current = e;
-    const io = new IntersectionObserver(([x]) => e.setVisible(!!x?.isIntersecting));
+    const h = new LensEngine(
+      {
+        ids: hole.nodes.map((n) => n.id),
+        depth: hole.nodes.map((n) => n.depth),
+        radial: holeStart,
+        layers: holeStart,
+        edges: hole.edges.map((x) => [holeIndex.get(x.from)!, holeIndex.get(x.to)!] as [number, number]),
+        kernelsRadial: [],
+        rings: [],
+        orbitRadius: 0,
+        bells: [hole.bell],
+      },
+      { nodes: holeNodeEls.current, edges: holeEdgeEls.current, kernels: [], spokes: [], rings: holeRingEls.current, orbit: null, core: holeCoreEl.current },
+      reduced,
+    );
+    h.set(2, 0, true);
+    h.setVisible(false);
+    holeEngine.current = h;
+    const io = new IntersectionObserver(([x]) => {
+      inView.current = !!x?.isIntersecting;
+      e.setVisible(inView.current && !holeOnRef.current);
+      h.setVisible(inView.current && holeOnRef.current);
+    });
     if (stageEl.current) io.observe(stageEl.current);
     return () => {
       io.disconnect();
       e.destroy();
+      h.destroy();
       engine.current = null;
+      holeEngine.current = null;
     };
-  }, [nodes, edges, kernels, rings, orbit, layers, bells, index]);
+  }, [nodes, edges, kernels, rings, orbit, layers, bells, index, hole, holeIndex, holeStart]);
+
+  useEffect(() => {
+    holeOnRef.current = holeOn;
+    engine.current?.setVisible(inView.current && !holeOn);
+    holeEngine.current?.setVisible(inView.current && holeOn);
+  }, [holeOn]);
 
   useEffect(() => engine.current?.set(lens, g), [lens, g]);
   useEffect(() => {
@@ -242,6 +308,7 @@ export function HeroLenses(props: HeroLensesProps) {
     stopTour();
     setActive(null);
     setLens(i);
+    if (i !== 2) setHoleOn(false);
   };
   const tabKeys = (e: KeyboardEvent<HTMLButtonElement>) => {
     const k = e.key;
@@ -253,6 +320,7 @@ export function HeroLenses(props: HeroLensesProps) {
   };
   const pick = (i: number) => {
     stopTour();
+    setHoleOn(false);
     setG(i);
   };
   const barKeys = (e: KeyboardEvent<HTMLButtonElement>) => {
@@ -286,11 +354,13 @@ export function HeroLenses(props: HeroLensesProps) {
   const label = [
     `Dependency graph of the verified Balancer V2 repair: ${readings.requirements} requirement theorems in the centre, the lemmas and definitions they use around them, checked by ${readings.kernels.length} kernels on the outer orbit.`,
     `The same graph in layers: the ${readings.requirements} requirement theorems on top, the lemmas in the middle, the definitions and types at the bottom, the ${readings.kernels.length} kernels on an orbit.`,
-    `The declarations ${cur.id} rests on, stacked by depth: ${cur.size} declarations on ${cur.levels} levels, from the top ${cur.widths.join(", ")}.`,
+    holeOn
+      ? `The declarations ${hole.guarantee.id} of the ${hole.task.name} run ${hole.run.dir.split("/").pop()} rests on, stacked by depth: ${hole.guarantee.size} declarations on ${hole.guarantee.levels} levels, with ${count(hole.holes.length)} lemmas left unproved (${hole.holes.map((x) => x.id).join(", ")}); the guarantee does not hold.`
+      : `The declarations ${cur.id} rests on, stacked by depth: ${cur.size} declarations on ${cur.levels} levels, from the top ${cur.widths.join(", ")}.`,
   ][lens];
 
   return (
-    <div className="hero-top" data-lens={lens + 1}>
+    <div className="hero-top" data-lens={lens + 1} data-hole={(lens === 2 && holeOn) || undefined}>
       <div className="hero-copy" id="hl-text">
         <div className="hl-stack hl-heads">
           <div className="hl-layer" data-on={lens === 0 || undefined}>
@@ -313,7 +383,7 @@ export function HeroLenses(props: HeroLensesProps) {
           <div className="hl-layer" data-on={lens === 2 || undefined} aria-hidden={lens !== 2}>
             <div className="hl-stack">
               {guarantees.map((x, i) => (
-                <div key={x.id} className="hl-layer hl-guarantee" data-on={i === g || undefined} aria-hidden={i !== g}>
+                <div key={x.id} className="hl-layer hl-guarantee" data-on={(!holeOn && i === g) || undefined} aria-hidden={holeOn || i !== g}>
                   <blockquote className="hl-quote">
                     <p>&ldquo;{quoteOf(x.statement)}&rdquo;</p>
                   </blockquote>
@@ -338,7 +408,7 @@ export function HeroLenses(props: HeroLensesProps) {
                     <div>
                       <dt>Passport</dt>
                       <dd>
-                        <a href={passportHref} tabIndex={lens === 2 && i === g ? undefined : -1}>
+                        <a href={passportHref} tabIndex={lens === 2 && !holeOn && i === g ? undefined : -1}>
                           {readings.passport.slice(0, 8)}
                         </a>
                       </dd>
@@ -346,7 +416,51 @@ export function HeroLenses(props: HeroLensesProps) {
                   </dl>
                 </div>
               ))}
+              <div className="hl-layer hl-guarantee hl-holetext" data-on={holeOn || undefined} aria-hidden={!holeOn}>
+                <blockquote className="hl-quote">
+                  <p>&ldquo;{quoteOf(hole.guarantee.quote)}&rdquo;</p>
+                </blockquote>
+                <p className="hl-cite">
+                  <code>{hole.guarantee.id}</code>, locked in the {hole.task.name} task (from its README). In run {hole.run.dir.split("/").pop()},
+                  Muse left {count(hole.holes.length)} lemmas of its proof as <code>sorry</code>
+                  {hole.openInEveryRun.open ? `; it is open in all ${count(hole.openInEveryRun.runs)} ${hole.task.name} runs measured` : ""}.
+                </p>
+                <dl className="hl-readings">
+                  <div>
+                    <dt>Declarations</dt>
+                    <dd>{hole.guarantee.size}</dd>
+                  </div>
+                  <div>
+                    <dt>Levels</dt>
+                    <dd>{hole.guarantee.levels}</dd>
+                  </div>
+                  <div>
+                    <dt>Holes</dt>
+                    <dd className="hl-bad">{hole.holes.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Passport</dt>
+                    <dd className="hl-none">none</dd>
+                  </div>
+                </dl>
+              </div>
             </div>
+            <button
+              type="button"
+              role="switch"
+              className="hl-switch"
+              aria-checked={holeOn}
+              tabIndex={lens === 2 ? undefined : -1}
+              onClick={() => {
+                stopTour();
+                setHoleOn((x) => !x);
+              }}
+            >
+              <span className="hl-switch-track" aria-hidden="true">
+                <span className="hl-switch-thumb" />
+              </span>
+              A guarantee with a hole
+            </button>
           </div>
         </div>
         {actions}
@@ -378,6 +492,7 @@ export function HeroLenses(props: HeroLensesProps) {
                   <feGaussianBlur stdDeviation="5" />
                 </filter>
               </defs>
+              <g className="hl-main">
               <g className="pg-rings" aria-hidden="true">
                 {Array.from({ length: 10 }, (_, r) => (
                   <ellipse
@@ -400,7 +515,9 @@ export function HeroLenses(props: HeroLensesProps) {
                   style={{ "--at": end } as CSSProperties}
                 />
               </g>
+              </g>
               <ellipse ref={orbitEl} className="pg-orbit" cx={c} cy={c} rx={orbit} ry={orbit} aria-hidden="true" />
+              <g className="hl-main">
               <g className="pg-edges" aria-hidden="true">
                 {edges.map((e, i) => {
                   const a = nodes[index.get(e.to)!]!;
@@ -436,6 +553,7 @@ export function HeroLenses(props: HeroLensesProps) {
                   />
                 ))}
               </g>
+              </g>
               <g className="pg-kernels" aria-hidden="true">
                 {kernels.map((k, i) => {
                   const right = k.x > c + 1;
@@ -466,6 +584,7 @@ export function HeroLenses(props: HeroLensesProps) {
                   );
                 })}
               </g>
+              <g className="hl-main">
               <g className="pg-nodes">
                 {nodes.map((n, i) => (
                   <g
@@ -499,6 +618,48 @@ export function HeroLenses(props: HeroLensesProps) {
                 <g className="pg-core" style={{ "--at": done + 0.25 } as CSSProperties}>
                   <rect className="pg-core-glow" x={-15} y={-15} width={30} height={30} rx={2} filter="url(#pg-soft)" />
                   <rect className="pg-core-block" x={-15} y={-15} width={30} height={30} rx={2} />
+                </g>
+              </g>
+              </g>
+              <g className="hl-holebell" aria-hidden="true">
+                <g className="pg-rings">
+                  {Array.from({ length: 10 }, (_, r) => (
+                    <ellipse
+                      key={r}
+                      ref={(el) => {
+                        holeRingEls.current[r] = el;
+                      }}
+                      style={{ display: "none" }}
+                    />
+                  ))}
+                </g>
+                <g className="hl-hole-edges">
+                  {hole.edges.map((e, i) => (
+                    <path
+                      key={`${e.from}>${e.to}`}
+                      ref={(el) => {
+                        holeEdgeEls.current[i] = el;
+                      }}
+                      className={e.chain ? "hl-chain" : undefined}
+                    />
+                  ))}
+                </g>
+                <g className="hl-hole-nodes">
+                  {hole.nodes.map((n, i) => (
+                    <g
+                      key={n.id}
+                      ref={(el) => {
+                        holeNodeEls.current[i] = el;
+                      }}
+                      className={`pg-${n.kind} pg-${n.origin} hl-role-${n.role}`}
+                      transform={`translate(${holeStart[i]!.x} ${holeStart[i]!.y})`}
+                    >
+                      <HoleMark n={n} />
+                    </g>
+                  ))}
+                </g>
+                <g ref={holeCoreEl} transform={`translate(${c} ${hole.bell.levels[0]!.y})`}>
+                  <rect className="hl-crown-empty" x={-15} y={-15} width={30} height={30} rx={2} />
                 </g>
               </g>
             </svg>
@@ -548,16 +709,16 @@ export function HeroLenses(props: HeroLensesProps) {
                 </p>
               </div>
             </div>
-            <div className="hl-layer hl-bars" data-on={lens === 2 || undefined} role="radiogroup" aria-label="Guarantee" aria-hidden={lens !== 2}>
+            <div className="hl-layer hl-bars" data-on={lens === 2 || undefined} data-dim={holeOn || undefined} role="radiogroup" aria-label="Guarantee of the verified repair" aria-hidden={lens !== 2}>
               {guarantees.map((x, i) => (
                 <button
                   key={x.id}
                   id={`hl-bar-${i}`}
                   type="button"
                   role="radio"
-                  aria-checked={i === g}
+                  aria-checked={!holeOn && i === g}
                   aria-label={`${x.short}, ${x.id}: ${x.size} declarations`}
-                  tabIndex={lens === 2 && i === g ? 0 : -1}
+                  tabIndex={lens === 2 && (holeOn ? i === 0 : i === g) ? 0 : -1}
                   onClick={() => pick(i)}
                   onKeyDown={barKeys}
                 >
