@@ -36,7 +36,7 @@ from budget import Budget, BudgetExceeded, list_cost, actual_cost  # noqa: E402
 UPSTREAM = "https://api.meta.ai/v1"
 MIN_OUTPUT = 1024
 MAX_OUTPUT = 32000   # per call, as for the A0, A1 and A2 agents (agents/repair.py Session.call)
-FORWARD_HEADERS = {"authorization", "content-type", "accept", "user-agent", "openai-beta", "idempotency-key"}
+FORWARD_HEADERS = {"authorization", "content-type", "accept", "user-agent", "idempotency-key"}
 HOP = {"connection", "keep-alive", "transfer-encoding", "content-length", "content-encoding", "proxy-connection"}
 
 
