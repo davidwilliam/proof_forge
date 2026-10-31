@@ -49,13 +49,17 @@ skeleton helper or a helper the model states with `sorry` is evaluated on sample
 task's generator values first) before any turn is spent on it, and refused with the instance when
 Lean's kernel accepts the refutation.
 
+Parallel variants (`--variants K`, default 2, 0 for off; agents/variants.py): a goal still open
+after its first dialog gets K short dialogs at once with different framings; the first that Lean
+accepts is kept, the others stop; all are charged to the run's budget at list price.
+
 Usage: repair.py [--task T] [--model muse-spark-1.3-contributor] [--planner muse-wonder-1.0|none]
                  [--mode repair|implement] [--loop orchestrated|free|topdown] [--library on|off]
                  [--budget-usd X] [--budget-wall S] [--out DIR] [--start FILE]
                  [--resume-from DIR[,DIR...]] [--portfolio on|off] [--goal-tool on|off]
-                 [--refute on|off]
+                 [--refute on|off] [--variants K] [--variant-turns T]
 """
-import argparse, hashlib, json, pathlib, re, shutil, sys, tempfile, time
+import argparse, hashlib, json, pathlib, re, shutil, sys, tempfile, threading, time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "agents"))
@@ -63,7 +67,7 @@ sys.path.insert(0, str(ROOT / "harness"))
 from meta_client import chat, APIError, DeadlineReached  # noqa: E402
 from budget import Budget, BudgetExceeded, list_cost  # noqa: E402
 import judge, binary_check, fin_lib, task as taskmod  # noqa: E402
-import ledger, portfolio, leanserver, refute  # noqa: E402
+import ledger, portfolio, leanserver, refute, variants  # noqa: E402
 
 FORBIDDEN_TEXT = ("sorry, axiom, opaque, implemented_by, extern, unsafe, export, macro, elab, syntax, "
                   "initialize, #eval, run_cmd, native_decide, set_option")
@@ -360,6 +364,8 @@ class Session:
     round_offset = 0
     goal_tool = False        # --goal-tool: persistent Lean session (agents/leanserver.py)
     refute_samples = 0       # --refute: instances per new helper statement (agents/refute.py)
+    variants_k = 0           # --variants (agents/variants.py)
+    LOG_LOCK = threading.Lock()   # parallel variants log into the same events
 
     def __init__(self, task, model, start, out, budget=None, mode="repair", library=False):
         self.task, self.model, self.out, self.mode = task, model, out, mode
@@ -419,8 +425,9 @@ class Session:
         wall stop."""
         payload_bytes = len(json.dumps({"messages": messages, "tools": tools}).encode())
         for i in range(attempts):
-            mt, to = self.budget.call_limits(model, payload_bytes, len(messages), max_tokens, timeout)
-            tok = self.budget.reserve(model, payload_bytes, len(messages), mt)
+            with self.budget.lock:   # concurrent variants: the dollar check and the reservation are one step
+                mt, to = self.budget.call_limits(model, payload_bytes, len(messages), max_tokens, timeout)
+                tok = self.budget.reserve(model, payload_bytes, len(messages), mt)
             try:
                 r = chat(model, messages, purpose, tools=tools, max_tokens=mt, timeout=to, retries=0,
                          deadline=self.budget.deadline(), **extra)
@@ -452,9 +459,10 @@ class Session:
 
     def log(self, **kw):
         kw["t"] = round(time.time(), 3)
-        self.events.append(kw)
-        with (self.out / "events.jsonl").open("a") as f:
-            f.write(json.dumps(kw) + "\n")
+        with self.LOG_LOCK:
+            self.events.append(kw)
+            with (self.out / "events.jsonl").open("a") as f:
+                f.write(json.dumps(kw) + "\n")
 
     def read_file(self, path, name=None):
         """A readable file. In the top-down loop the candidate is returned as compact_view() and
@@ -940,13 +948,16 @@ class Session:
         return json.dumps({"status": b["status"], "violations": b["violations"], "examples": ws})
 
 
-def dialog(s, model, effort, system, user, tool_names, max_turns, done, label):
-    """Run one tool-using dialog until done() or the turn budget is spent."""
+def dialog(s, model, effort, system, user, tool_names, max_turns, done, label, stop=None):
+    """Run one tool-using dialog until done() or the turn budget is spent. A set `stop` event
+    (parallel variants) ends it before its next turn or tool call."""
     tools = [t for t in tools_for(s.task, s.library, topdown=True, compact=s.topdown) + [leanserver.GOAL_TOOL]
              if t["function"]["name"] in tool_names]
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     extra = {} if effort == "default" else {"reasoning_effort": effort}
     for turn in range(max_turns):
+        if stop is not None and stop.is_set():
+            return False, messages
         try:
             r, u = s.call(model, messages, f"repair:{s.task.id}:{label}:turn{turn}", tools=tools, **extra)
         except APIError as e:
@@ -968,6 +979,8 @@ def dialog(s, model, effort, system, user, tool_names, max_turns, done, label):
             messages.append({"role": "user", "content": "Continue with the tools."})
             continue
         for c in calls:
+            if stop is not None and stop.is_set():
+                return False, messages
             if s.budget.past_deadline():
                 s.budget.stop = "wall"
                 raise BudgetExceeded("wall")
@@ -1312,9 +1325,13 @@ def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
                           {"try_snippet", "replace_declaration", "check", "read_file"} | lib_tools(s) | goal_tools(s)
                           | s.extra_tools, budget, own_proof_done, f"{label}:{t}")
     ok = ok and t not in s.refuted
+    by_variant = False
     if not ok:
         remember(s, t, messages)
-    s.log(kind="obligation", label=label, theorem=t, ok=ok)
+        # Still open after its first dialog: K short variants at once (agents/variants.py).
+        if t not in s.refuted and variants.run(s, a, system, spec, t, label, plan_text):
+            ok = by_variant = True
+    s.log(kind="obligation", label=label, theorem=t, ok=ok, **({"by": "variant"} if by_variant else {}))
     return ok
 
 
@@ -1993,21 +2010,25 @@ def parser():
     ap.add_argument("--refute", default="on", choices=["on", "off"],
                     help="on (default): evaluate new helper statements on concrete values and refuse false ones")
     ap.add_argument("--refute-samples", type=int, default=refute.SAMPLES, help="instances per statement")
+    ap.add_argument("--variants", type=int, default=variants.DEFAULT_K,
+                    help="parallel short variants for a goal still open after its first dialog (0: off)")
+    ap.add_argument("--variant-turns", type=int, default=variants.TURNS, help="turns of each variant")
     return ap
 
 
 def configure(s, a):
-    """Session switches from the options: the goal tool and refutation."""
+    """Session switches of the goal tool, refutation and variants from the options."""
     s.goal_tool = getattr(a, "goal_tool", "on") != "off"
     s.refute_samples = (getattr(a, "refute_samples", refute.SAMPLES) or refute.SAMPLES) \
         if getattr(a, "refute", "on") != "off" else 0
+    s.variants_k = variants.settings(a)[0]
 
 
 def features_summary(s, a):
-    """The summary.json records of the tactic portfolio, the goal tool and refutation."""
+    """The summary.json records of the tactic portfolio and the three feedback features."""
     return {"portfolio": {"enabled": a.portfolio == "on", "heartbeats": a.portfolio_heartbeats,
                           "seconds": a.portfolio_seconds, **portfolio.summary(s)},
-            "goal_tool": leanserver.summary(s, a), "refute": refute.summary(s, a)}
+            "goal_tool": leanserver.summary(s, a), "refute": refute.summary(s, a), "variants": variants.summary(s, a)}
 
 
 def resume_setup(s, a, priors, record):
@@ -2084,6 +2105,7 @@ def main():
     except BudgetExceeded as e:
         s.log(kind="budget_stop", reason=str(e))
         print(f"budget exhausted: {e}", flush=True)
+    variants.join(s)
     summary = finish(s, out, arm, {"mode": a.loop, "task_mode": a.mode, "effort": a.effort, "planner": a.planner,
                                    "library": library_summary(s), **features_summary(s, a)})
     print(json.dumps(summary))
