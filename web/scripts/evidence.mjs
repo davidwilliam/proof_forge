@@ -5,37 +5,21 @@
 //
 // Passport hashes, statuses, reproduction commands, run costs and real-code counts are read
 // from the committed result files. The wording (loss figures, properties, limits) comes from
-// lib/flagships.ts and the E1 and E2 figures from lib/evidence.ts, which tests check against the
-// same files. Both modules have no runtime imports and are loaded here with the TypeScript
-// compiler's transpiler.
+// lib/flagships.ts, the E1 and E2 figures from lib/evidence.ts and the comparison with Muse alone,
+// the counterexample, open-weight, planner and library figures from lib/contribution.ts, which
+// tests check against the same files. The modules have no runtime imports and are loaded here with
+// the TypeScript compiler's transpiler.
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
-import ts from "typescript";
+import { loadTs } from "./lib/load-ts.mjs";
 import { ROOT, readExact, readPassport, readRunSummary } from "./lib/results.mjs";
 
 const web = path.join(ROOT, "web");
 
-async function loadTs(rel) {
-  const src = fs.readFileSync(path.join(web, rel), "utf8");
-  const { outputText } = ts.transpileModule(src, {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-    fileName: rel,
-  });
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pf-evidence-"));
-  const file = path.join(tmp, path.basename(rel).replace(/\.ts$/, ".mjs"));
-  fs.writeFileSync(file, outputText);
-  try {
-    return await import(pathToFileURL(file).href);
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
-}
-
 const F = await loadTs("lib/flagships.ts");
 const { E1, E2 } = await loadTs("lib/evidence.ts");
+const K = await loadTs("lib/contribution.ts");
 
 function passport(ref) {
   if (!ref) return null;
@@ -173,6 +157,26 @@ const evidence = {
       rejected_good: Object.fromEntries(E2.arms.map((a) => [a.label, a.goodRejected])),
     },
   },
+  muse_alone_vs_proofforge: {
+    note: `Every run is Muse Spark 1.3 (Contributor tier), capped at $${K.RUN_CAPS.usdList} at list prices and ${K.RUN_CAPS.seconds} s, and judged by ProofForge against the same locked specification. A0: Muse alone, compile-and-retry with Lean's errors and the axiom audit. A1: the ProofForge harness. A2: A1 with Muse Wonder 1.0 as lemma planner. On these tasks the harness did not complete more tasks than Muse alone; the refutations, the specification and the check are ProofForge's.`,
+    rows: K.COMPARISON.map((r) => ({
+      task: r.task,
+      incident: r.incident,
+      requirements: r.requirements,
+      muse_alone_A0: { accepted: r.alone.accepted, runs: r.alone.runs },
+      with_proofforge: r.harness.map((h) => ({ arm: h.arm, accepted: h.accepted, runs: h.runs })),
+      implement_from_specification: { arm: r.implement.arm, accepted: r.implement.accepted, runs: r.implement.runs },
+      vulnerable_code_refuted: r.refutations.map((x) => ({ candidate: x.label, passport: `results/counterexamples-1/${x.target}/passport.json`, refuted_requirements: x.refuted, kernel_checked_refutations: x.kernelChecked })),
+      with_proofforge_and_library: r.library ?? "pending",
+    })),
+    library_comparison: { source: K.LIBRARY_RUN.source, tasks: K.LIBRARY_RUN.tasks, status: "running; no results committed" },
+  },
+  counterexamples: { ...K.COUNTEREXAMPLES, cetus_hotfix: K.CETUS_HOTFIX },
+  open_weight_models: K.OPEN_WEIGHTS,
+  wonder_planner: K.PLANNER,
+  proofforgefin: K.LIBRARY,
+  hackathon: K.HACKATHON,
+  scope: K.SCOPE,
   not_claimed: notClaimed,
   reproduce: {
     setup: [
@@ -230,6 +234,21 @@ function llms() {
     L.push(`- Not proved: ${f.not_proved.join(" ")}`);
     L.push(`- Task: ${f.readme}`, "");
   }
+  L.push("## Muse alone and Muse with ProofForge", "");
+  L.push(`- ${evidence.muse_alone_vs_proofforge.note}`);
+  for (const r of evidence.muse_alone_vs_proofforge.rows) {
+    const runs = (x) => `${x.accepted} of ${x.runs.length}`;
+    L.push(`- ${r.incident} (${r.task}): Muse alone accepted ${runs(r.muse_alone_A0)}; ${r.with_proofforge.map((h) => `${h.arm} ${runs(h)}`).join(", ")}; implement mode ${runs(r.implement_from_specification)}; vulnerable code refuted on ${r.vulnerable_code_refuted.map((x) => `${x.kernel_checked_refutations} of ${x.refuted_requirements} requirements (${x.candidate}) by kernel-checked counterexamples`).join(" and ")}.`);
+  }
+  L.push(`- Pending: ${K.LIBRARY_RUN.source}, ${K.LIBRARY_RUN.what}; no results committed.`);
+  L.push(`- Counterexamples (${K.COUNTEREXAMPLES.source}): ${K.COUNTEREXAMPLES.kernelChecked} of ${K.COUNTEREXAMPLES.refuted} refuted requirements over ${K.COUNTEREXAMPLES.candidates} candidates refuted by a Lean theorem accepted by six kernels and leanchecker. The Cetus same-day hotfix: ${K.CETUS_HOTFIX.statement} at n = ${K.CETUS_HOTFIX.input} (2^192).`);
+  for (const o of K.OPEN_WEIGHTS)
+    L.push(`- ${o.model} (${o.serving}; ${o.source}${o.complete ? "" : ", incomplete"}): A0 ${o.a0.completed} of ${o.a0.n}, A1 ${o.outage ? `${o.outage.a1Completed} of ${o.outage.a1N} excluding runs ended by an outage (${o.a1.completed} of ${o.a1.n} including them)` : `${o.a1.completed} of ${o.a1.n}`}; McNemar p = ${o.mcnemarP}, 95% interval of the difference [${o.ci95.join(", ")}].`);
+  for (const p of K.PLANNER) L.push(`- Muse Wonder planner on ${p.incident}: A1 proved ${p.a1.join(" and ")} of ${p.requirements} requirements, A2 ${p.a2.join(" and ")}; A2 accepted in ${p.a2Accepted} of ${p.a2.length}.`);
+  L.push(`- ProofForgeFin (lib/): ${K.LIBRARY.theorems} theorems and ${K.LIBRARY.definitions} definitions in ${K.LIBRARY.files} files; ${K.LIBRARY.constantsChecked} constants of the library and demonstrations accepted by six kernels. A library-based Compound candidate written by the build team (${K.LIBRARY.compoundFixture}) is VERIFIED on the deployed judge, Passport ${K.LIBRARY.compoundLivePassport} (not committed).`);
+  L.push(`- Built during the ${K.HACKATHON.event}: first commit ${K.HACKATHON.firstCommit}, submissions due ${K.HACKATHON.submissionsDue} (ORIGIN.md).`);
+  L.push(`- Scope: ${K.SCOPE}`);
+  L.push("");
   L.push("## Implemented from the specification alone", "");
   for (const i of evidence.implemented_flagships) {
     const n = Object.keys(i.passport.requirements).length;
@@ -250,7 +269,7 @@ function llms() {
   for (const p of evidence.reproduce.passports) L.push(`    ${p.command}`);
   L.push("");
   L.push("## Pages", "");
-  L.push(`- /: overview with the ${count(flagships.length).toLowerCase()} incidents`, "- /forge: live forge session (replay of a recorded Muse repair, then a fresh check)", "- /results: E1 and E2 per arm, family and case", "");
+  L.push(`- /: overview with the ${count(flagships.length).toLowerCase()} incidents`, "- /#check: check a fix; submits a real-world candidate to POST /api/verify on the API, with the committed Passport as fallback", "- /forge: live forge session (replay of a recorded Muse repair, then a fresh check)", "- /results: E1 and E2 per arm, family and case", "");
   return L.join("\n");
 }
 

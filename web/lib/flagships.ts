@@ -47,6 +47,8 @@ export interface CodeVersion {
   passport: PassportRef;
   /** What the kernel-checked counterexample or proof shows, in one or two sentences. */
   finding: string;
+  /** The finding in one short sentence, for the first screen. */
+  short: string;
 }
 
 export interface AttackStep {
@@ -295,6 +297,7 @@ const cetus: Flagship = {
         reproduce: "bin/proofforge verify results/cetus-1/passports/original-port.json --candidate realworld/tasks/rw-cetus-shlw/attacks/buggy_original.lean",
       },
       finding: "The attack deposit is charged 1 unit of token A. The exact amount owed, rounded up, is 31572840708638430117170542 units, about 3.16 × 10^25.",
+      short: "Charges the attack deposit 1 unit of token A; it owed about 3.16 × 10^25.",
     },
     {
       key: "pr6",
@@ -319,6 +322,7 @@ const cetus: Flagship = {
         reproduce: "bin/proofforge verify results/cetus-1/passports/pr6-port.json --candidate realworld/tasks/rw-cetus-shlw/attacks/pr6_mask_only.lean",
       },
       finding: "It refuses the attack deposit, but checkedShlw(2^192) = (0, false): 2^192 shifted left by 64 bits wraps to 0 and no overflow is reported. A deposit with liquidity × price difference = 2^192 is charged 0.",
+      short: "Stops the attack input, but checkedShlw(2^192) = (0, false): the shift wraps to 0 and reports no overflow.",
     },
     {
       key: "pr7",
@@ -343,6 +347,7 @@ const cetus: Flagship = {
         reproduce: "bin/proofforge verify results/cetus-1/passports/pr7-port.json --candidate realworld/tasks/rw-cetus-shlw/reference/SolutionA.lean",
       },
       finding: "All five requirements proved for every 256-bit input and every u128 price and liquidity.",
+      short: "All five requirements proved for every 256-bit input.",
     },
     {
       key: "muse",
@@ -367,6 +372,7 @@ const cetus: Flagship = {
       },
       // results/cetus-1/repair-A1-1/Equivalence.lean, theorem muse_eq_pr7; Equivalence.out.txt
       finding: "All five requirements proved. A separate theorem, muse_eq_pr7, proves it returns the same value and overflow flag as the final fix on every 256-bit input.",
+      short: "All five proved, and proved equal to pull request 7 on every 256-bit input.",
     },
   ],
   // results/cetus-1/repair-A1-1/Equivalence.lean and Equivalence.out.txt
@@ -1050,6 +1056,6 @@ export function lossTotalPhrase(lead: "more than" | "over" = "more than", fs: re
   return m >= 1000 ? `${lead} $${Math.floor(m / 1000)} billion` : `${lead} $${Math.floor(m / 10) * 10} million`;
 }
 
-export const HEADLINE = "AI-written financial code that ships with a proof.";
+export const HEADLINE = "ProofForge turns Meta's Muse models into provers of financial code.";
 export const SUMMARY =
-  "Meta's Muse Spark, with Muse Wonder planning the hardest proofs, writes and repairs the logic behind real financial failures, from DeFi exploits to the Knight Capital trading loss, and proves every locked requirement in Lean 4. ProofForge rechecks each proof in a fresh sandbox and issues a Passport. No proof, no merge.";
+  "Each task states what financial code must guarantee as locked Lean 4 requirements. ProofForge refutes code that breaks one with a counterexample the Lean kernel checks, and accepts a fix, written by Muse Spark or by people, only when six independent kernels check its proof. Every verdict is a Passport, bound by hash to the specification, the source and the executable, that anyone can re-run.";
