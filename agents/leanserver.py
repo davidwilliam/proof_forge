@@ -318,10 +318,17 @@ def _render(goals, limit=GOAL_CHARS):
     return "\n".join(out)
 
 
+# A warning whose first line contains one of these is not shown by the compile path (Session._clean
+# drops such lines), so there it does not make a snippet unclean; the session applies the same rule.
+UNSHOWN = ("linter", "Hint:", "deprecated")
+
+
 def _messages(diags, text, first_line, label, last_line=None):
     """Diagnostics located in lines [first_line, last_line] of the document, as compiler-style
     lines `label:L:C: error: ...` with L counted from 1 at first_line. Returns (lines, errors,
-    blocking warnings, linter warnings)."""
+    warnings the compile path shows, warnings that name no linter option), following
+    Session._scratch: a snippet is clean when it has no error and no shown warning, and in the
+    top-down loop also when every warning names a linter option."""
     lines = text.split("\n")
     out, errors, warnings, linters = [], 0, 0, 0
     for d in sorted(diags, key=lambda d: (d["range"]["start"]["line"], d["range"]["start"]["character"])):
@@ -336,10 +343,11 @@ def _messages(diags, text, first_line, label, last_line=None):
         out.append(f"{label}:{ln - first_line + 1}:{col}: {sev}: {msg}")
         if sev == "error":
             errors += 1
-        elif re.search(r"\blinter\.\w+", msg):
-            linters += 1
-        else:
+            continue
+        if not any(u in msg.split("\n", 1)[0] for u in UNSHOWN):
             warnings += 1
+        if not re.search(r"\blinter\.\w+", msg):
+            linters += 1
     return out, errors, warnings, linters
 
 
@@ -363,9 +371,10 @@ def fast_snippet(s, scratch, offset, code):
         _count(s, "fast_unavailable")
         s.log(kind="lean_server", event="unavailable", error=str(e)[:300])
         return None
-    msgs, errors, warnings, linters = _messages(diags, scratch, offset, "snippet")
+    msgs, errors, warnings, topdown_warnings = _messages(diags, scratch, offset, "snippet")
     ms = int((time.monotonic() - t0) * 1000)
-    blocking = errors or warnings or (linters and not getattr(s, "topdown", False))
+    # the top-down loop accepts a snippet that either rule finds clean, as Session._scratch does
+    blocking = errors or (warnings and topdown_warnings if getattr(s, "topdown", False) else warnings)
     if not blocking:
         _count(s, "fast_clean")
         return "clean", ms

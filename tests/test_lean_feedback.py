@@ -68,10 +68,14 @@ def test_positions_and_messages():
              {"range": {"start": {"line": 4, "character": 0}}, "severity": 2, "message": "declaration uses `sorry`"},
              {"range": {"start": {"line": 4, "character": 0}}, "severity": 2,
               "message": "unused variable `h`\n\nNote: This linter can be disabled with `set_option linter.unusedVariables false`"},
+             {"range": {"start": {"line": 4, "character": 0}}, "severity": 2,
+              "message": "`Nat.foo` has been deprecated: use `Nat.bar` instead"},
              {"range": {"start": {"line": 0, "character": 0}}, "severity": 1, "message": "error before the snippet"}]
     doc = "a\nb\nc\n  x\ny\n"
-    msgs, errors, warnings, linters = leanserver._messages(diags, doc, 3, "snippet")
-    assert (errors, warnings, linters) == (1, 1, 1), (errors, warnings, linters)
+    msgs, errors, warnings, topdown_warnings = leanserver._messages(diags, doc, 3, "snippet")
+    # As Session._scratch decides: outside the top-down loop the `sorry` and the linter warning count
+    # (the linter's first line is shown) and the deprecation does not; in it, all but the linter's.
+    assert (errors, warnings, topdown_warnings) == (1, 2, 2), (errors, warnings, topdown_warnings)
     assert msgs[0].startswith("snippet:1:2: error: unsolved goals") and msgs[1].startswith("snippet:2:0: warning")
     assert leanserver._render([]) .startswith("no goals") and "goal 2 of 2" in leanserver._render(["a", "b"])
 
