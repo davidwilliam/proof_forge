@@ -224,6 +224,56 @@ def describe (names : Array Name) (vals : Array Expr) : MetaM String := do
 
 def clean (s : String) : String := (s.replace "\n" " ").replace "\t" " "
 
+/-- Run `x` under the per-instance heartbeat limit at full transparency; `none` when it stops. -/
+def bounded {α : Type} (x : MetaM α) : MetaM (Option α) :=
+  tryCatchRuntimeEx
+    (withCurrHeartbeats <| withTheReader Core.Context (fun c => { c with maxHeartbeats := HEARTBEATS * 1000 }) <|
+      withTransparency .all <| some <$> x)
+    (fun _ => pure none)
+
+/-- Unfold, occurrence by occurrence, the applications of Prop-valued definitions that have no
+`Decidable` instance (a few rounds), so that such predicates expose the propositions they stand for.
+Applications that have an instance (`≤`, `¬`, ...) are kept. -/
+def unfoldProps (q : Expr) : MetaM Expr := do
+  let mut q := q
+  for _ in [0:4] do
+    let env ← getEnv
+    let changed ← IO.mkRef false
+    q ← Meta.transform q (pre := fun e => do
+      let .const c _ := e.getAppFn | return .continue
+      let some (.defnInfo d) := env.find? c | return .continue
+      let b ← forallTelescopeReducing d.type fun _ b => pure b
+      if !b.isProp || !(← isProp e) then return .continue
+      if (← synthInstance? (mkApp (mkConst ``Decidable) e)).isSome then return .continue
+      let some e' ← delta? e (· == c) | return .continue
+      changed.set true
+      return .visit e'.headBeta)
+    if !(← changed.get) then return q
+  return q
+
+/-- `p` is the binder `x` itself or constructor applications around it. -/
+partial def isPattern (env : Environment) (p x : Expr) : Bool :=
+  p == x || (match p.getAppFn with
+    | .const c _ => (env.find? c matches some (.ctorInfo _)) &&
+        p.getAppArgs.all fun a => !a.containsFVar x.fvarId! || isPattern env a x
+    | _ => false)
+
+/-- A data binder fixed by a hypothesis `a = b` in which it occurs on one side only: (the side that
+determines it, the side with the binder). The determining side may mention only data binders, and
+the binder's side only data binders besides it; which of them are free is settled in `refuteOne`. -/
+def determiner (xs data : Array Expr) (x : Expr) : MetaM (Option (Expr × Expr × Array Expr)) := do
+  let isData (f : FVarId) := data.contains (.fvar f)
+  for h in xs do
+    let t ← inferType h
+    let some (_, a, b) := t.eq? | continue
+    let has (e : Expr) := e.containsFVar x.fvarId!
+    let dataOnly (e : Expr) := !e.hasAnyFVar fun f => !isData f
+    let uses (e : Expr) := data.filter fun d => e.containsFVar d.fvarId! && d != x
+    let env ← getEnv
+    if has b && !has a && dataOnly a && dataOnly b && isPattern env b x then return some (a, b, uses a ++ uses b)
+    if has a && !has b && dataOnly a && dataOnly b && isPattern env a x then return some (b, a, uses a ++ uses b)
+  return none
+
 /-- `n` instances of the statement of `thm`; the first whose `decide` reduces to `false` and
 whose refutation the kernel accepts makes the statement false. -/
 def refuteOne (thm : Name) (js : Array Json) (n : Nat) : M String := do
@@ -238,13 +288,36 @@ def refuteOne (thm : Name) (js : Array Json) (n : Nat) : M String := do
       if (← inferType x).hasAnyFVar (fun f => hyps.contains (.fvar f)) then
         return s!"{thm}\tunsupported\ta binder depends on a hypothesis"
     let q0 ← mkForallFVars hyps body
+    -- Binders a hypothesis equation determines get their value from it after the free ones are
+    -- sampled; a determiner that uses another determined binder is dropped (no cycles).
+    let mut dets : Array (Option (Expr × Expr × Array Expr)) := #[]
+    for x in data do
+      dets := dets.push (← determiner xs data x)
+    let isDet (d : Array (Option (Expr × Expr × Array Expr))) (y : Expr) := (d[data.idxOf y]!).isSome
+    for _ in [0:data.size] do
+      dets := dets.map fun d => match d with
+        | some (_, _, us) => if us.any (isDet dets) then none else d
+        | none => none
+    for i in [0:data.size] do
+      if dets[i]!.isSome then
+        let ty ← inferType data[i]!
+        if data.any (fun y => isDet dets y && ty.containsFVar y.fvarId!) then dets := dets.set! i none
+      else
+        let ty ← inferType data[i]!
+        if data.any (fun y => isDet dets y && ty.containsFVar y.fvarId!) then
+          return s!"{thm}\tunsupported\ta binder type depends on a determined binder"
     let mut tried := 0
     let mut undecided := 0
     let mut unconfirmed := ""
     for k in [0:n] do
       let mut vals := #[]
+      -- free binders first, in order (a determined one gets a placeholder)
       for x in data do
-        let t := (← inferType x).replaceFVars (data.extract 0 vals.size) vals
+        if (dets[vals.size]!).isSome then
+          vals := vals.push x
+          continue
+        let free := (data.extract 0 vals.size).zip (vals.extract 0 vals.size) |>.filter (fun (d, _) => !isDet dets d)
+        let t := (← inferType x).replaceFVars (free.map (·.1)) (free.map (·.2))
         if t.isSort then
           vals := vals.push (mkConst ``Nat)
           continue
@@ -255,15 +328,37 @@ def refuteOne (thm : Name) (js : Array Json) (n : Nat) : M String := do
         let p ← pool t js 4
         if p.isEmpty then return s!"{thm}\tunsupported\tno values of type {clean (toString (← ppExpr t))}"
         vals := vals.push (← pick p k)
+      -- then the determined binders: unify the binder's side with the evaluated other side
+      let mut vacuous := false
+      for i in [0:data.size] do
+        let some (src, pat, _) := dets[i]! | continue
+        let x := data[i]!
+        let others := (data.zip vals).filter (fun (d, _) => d != x)
+        let t := (← inferType x).replaceFVars (others.map (·.1)) (others.map (·.2))
+        let m ← mkFreshExprMVar t
+        let lhs := src.replaceFVars (others.map (·.1)) (others.map (·.2))
+        let rhs := (pat.replaceFVars (others.map (·.1)) (others.map (·.2))).replaceFVar x m
+        let ok ← bounded (do isDefEq rhs (← whnf lhs))
+        let v ← instantiateMVars m
+        if ok == some true && !v.hasMVar && !v.hasFVar then
+          vals := vals.set! i ((← bounded (reduce v)).getD v)
+        else
+          -- no value satisfies the hypothesis for these free values: a pool value makes it vacuous
+          let p ← pool t js 4
+          if p.isEmpty then
+            vacuous := true
+          else
+            vals := vals.set! i p[0]!
+      if vacuous then continue
       let q := q0.replaceFVars data vals
-      if q.hasFVar then return s!"{thm}\tunsupported\topen statement"
+      if q.hasFVar || q.hasMVar then return s!"{thm}\tunsupported\topen statement"
+      let q ← match ← synthInstance? (mkApp (mkConst ``Decidable) q) with
+        | some _ => pure q
+        | none => unfoldProps q
       let some inst ← synthInstance? (mkApp (mkConst ``Decidable) q) | return s!"{thm}\tunsupported\tnot decidable"
       tried := tried + 1
       let dec := mkApp2 (mkConst ``Decidable.decide) q inst
-      let r ← tryCatchRuntimeEx
-          (withCurrHeartbeats <| withTheReader Core.Context (fun c => { c with maxHeartbeats := HEARTBEATS * 1000 }) <|
-            withTransparency .all <| whnf dec)
-          (fun _ => pure (mkConst ``Unit))
+      let r := (← bounded (whnf dec)).getD (mkConst ``Unit)
       if r.isConstOf ``Bool.true then continue
       if !r.isConstOf ``Bool.false then
         undecided := undecided + 1
