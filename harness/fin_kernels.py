@@ -56,7 +56,7 @@ it, and one accepted here is accepted there. The export checked here holds every
 declaration at once (about 21,600 records with their dependencies), more than any candidate's;
 it runs within the judge's container limits (4 GB, one kernel worker per hardware thread).
 
-Usage: fin_kernels.py [--json out.json]     exit 0 when every check passes
+Usage: fin_kernels.py [--json out.json] [--modules M ...]     exit 0 when every check passes
 """
 import argparse, hashlib, json, pathlib, re, shutil, sys, time
 
@@ -267,15 +267,29 @@ def theorems_of(decls, names):
     return [n for n in names if decls[n]["kind"] == "theorem"]
 
 
-def check(root=None, log=print, max_rounds=40):
-    """Run every check; returns the report (report["passed"] is the verdict)."""
+def select(decls, modules=None):
+    """The declarations of the given modules and their submodules (every declaration when
+    `modules` is None)."""
+    if not modules:
+        return dict(decls)
+    return {n: d for n, d in decls.items()
+            if any(d["module"] == m or d["module"].startswith(m + ".") for m in modules)}
+
+
+def check(root=None, log=print, max_rounds=40, modules=None):
+    """Run every check; returns the report (report["passed"] is the verdict). With `modules`,
+    only the declarations of those modules (and their submodules) are exported and named to
+    Comparator, with everything they depend on, and leanchecker replays only those modules."""
     t0 = time.monotonic()
     work = ensure_built(root)
     decls = load_decls(work)
-    lib = {n: d for n, d in decls.items()}
+    lib = select(decls, modules)
+    if modules and not lib:
+        raise RuntimeError(f"no declarations in modules {modules}")
     safe = sorted(n for n, d in lib.items() if d["exportable"] and not d["unsafe"])
     unsafe = sorted(n for n, d in lib.items() if d["exportable"] and d["unsafe"])
-    report = {"tree_sha256": tree_sha256(root), "library_source_tree_sha256": fin_lib.tree_sha256(root),
+    report = {"modules": list(modules) if modules else None,
+              "tree_sha256": tree_sha256(root), "library_source_tree_sha256": fin_lib.tree_sha256(root),
               "judge_image": judge.image_id(), "constants": len(lib),
               "theorems": sum(d["kind"] == "theorem" for d in lib.values()),
               "safe_exported": len(safe), "unsafe_exported": len(unsafe),
@@ -381,8 +395,9 @@ def summary(report):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--json")
+    ap.add_argument("--modules", nargs="*", help="check only these modules and their submodules (default: all)")
     a = ap.parse_args()
-    rep = check()
+    rep = check(modules=a.modules or None)
     if a.json:
         pathlib.Path(a.json).write_text(json.dumps(rep, indent=2) + "\n")
     print(summary(rep))

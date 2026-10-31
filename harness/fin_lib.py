@@ -101,6 +101,86 @@ def materialize(commit, sha):
     return dst
 
 
+def tree_sha256_at(commit):
+    """`tree_sha256` of the library sources of `commit`, read from `git archive` without
+    extracting it; None when the commit has no library. Cached by commit."""
+    import io, tarfile
+    cache = CACHE / "commit-trees.json"
+    try:
+        known = json.loads(cache.read_text())
+    except (OSError, ValueError):
+        known = {}
+    if commit in known:
+        return known[commit]
+    try:
+        arch = subprocess.run(["git", "archive", "--format=tar", commit, "lib"], cwd=ROOT, capture_output=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if arch.returncode:
+        sha = None
+    else:
+        files = {}
+        with tarfile.open(fileobj=io.BytesIO(arch.stdout)) as tar:
+            for m in tar.getmembers():
+                if m.isfile() and m.name.startswith("lib/"):
+                    files[m.name[4:]] = tar.extractfile(m).read()
+        top = [n for n in ("lakefile.toml", "lake-manifest.json", "lean-toolchain", f"{LIBRARY}.lean") if n in files]
+        mods = sorted(n for n in files if n.startswith(f"{LIBRARY}/") and n.endswith(".lean") and ".lake" not in n.split("/"))
+        sha = hashlib.sha256("".join(f"{r}\0{hashlib.sha256(files[r]).hexdigest()}\n" for r in top + mods).encode()).hexdigest() \
+            if top else None
+    known[commit] = sha
+    try:
+        CACHE.mkdir(parents=True, exist_ok=True)
+        tmp = cache.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(known, indent=0) + "\n")
+        tmp.replace(cache)
+    except OSError:
+        pass
+    return sha
+
+
+def find_commit(sha, limit=200):
+    """A commit whose library sources have tree hash `sha`: HEAD, then the last `limit` commits
+    that changed lib/, newest first; None when none has it. For a Passport whose record names no
+    commit (issued from library sources that were not committed yet and were committed as they
+    were)."""
+    try:
+        log = subprocess.run(["git", "log", f"-{limit}", "--format=%H", "HEAD", "--", "lib"], cwd=ROOT,
+                             capture_output=True, text=True, timeout=60)
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    seen = []
+    for c in [head.stdout.strip()] + log.stdout.split():
+        if c and c not in seen:
+            seen.append(c)
+    for c in seen:
+        if tree_sha256_at(c) == sha:
+            return c
+    return None
+
+
+def root_for(rec):
+    """The library sources a Passport's `library` record was judged with: None when that is
+    this checkout's library (or the record vendored nothing); else the sources of the recorded
+    commit, or of a commit found by `find_commit`, extracted into the cache. Returns
+    (root, commit, note)."""
+    rec = rec or {"vendored": False}
+    sha = rec.get("source_tree_sha256")
+    if not rec.get("vendored") or sha == tree_sha256():
+        return None, None, None
+    commit = rec.get("git_commit")
+    root = materialize(commit, sha) if commit else None
+    if root is None:
+        commit = find_commit(sha)
+        root = materialize(commit, sha) if commit else None
+    if root is None:
+        return None, None, (f"the Passport's library version {sha[:16]} is not this checkout's and no commit "
+                            "provides it; check out the commit that has it")
+    return root, commit, (f"the Passport's library version {sha[:16]} is not this checkout's; using the library "
+                          f"sources of commit {commit[:12]}")
+
+
 def strip_comments(text):
     code = re.sub(r"/-.*?-/", "", text, flags=re.S)
     return re.sub(r"--[^\n]*", "", code)
@@ -399,6 +479,10 @@ class Index:
         return cls(load_index(root))
 
     def search(self, query, limit=10, kinds=None):
+        return [e for _, e in self.scored(query, limit, kinds)]
+
+    def scored(self, query, limit=10, kinds=None):
+        """The best matches as (BM25 score, entry), best first."""
         q = tokens(query)
         q += [s for t in list(q) for s in SYNONYMS.get(t, [])]
         exact = {w for w in re.findall(r"[\w.']+", query or "") if "." in w or "_" in w}
@@ -420,7 +504,7 @@ class Index:
             if s > 0:
                 scored.append((s, e))
         scored.sort(key=lambda x: (-x[0], x[1]["name"]))
-        return [e for _, e in scored[:limit]]
+        return scored[:limit]
 
 
 def short_doc(doc, n=220):

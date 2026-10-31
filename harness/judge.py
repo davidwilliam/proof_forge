@@ -317,6 +317,23 @@ def output_name(stem, suffix=".txt"):
     return f".{stem}-{os.getpid()}-{time.monotonic_ns()}{suffix}"
 
 
+def container_argv(project: pathlib.Path, script: str, name: str, interactive=False):
+    """The command that runs `script` in the pinned Lean image with `project` mounted as the
+    working directory: no network, the memory and process limits of every Lean run. With
+    `interactive`, stdin stays open (a persistent Lean server). Inside the image itself
+    (PF_IN_IMAGE=1) the script runs directly in `project`."""
+    if IN_IMAGE:
+        return ["bash", "-lc", f"cd {shlex.quote(str(project))} && {script}"]
+    return [
+        "docker", "run", "--rm", *(["-i"] if interactive else []), "--name", name, "--network", "none",
+        # bubblewrap (Comparator's sandbox) needs user namespaces inside the container.
+        "--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined",
+        "--security-opt", "systempaths=unconfined", "--cap-add", "SYS_ADMIN",
+        "--memory", "4g", "--pids-limit", "512",
+        "-v", f"{project}:/work", "-w", "/work", IMAGE, "bash", "-lc", script,
+    ]
+
+
 def in_container(project: pathlib.Path, script: str, timeout=900):
     """Run `script` in the pinned Lean image with `project` as the working directory. Inside
     the image itself (PF_IN_IMAGE=1, as in the verify image and on Linux hosts) it runs
@@ -326,20 +343,13 @@ def in_container(project: pathlib.Path, script: str, timeout=900):
     started after a pause, up to VIEW_WAIT seconds, then StaleView is raised."""
     if IN_IMAGE:
         with container_slot():
-            return run(["bash", "-lc", f"cd {shlex.quote(str(project))} && {script}"], timeout=timeout)
+            return run(container_argv(project, script, ""), timeout=timeout)
     project = pathlib.Path(project)
     manifest = view_manifest(project)
     waited, pause = 0.0, 0.5
     while True:
         name = f"pf-{os.getpid()}-{time.monotonic_ns()}"
-        cmd = [
-            "docker", "run", "--rm", "--name", name, "--network", "none",
-            # bubblewrap (Comparator's sandbox) needs user namespaces inside the container.
-            "--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined",
-            "--security-opt", "systempaths=unconfined", "--cap-add", "SYS_ADMIN",
-            "--memory", "4g", "--pids-limit", "512",
-            "-v", f"{project}:/work", "-w", "/work", IMAGE, "bash", "-lc", view_check(manifest) + script,
-        ]
+        cmd = container_argv(project, view_check(manifest) + script, name)
         with container_slot():
             r = run(cmd, timeout=timeout,
                     on_timeout=lambda: subprocess.run(["docker", "kill", name], capture_output=True))
