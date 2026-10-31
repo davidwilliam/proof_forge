@@ -17,9 +17,7 @@ export interface ProofGraphProps {
     axioms: string[];
     declarations: number;
   };
-  sourceFile: string;
   passportHref: string;
-  dataHref: string;
 }
 
 const KIND_LABEL: Record<PlacedNode["kind"], string> = {
@@ -49,7 +47,7 @@ function edgePath(a: { x: number; y: number }, b: { x: number; y: number }, c: n
   return `M${a.x} ${a.y}Q${qx.toFixed(1)} ${qy.toFixed(1)} ${b.x} ${b.y}`;
 }
 
-export function ProofGraph({ layout, uses, readings, sourceFile, passportHref, dataHref }: ProofGraphProps) {
+export function ProofGraph({ layout, uses, readings, passportHref }: ProofGraphProps) {
   const { size, center: c, nodes, edges, kernels, rings, orbit, done } = layout;
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const end = kernels.length ? kernels[kernels.length - 1]!.at + 0.5 : done + 1;
@@ -131,7 +129,7 @@ export function ProofGraph({ layout, uses, readings, sourceFile, passportHref, d
   const label = `Dependency graph of the verified Balancer V2 repair: ${readings.requirements} requirement theorems in the centre, the lemmas and definitions they use around them, checked by ${readings.kernels.length} kernels on the outer orbit.`;
 
   return (
-    <figure className="pg" data-running={running || undefined}>
+    <figure className="pg" data-running={running || undefined} aria-describedby="pg-caption">
       <div className="pg-stage">
         <svg
           className={`pg-svg${cone ? " pg-has-focus" : ""}`}
@@ -257,11 +255,6 @@ export function ProofGraph({ layout, uses, readings, sourceFile, passportHref, d
           {status}
         </p>
       </div>
-      <figcaption className="pg-caption">
-        The verified Muse repair of Balancer V2: its {readings.requirements} requirement theorems around the conclusion, and the{" "}
-        {fmt(readings.declarations - readings.requirements)} lemmas, definitions and types they use, extracted from the Lean kernel&apos;s
-        record of what each declaration uses. Kernels: {readings.kernels.join(", ")}. <a href={dataHref}>Graph data</a>
-      </figcaption>
     </figure>
   );
 }
