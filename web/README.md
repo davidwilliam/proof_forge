@@ -19,6 +19,7 @@ pnpm passport:repaired   # Passport for the repaired sidecar build; writes gener
 pnpm realworld           # real-world bug results from results/realworld-1/summary.json; writes generated/realworld.json
 pnpm evidence            # machine-readable summary of the home page; writes public/evidence.json and public/llms.txt
 node scripts/check-fixes.mjs  # candidates and recorded Passports for the "Check a fix" panel; writes public/check/
+node scripts/proof-graph.mjs  # dependency graph of the verified Balancer repair for the home hero (Docker, pinned Lean image); writes generated/proof-graph.json
 pnpm dev                 # http://localhost:3000
 ```
 
