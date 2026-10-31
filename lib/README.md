@@ -12,8 +12,11 @@ list of operations with an induction, sums over account lists. The library state
 once, for every scale, state type and operation type, so a specification can name a library
 definition and a proof can cite a library theorem.
 
-The library has 233 theorems and 38 definitions in six modules, plus four demonstrations (27
-theorems) that re-prove lemmas of task reference solutions with it. Every definition, structure
+The library has 1,504 theorems and 430 definitions in 55 files under twelve top-level modules
+(`Rounding`, `FixedPoint`, `Word`, `Shares`, `Seq`, `Ledger`, `Trading`, `Machine`, `Evm`, `Money`,
+`DeFi`, `Tactic`; source declarations counted with comments excluded, as
+`web/tests/contribution.test.ts` recounts them), plus demonstrations (328 theorems in 31 files)
+that re-prove lemmas of task reference solutions with it and exercise the modules. Every definition, structure
 field and constructor has a doc string; the build enables `linter.missingDocs` for the library and
 emits no warning.
 
@@ -267,8 +270,9 @@ audit: 1331 constants, 419 theorems, 0 violations
 ```
 
 The counts include the constants Lean generates for each declaration (recursors, matchers,
-`injEq` theorems, auxiliary proofs); the source declares 233 library theorems and 27 demonstration
-theorems.
+`injEq` theorems, auxiliary proofs). When this output was recorded the source declared 233 library
+theorems and 27 demonstration theorems, in the first six modules; the kernel check below covers the
+current sources.
 
 ## Building
 
