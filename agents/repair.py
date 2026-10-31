@@ -652,6 +652,13 @@ class Session:
             if cur:
                 msgs.append(l)
         clean = not any(re.search(r": (error|warning)", m) for m in msgs)
+        if self.topdown and not clean:
+            # A warning that only a linter raises (an unused variable or simp argument, a style
+            # check) does not make the proof wrong, and the judge decides on exit codes: in the
+            # top-down loop such a snippet counts as clean. Errors and other warnings (`sorry`) do not.
+            blocks = re.split(r"(?m)^(?=Scratch\.lean:\d+:\d+: (?:error|warning))", r["output_tail"])
+            clean = not any(m and int(m.group(1)) >= offset and (m.group(2) == "error" or not re.search(r"\blinter\.\w+", b))
+                            for b in blocks for m in [re.match(r"Scratch\.lean:(\d+):\d+: (error|warning)", b)])
         if judge.TIMEOUT_MARK in r["output_tail"]:   # stopped at the time limit: nothing is established
             clean = False
             msgs = msgs or [judge.TIMEOUT_MARK]
@@ -677,7 +684,7 @@ class Session:
                         + "\n".join(res.split("\n")[1:])[-3000:])
             note += f"; added `import {mod}` to candidate/Solution.lean"
         banked = self.bank(code)
-        return "snippet compiles with no errors or warnings" + note + (
+        return ("snippet compiles with no errors" + (" (linter warnings only)" if msgs else " or warnings")) + note + (
             f"; banked into candidate/Solution.lean: {', '.join(banked)} (version {self.version})" if banked else "")
 
     def _chunks(self, code):
