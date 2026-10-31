@@ -57,6 +57,46 @@ def test_runner_sanitize():
     assert f.read_text() == '{"cwd": "<workspace>", "repo": "<proofforge>/bin"}\n'
 
 
+class FakeServer:
+    def __init__(self, build, status):
+        self.build, self.status = build, status
+
+    def lean(self, script, timeout=None):
+        return self.build
+
+    def theorem_status(self, task):
+        return self.status
+
+
+def test_no_verdict_is_not_a_rejection():
+    """A Docker failure, a time limit or a judge run without a verdict yields no message, never
+    "the judge rejected it" (the runner then retries once and stops with judge_unavailable)."""
+    from unittest.mock import patch
+    t = taskmod.load("rw-cetus-shlw")
+    ws = muse_code.make_workspace(t, "alone")
+    ok_build = {"exit_code": 0, "output_tail": "Build completed successfully"}
+    proved = {th: "PROVED" for th in t.theorems}
+    docker_down = {"exit_code": 125, "output_tail": "docker: Cannot connect to the Docker daemon at unix:///x"}
+    assert muse_code.ordinary_feedback(FakeServer(docker_down, proved), t, ws) == (False, None)
+    timed_out = {"exit_code": 124, "output_tail": muse_code.judge.TIMEOUT_MARK}
+    assert muse_code.ordinary_feedback(FakeServer(timed_out, proved), t, ws) == (False, None)
+    missing = {th: "MISSING" for th in t.theorems}
+    assert muse_code.ordinary_feedback(FakeServer(ok_build, missing), t, ws) == (False, None)
+    no_verdict = {"accepted": False, "checks": {"tree": {"problems": []}, "impl_scan": {"problems": []},
+                                                "comparator": {"exit_code": 1, "output_tail": "context canceled"}}}
+    with patch.object(muse_code.judge, "judge", return_value=no_verdict):
+        assert muse_code.ordinary_feedback(FakeServer(ok_build, proved), t, ws) == (False, None)
+    rejected = {"accepted": False, "checks": {"tree": {"problems": []}, "impl_scan": {"problems": []},
+                                              "comparator": {"exit_code": 1, "output_tail": "error: theorem statement differs"}}}
+    with patch.object(muse_code.judge, "judge", return_value=rejected):
+        ok, msg = muse_code.ordinary_feedback(FakeServer(ok_build, proved), t, ws)
+        assert not ok and "judge rejected it" in msg and "statement differs" in msg
+    some_sorry = dict(proved, **{t.theorems[0]: "SORRY"})
+    ok, msg = muse_code.ordinary_feedback(FakeServer(ok_build, some_sorry), t, ws)
+    assert not ok and "not proved yet" in msg
+    shutil.rmtree(ws)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

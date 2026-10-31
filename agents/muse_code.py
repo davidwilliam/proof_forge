@@ -137,16 +137,29 @@ def settings_for(arm, ws, task, mcp_log, real_home):
 # ------------------------------------------------------------------------------------------------
 # Ordinary checking between sessions (what A0 gets)
 
+INFRA = re.compile(r"Cannot connect to the Docker daemon|Error response from daemon|context canceled|^docker: ", re.M)
+
+
+def unavailable(r):
+    """A Lean run that produced no verdict: stopped at its time limit or failed in Docker itself."""
+    out = r.get("output_tail") or ""
+    return judge.TIMEOUT_MARK in out or r.get("exit_code") in (125, 126, 127) or bool(INFRA.search(out))
+
+
 def ordinary_feedback(server, task, ws):
-    """(accepted, message): compile; then sorry status; then the judge, as agents/baseline.audit."""
+    """(accepted, message): compile; then sorry status; then the judge, as agents/baseline.audit.
+    The message is None when Lean or the judge gave no verdict (a time limit or a Docker failure),
+    so that an infrastructure failure is never reported to the agent as a rejection."""
     r = server.lean("lake build Solution 2>&1 | tail -c 60000")
-    text = proofforge_mcp.clean_lean(r["output_tail"])
-    if judge.TIMEOUT_MARK in text:
+    if unavailable(r):
         return False, None
+    text = proofforge_mcp.clean_lean(r["output_tail"])
     if "error:" in text:
         return False, "candidate/Solution.lean does not compile. Lean output:\n" + text[-6000:]
     status = server.theorem_status(task)
     scan = judge.impl_scan([ws / "candidate/Solution.lean"], task)
+    if all(v == "MISSING" for v in status.values()) and not any("required theorem missing" in p for p in scan["problems"]):
+        return False, None      # the axiom audit produced no output
     open_ = [t for t, v in status.items() if v != "PROVED"]
     if open_ or scan["problems"]:
         msg = "candidate/Solution.lean compiles."
@@ -159,9 +172,13 @@ def ordinary_feedback(server, task, ws):
     if j["accepted"]:
         return True, "accepted"
     reasons = j["checks"]["tree"]["problems"] + j["checks"]["impl_scan"]["problems"]
+    runs = [c for c in j["checks"].values() if isinstance(c, dict) and "exit_code" in c]
     cmp_ = j["checks"].get("comparator", {}).get("output_tail", "")
+    errors = [l for l in cmp_.splitlines() if "error" in l.lower()]
+    if not reasons and (not errors or any(unavailable(c) for c in runs)):
+        return False, None
     return False, ("The file compiles with no sorry, but the judge rejected it: " + "; ".join(reasons) + "\n"
-                   + "\n".join(l for l in cmp_.splitlines() if "error" in l.lower())[-3000:])
+                   + "\n".join(errors)[-3000:])
 
 
 # ------------------------------------------------------------------------------------------------
@@ -365,6 +382,9 @@ def main():
             stop = "no_model_calls"
             break
         ok, feedback = ordinary_feedback(server, task, ws)
+        if not ok and feedback is None and meter.budget.elapsed() < a.budget_wall - 120:
+            time.sleep(60)              # no verdict: try once more before deciding anything
+            ok, feedback = ordinary_feedback(server, task, ws)
         if meter.budget.elapsed() >= a.budget_wall:
             stop = "wall"
             break
@@ -373,6 +393,9 @@ def main():
             break
         if meter.stopped:
             stop = "usd"
+            break
+        if feedback is None:
+            stop = "judge_unavailable"    # Lean or the judge gave no verdict twice; nothing is sent to the agent
             break
         prompt = ("Your session ended, but the task is not finished. " + (feedback or "") +
                   "\nContinue from the current candidate/Solution.lean until the file compiles and every required theorem is proved.")
