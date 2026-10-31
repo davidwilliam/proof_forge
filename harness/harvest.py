@@ -1614,15 +1614,17 @@ def failing_theorems(text, messages):
     return failing, outside
 
 
-def battery_text(text, failing):
+def battery_text(text, failing, only=None):
     """The candidate with every open obligation replaced by the battery, importing the library;
-    returns (text, [obligation records])."""
+    returns (text, [obligation records]). With `only`, only those obligations get the battery
+    (the others keep their text)."""
     edits, obs = [], []
     fail_ranges = [(s[1], s[2]) for s in failing]
     k = 0
     for name, a, b, l0, l1 in failing:
         obs.append({"k": k, "kind": "failing theorem", "theorem": name, "line": l0})
-        edits.append((a, b, " by\n  " + site_battery(k)))
+        if only is None or k in only:
+            edits.append((a, b, " by\n  " + site_battery(k)))
         k += 1
     for pos in sorry_sites(text):
         if any(a <= pos < b for a, b in fail_ranges):
@@ -1632,7 +1634,8 @@ def battery_text(text, failing):
         th = [s[0] for s in theorem_spans(text) if s[3] <= line < s[4]]
         obs.append({"k": k, "kind": f"sorry ({kind})", "theorem": th[0] if th else None, "line": line})
         rep = site_battery(k) if kind == "tactic" else f"(by {site_battery(k)})"
-        edits.append((pos, pos + len("sorry"), rep))
+        if only is None or k in only:
+            edits.append((pos, pos + len("sorry"), rep))
         k += 1
     out = text
     for a, b, rep in sorted(edits, reverse=True):
@@ -1659,7 +1662,8 @@ def link_tree(src, dst):
     shutil.copytree(src, dst, copy_function=os.link, symlinks=True)
 
 
-LEAN_BATTERY = ("lake env lean -DmaxErrors=1000000 -DmaxHeartbeats=4000000 --json candidate/Solution.lean")
+LEAN_BATTERY = "lake env lean -DmaxErrors=1000000 -DmaxHeartbeats=4000000 --json candidate/Solution.lean"
+GROUP = 6
 
 
 def measure_unresolved(base, new, log, only=None):
@@ -1689,35 +1693,48 @@ def measure_unresolved(base, new, log, only=None):
         if outside:
             c["skipped"] = f"errors outside every theorem: {outside[0][:160]}"
             continue
-        btext, obs = battery_text(text, failing)
+        obs = battery_text(text, failing)[1]
         c["obligations"] = obs
         if not obs:
             continue
-        (d / "candidate/Solution.lean").write_text(btext)
+        # At most GROUP obligations per file: a file with many `exact?` calls can exhaust the
+        # container's memory, and Lean then stops before printing its messages.
+        c["groups"] = batches([o["k"] for o in obs], GROUP)
+        for j, ks in enumerate(c["groups"]):
+            (d / f"Battery{j}.lean").write_text(battery_text(text, failing, set(ks))[0])
         link_tree(base_pkg, d / fin_lib.VENDOR)
         fin_lib.add_require(d)
         link_tree(new_pkg, d / ".pfnew")
         (d / ".done").unlink()
         ready.append(c)
     log(f"{len(ready)} candidates with open obligations, {sum(len(c['obligations']) for c in ready)} obligations")
+
+    def runs(c, tag):
+        return "; ".join(f"{LEAN_BATTERY.replace('candidate/Solution.lean', f'Battery{j}.lean')} > {tag}{j}.jsonl "
+                         f"2> {tag}{j}.err; echo $? > {tag}{j}.rc" for j in range(len(c["groups"])))
     compile_all(parent, ready, lambda c: (
-        f"{LEAN_BATTERY} > base.jsonl 2> base.err; rm -rf {fin_lib.VENDOR} && mv .pfnew {fin_lib.VENDOR} && "
-        f"{LEAN_BATTERY} > harvest.jsonl 2> harvest.err"), 4 * 3600, log, chunk=4)
+        f"{runs(c, 'base')}; rm -rf {fin_lib.VENDOR} && mv .pfnew {fin_lib.VENDOR} && {runs(c, 'harvest')}"),
+        4 * 3600, log, chunk=4)
     for c in ready:
         d = parent / c["id"]
-        mb, mh = read_messages(d / "base.jsonl"), read_messages(d / "harvest.jsonl")
-        rb, rh = read_sites(mb, c["obligations"]), read_sites(mh, c["obligations"])
-        lines = {o["k"]: o["line"] for o in c["obligations"]}
-        btext = (d / "candidate/Solution.lean").read_text()
-        for o in c["obligations"]:
-            k = o["k"]
-            line = next((i + 1 for i, l in enumerate(btext.split("\n")) if f'"PFH_CLOSED_{k}"' in l), lines[k])
-            o["base"], o["harvest"] = rb[k], rh[k]
-            if rb[k] == "closed":
-                o["base_by"] = (try_this(mb, line) or ["a default tactic"])[0]
-            if rh[k] == "closed":
-                o["harvest_by"] = (try_this(mh, line) or ["a default tactic"])[0]
+        for j, ks in enumerate(c["groups"]):
+            btext = (d / f"Battery{j}.lean").read_text()
+            mb, mh = read_messages(d / f"base{j}.jsonl"), read_messages(d / f"harvest{j}.jsonl")
+            group = [o for o in c["obligations"] if o["k"] in ks]
+            rb, rh = read_sites(mb, group), read_sites(mh, group)
+            for o in group:
+                k = o["k"]
+                line = next((i + 1 for i, l in enumerate(btext.split("\n")) if f'"PFH_CLOSED_{k}"' in l), o["line"])
+                o["base"], o["harvest"] = rb[k], rh[k]
+                for tag in ("base", "harvest"):
+                    rc = d / f"{tag}{j}.rc"
+                    o[f"{tag}_exit"] = int(rc.read_text().strip()) if rc.is_file() and rc.read_text().strip() else None
+                if rb[k] == "closed":
+                    o["base_by"] = (try_this(mb, line) or ["a default tactic"])[0]
+                if rh[k] == "closed":
+                    o["harvest_by"] = (try_this(mh, line) or ["a default tactic"])[0]
         c["finished"] = (d / ".done").is_file()
+        c.pop("groups")
     for c in cands:
         shutil.rmtree(parent / c["id"], ignore_errors=True)
     return cands
@@ -1815,6 +1832,24 @@ def measure_reprove(rec, base, new, log):
     return res
 
 
+def cross_task(meas, rec):
+    """Mark each re-proving row closed by a harvested lemma with whether that lemma was proved in
+    a candidate of another task (`cross_task`), and count those rows per set."""
+    tasks_of = {}
+    for r in rec["decls"]:
+        if r.get("final_name"):
+            h = r["statement_hash"]
+            tasks_of[r["final_name"]] = {x["task"] for x in rec["decls"] if x.get("statement_hash") == h}
+    for res in meas["reprove"].values():
+        for row in res["rows"]:
+            used = re.findall(rf"{re.escape(NAMESPACE)}\.([\w']+)", row["harvest"] or "")
+            row["cross_task"] = bool(used) and not row["circular"] and \
+                any(tasks_of.get(f"{NAMESPACE}.{u}", set()) - {row["task"]} for u in used)
+        gained = [r for r in res["rows"] if r["harvest"] and not r["circular"] and not r["base"]]
+        res["closed_only_after_cross_task"] = sum(r["cross_task"] for r in gained)
+    return meas
+
+
 AUDIT_LINE = re.compile(r"audit: (\d+) constants, (\d+) theorems, (\d+) violations")
 
 
@@ -1856,6 +1891,7 @@ def measure(log=print, only=None):
            "library_before_sha256": fin_lib.tree_sha256(base), "library_after_sha256": fin_lib.tree_sha256(new),
            "battery": SITE_TACTICS + ["exact?"]}
     out["reprove"] = measure_reprove(rec, base, new, log)
+    cross_task(out, rec)
     cands = measure_unresolved(base, new, log, only)
     obs = [(c, o) for c in cands for o in c.get("obligations", [])]
     out["unresolved"] = {
@@ -1866,6 +1902,7 @@ def measure(log=print, only=None):
         "closed_only_after": sum(o.get("harvest") == "closed" and o.get("base") != "closed" for _, o in obs),
         "closed_only_before": sum(o.get("base") == "closed" and o.get("harvest") != "closed" for _, o in obs),
         "not_reached": sum(o.get("base") == "not reached" or o.get("harvest") == "not reached" for _, o in obs),
+        "lean_stopped": sum(any(o.get(f"{t}_exit") not in (0, 1) for t in ("base", "harvest")) for _, o in obs),
         "candidates_detail": cands}
     out["elapsed_s"] = round(time.monotonic() - t0, 1)
     OUT.mkdir(parents=True, exist_ok=True)
