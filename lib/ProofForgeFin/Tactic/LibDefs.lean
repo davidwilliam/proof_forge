@@ -203,6 +203,14 @@ def sumEqnLemmas : List (Name × Name × Name) :=
    (``Nat, ``Nat, ``ProofForgeFin.Sums.eq_sum_range_of_eqns),
    (``Nat, ``Int, ``ProofForgeFin.Sums.eq_sum_range_of_eqns_int)]
 
+/-- Whether a definition is defined by structural recursion on a list or a natural number (its
+value goes through `brecOn` or the recursor): only those are tried as sums by recursion, since
+checking the equations of any other definition by `rfl` may unfold it at length. -/
+def isStructuralOnListOrNat (d : DefinitionVal) : Bool :=
+  (d.value.find? fun e => match e.constName? with
+    | some n => n == ``List.brecOn || n == ``Nat.brecOn || n == ``List.rec || n == ``Nat.rec
+    | none => false).isSome
+
 /-- For an application `c args` of a restated definition whose first explicit argument is a list
 or a natural number and whose value is a `Nat` or an `Int`: the equation `∀ x, F x = sum` with
 `F := fun x => c args` (the first explicit argument abstracted), proved by the matching
@@ -283,7 +291,11 @@ def libDefsCore : TacticM (Array LibBridge × Array Name) := withMainContext do
     if ty' != ty then g ← g.replaceLocalDeclDefEq d.fvarId ty'
   replaceMainGoal [g]
   -- Recursive sums: rewritten with their equations.
-  let rest := restated.filter fun c => !bs.any (·.c == c)
+  let env ← getEnv
+  let rest := restated.filter fun c => !bs.any (·.c == c) &&
+    match env.find? c with
+    | some (.defnInfo d) => isStructuralOnListOrNat d
+    | _ => false
   let eqns ← sumEqns g (rest.foldl (·.insert ·) {})
   let mut byEqns : Array Name := #[]
   if !eqns.isEmpty then
