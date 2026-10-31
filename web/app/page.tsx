@@ -224,12 +224,12 @@ function HeadlineFacts() {
           {refutedFailures.length} of {COMPARISON.length}
         </p>
         <p className="fact-text">
-          Real failures refuted with counterexamples the Lean kernel checks: {listWords(COMPARISON.map((r) => shortIncident(r.incident)))},{" "}
-          {count(FLAGSHIPS.length)} of them with {lossTotalPhrase()} in reported losses combined.
+          Real failures, {lossTotalPhrase()} in reported losses, refuted with counterexamples the Lean kernel checks.
         </p>
         <p className="fact-note">
-          {checked} of the {refuted} refuted requirements have a kernel-checked counterexample. The loss figures measure different things;
-          see the notes under <a href="#compare">the comparison</a>.
+          {listWords(COMPARISON.map((r) => shortIncident(r.incident)))}. The losses are quoted for {count(FLAGSHIPS.length)} of them and
+          measure different things; see the notes under <a href="#compare">the comparison</a>. {checked} of the {refuted} refuted requirements
+          have a kernel-checked counterexample.
         </p>
         <p className="fact-source">
           <a href={githubFile("results/counterexamples-1/README.md")}>results/counterexamples-1</a>
@@ -240,10 +240,12 @@ function HeadlineFacts() {
           {e2("proofforge").badAccepted} of {E2.bad}
         </p>
         <p className="fact-text">
-          Seeded bad repairs accepted by ProofForge, against {e2("ordinary").badAccepted} accepted by ordinary checking (build, theorem names,
-          axiom audit), with {e2("proofforge").goodRejected} of {E2.good} correct repairs rejected.
+          Bad repairs accepted by ProofForge. Ordinary checking accepted {e2("ordinary").badAccepted}.
         </p>
-        <p className="fact-note">The bad repairs were written by the build team, so the counts describe this suite.</p>
+        <p className="fact-note">
+          Ordinary checking: the build passes, the theorem names exist, the axioms are clean. ProofForge rejected {e2("proofforge").goodRejected}{" "}
+          of {E2.good} correct repairs. The bad repairs were written by the build team, so the counts describe this suite.
+        </p>
         <p className="fact-source">
           <a href={githubFile(E2.source.replace("e2.json", "e2.md"))}>results/e2-all-1</a>
         </p>
@@ -253,13 +255,12 @@ function HeadlineFacts() {
           ${balancer.planner.usdPerVerified.toFixed(2)} <span className="fact-figure-alt">vs ${balancer.alone.usdPerVerified.toFixed(2)}</span>
         </p>
         <p className="fact-text">
-          List price per verified {shortIncident(balancer.incident)} proof for Muse Spark with ProofForge and the Muse Wonder planner (
-          {balancer.planner.verified} of {balancer.planner.runs} runs verified), against ${balancer.alone.usdPerVerified.toFixed(2)} for Muse
-          Spark alone ({balancer.alone.verified} of {balancer.alone.runs}), at the same caps of ${RUN_CAPS.usdList} and{" "}
-          {RUN_CAPS.seconds / 3600} hours per run.
+          Per verified {shortIncident(balancer.incident)} fix: Muse with ProofForge verified {balancer.planner.verified} of{" "}
+          {balancer.planner.runs} runs, Muse alone {balancer.alone.verified} of {balancer.alone.runs}, at the same caps.
         </p>
         <p className="fact-note">
-          The difference in verification rate is not statistically significant at these sample sizes (one-sided Fisher exact p ={" "}
+          List prices; caps of ${RUN_CAPS.usdList} and {RUN_CAPS.seconds / 3600} hours per run; Muse Spark 1.3, with the Muse Wonder planner
+          in the ProofForge arm. The difference in verification rate is not statistically significant at these sample sizes (one-sided Fisher exact p ={" "}
           {balancer.fisherOneSidedP.toFixed(2)}); the difference in cost is the stronger result.
         </p>
         <p className="fact-source">
@@ -271,11 +272,11 @@ function HeadlineFacts() {
           {fmt(ss.rejected)} of {fmt(ss.compiled)}
         </p>
         <p className="fact-text">
-          Compiling mutants of the reference code, each with one change, rejected by the {ss.specifications} locked specifications,{" "}
-          {fmt(ss.kernelChecked)} of them with counterexamples the Lean kernel checks.
+          Wrong variants of the reference code rejected by the {ss.specifications} locked specifications, {fmt(ss.kernelChecked)} with
+          kernel-checked counterexamples.
         </p>
         <p className="fact-note">
-          Of the {ss.compiled - ss.rejected} that pass, {ss.survivedDiffers} behave differently from the reference and are reported as
+          Each variant is a compiling mutant with one change. Of the {ss.compiled - ss.rejected} that pass, {ss.survivedDiffers} behave differently from the reference and are reported as
           specification gaps.
         </p>
         <p className="fact-source">
