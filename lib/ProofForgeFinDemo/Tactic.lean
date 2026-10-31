@@ -2,6 +2,7 @@ import ProofForgeFinDemo.Tactic.RoundBound
 import ProofForgeFinDemo.Tactic.StructSimp
 import ProofForgeFinDemo.Tactic.RunInduction
 import ProofForgeFinDemo.Tactic.Router
+import ProofForgeFinDemo.Tactic.LibDefs
 /-!
 # Tests of the proof automation
 
@@ -16,4 +17,6 @@ Every example and theorem in these files must be closed for the build to succeed
   escrow and the Comptroller of `rw-compound-comp`.
 * `Router`: goals copied from failed attempts on `rc-knight-router`, the two invariants of its
   accepted repair over every sequence of events, and two of its requirements.
+* `LibDefs`: `lib_defs` on restated sums, updates, ceiling divisions and fixed-point products,
+  the sum lemmas of `ProofForgeFin.Sums` it opens, and a clean failure.
 -/

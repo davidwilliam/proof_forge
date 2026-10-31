@@ -95,6 +95,45 @@ from) with the library after it. No model is called.
   between the two runs). The report counts the obligations each library closes. A site is "not
   reached" when an earlier error in the same proof stops elaboration before it.
 
+## Failure mining
+
+`harness/mine.py` reads the goals runs failed to prove, without a model and without Lean: for
+every run that was not accepted, the theorems of its final candidate that still contain `sorry`
+(required theorems and helpers), the lemma statements its planner proposed that the final
+candidate does not prove, and the last `unsolved goals` text per theorem from its tool results.
+`mine.py goals --set mining` reads only the runs of the mining set of
+`results/feedback-library-1/split.json` (task families fixed before any goal was read; the
+frozen test split and two families drawn by hash are held out). `mine.py clusters` tags each goal's
+conclusion with shape features (sums after an update, floor bounds, monotone or capped accrual,
+run invariants, step projections, ...) and counts goals that name a definition the task restates
+from the library. `mine.py open` replaces every open goal of a set's failed runs that Lean can
+state in the candidate's context by a fixed battery (default tactics, library tactics, `grind`,
+`exact?`; with the new library also `lib_defs` followed by `simp_all`, `grind` or `exact?`) and
+compiles it with two library versions; `mine.py reprove` does the same for the proofs of accepted
+runs, one per distinct statement, and records the proof sizes. The library lemmas written from
+the clusters are in `ProofForgeFin.Sums` and `ProofForgeFin.Accrual`, and the tactic in
+`ProofForgeFin.Tactic.LibDefs`; `results/feedback-library-1/README.md` has the clusters, the
+lemmas and the held-out measurement.
+
+## Salvage: runs that were not accepted
+
+`harvest.py run --unverified` (profile `salvage`) runs the same passes over the final candidates of
+runs that were not accepted: a Passport not VERIFIED, a judge verdict not ACCEPT, or, for a run
+with neither, a summary that says the candidate was not accepted in the session
+(`harness/mine.py runs`). A candidate that was not accepted still proves many of its lemmas.
+Only the tasks of the mining set of `results/feedback-library-1/split.json` are harvested; the
+held-out tasks are listed and skipped, so the held-out measurement in
+`results/feedback-library-1` is not fed by its own failures. A lemma is kept under the same
+conditions as a harvested one, which here also exclude everything a `sorry` reaches: its statement
+elaborates with only ProofForgeFin imported, its proof compiles there on its own, and its axioms
+are within propext, Classical.choice and Quot.sound (a proof that uses `sorry`, or a lemma proved
+by `sorry`, has `sorryAx` among its axioms). Deduplication runs against the whole library,
+including `ProofForgeFin.Harvested`. The lemmas go to `lib/ProofForgeFin/Salvaged/` (namespace
+`ProofForgeFin.Salvaged`) and through the same kernel check (`harvest.py kernels --profile
+salvage`); their doc strings name the source by its id in
+`results/feedback-library-1/salvage/harvest.json`, which records the run, the file hash and the
+verdict.
+
 ## Library versions and Passports
 
 Writing the harvest changes `lib/` and therefore the library `source_tree_sha256`. Passports
@@ -117,6 +156,8 @@ python3 harness/harvest.py sources    # sources, harvested and held out
 python3 harness/harvest.py run        # passes 1 to 3, final check, writes lib/ and results/harvest-1/harvest.json
 python3 harness/harvest.py kernels    # six kernels, leanchecker and the axiom audit on the harvested modules
 python3 harness/harvest.py measure    # results/harvest-1/measure.json
+python3 harness/harvest.py run --unverified --results DIR   # salvage: lib/ProofForgeFin/Salvaged
+python3 harness/harvest.py kernels --profile salvage
 python3 tests/test_harvest.py [--quick]
 ```
 

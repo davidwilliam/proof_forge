@@ -231,7 +231,10 @@ def test_recorded_counts_are_consistent():
             assert r.get("final_name"), r
         if r["class"] == "task-specific":
             assert "final_name" not in r
-    assert rec["base_library_sha256"] != rec["library_sha256"] == fin_lib.tree_sha256()
+    # The harvest's library version is the current one or a later commit's predecessor in the
+    # history of lib/ (the library has changed since, results/feedback-library-1).
+    assert rec["base_library_sha256"] != rec["library_sha256"]
+    assert rec["library_sha256"] == fin_lib.tree_sha256() or fin_lib.find_commit(rec["library_sha256"])
 
 
 def test_measurement_record_is_consistent():
@@ -250,7 +253,7 @@ def test_measurement_record_is_consistent():
         assert r["lemmas"] == len(rows)
         assert r["closed_before"] == sum(bool(x["base"]) for x in rows)
         assert r["closed_after"] == sum(bool(x["harvest"]) and not x["circular"] for x in rows)
-    assert m["library_after_sha256"] == fin_lib.tree_sha256()
+    assert m["library_after_sha256"] == harvest_record()["library_sha256"]
     assert m["library_before_sha256"] == harvest_record()["base_library_sha256"]
 
 
@@ -262,7 +265,11 @@ def test_pre_harvest_library_is_found_by_its_tree_hash():
     root = fin_lib.materialize(commit, base)
     assert root and fin_lib.tree_sha256(root) == base
     assert not (root / "ProofForgeFin/Harvested.lean").exists()
-    assert fin_lib.tree_sha256(harvest.base_root()) == base
+    # The harvest's library without its harvested modules is the pre-harvest library.
+    after = harvest_record()["library_sha256"]
+    after_root = fin_lib.lib_root() if after == fin_lib.tree_sha256() else \
+        fin_lib.materialize(fin_lib.find_commit(after), after)
+    assert fin_lib.tree_sha256(harvest.base_root(after_root)) == base
     # A Passport record of that version, with and without the commit, resolves to its sources.
     for rec in ({"vendored": True, "source_tree_sha256": base, "git_commit": commit},
                 {"vendored": True, "source_tree_sha256": base, "git_commit": None}):

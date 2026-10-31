@@ -316,6 +316,43 @@ integer quotient of casts about which it knows nothing, not even that it is nonn
 fails on `sd.index ≤ sd.index + X / total`; after `generalize_divs` it succeeds. `step_cases`,
 `run_induction` and `round_bound` use it after a failed `omega`.
 
+## `lib_defs`
+
+Specifications restate definitions the library has: a `sumOver` by `List.foldr`, an update
+`upd f k v`, a ceiling division `(a + b - 1) / b`, a fixed-point product `a * b / ONE`. The
+library's lemmas are stated over its own definitions, so `exact?` and `simp` do not find them for
+the restated ones, although the two are definitionally equal. In the open goals of the runs that
+were not accepted (`results/feedback-library-1/clusters.json`) this is the most frequent reason a
+library fact was not used.
+
+`lib_defs` looks at every constant of the goal and the hypotheses that is defined outside the
+library and the Lean distribution, and finds a ProofForgeFin definition it is definitionally
+equal to: the candidates are the library definitions with the same head constant in their value
+(looking through library definitions written with other library definitions, up to three levels),
+the ones that more library theorems mention first; the leading implicit and instance arguments of
+both are instantiated (instances by synthesis), up to three leading explicit arguments of the
+library's are left to unification (a scale constant), and the two must be definitionally equal as
+functions at default transparency. Every application of the restated definition is then replaced
+by the library's, in the goal and in every hypothesis, as a change up to definitional equality
+(like `change`): no hypothesis, no axiom, checked by the kernel. `lib_defs?` also reports the
+replacements. It fails, leaving the goal unchanged, when no definition matches.
+
+```
+def total {α : Type} (l : List α) (f : α → Int) : Int := l.foldr (fun a acc => f a + acc) 0
+def setAt {α : Type} (f : Nat → α) (k : Nat) (v : α) : Nat → α := fun j => if j = k then v else f j
+
+example (hl : l.Nodup) (hk : k ∈ l) : total l (setAt f k v) = total l f - f k + v := by
+  lib_defs      -- total ↦ Ledger.sumOver, setAt ↦ Ledger.upd
+  exact?        -- Machine.sumOver_upd hl f hk v
+```
+
+A sum restated by structural recursion on a list or a natural number (`S [] = 0`,
+`S (x :: xs) = f x + S xs`, or `S 0 = 0`, `S (n + 1) = S n + f n`) is not definitionally equal to
+a fold. For those, `lib_defs` then proves the equation `∀ x, S x = (x.map f).sum` (or the sum over
+`List.range n`) with the lemmas of `ProofForgeFin.Sums.Eqns`, checking the defining equations by
+`rfl`, and rewrites with it (`simp only ... at *`). Other definitions are not tried, so the tactic
+does not unfold a large step function looking for a sum.
+
 ## Tests
 
 `ProofForgeFinDemo/Tactic/` holds 103 examples and theorems; 74 use the automation and must be
@@ -333,6 +370,8 @@ comparison below and lemmas copied from the tasks. Four check that a tactic fail
 * `RunInduction.lean`: `exec_value'` (the case analysis of `rw-hundred-vault`), an accumulated
   bound over the vault, an invariant through a stronger one, the ghost-total `run_pot'` of
   `rw-compound-comp`, a failure test.
+* `LibDefs.lean`: `lib_defs` on a restated sum, update, ceiling division and fixed-point product
+  (in the goal and in a hypothesis), the sum lemmas it opens, and a clean failure.
 * `Router.lean`: 8 goals copied from failed attempts on `rc-knight-router` (the projections,
   updates and conditions above and the last goal of REQ-FILL-ACCOUNTING in the run that ran out
   of budget on it), the invariants `InvWeak2` and `InvFillAcc` of the accepted repair over every
