@@ -62,6 +62,7 @@ MUSE = pathlib.Path(os.environ.get("MUSE_BIN") or shutil.which("muse") or pathli
 FORBIDDEN_TEXT = ("sorry, axiom, opaque, implemented_by, extern, unsafe, @[export], @[csimp], macro, elab, syntax, "
                   "initialize, #eval, run_cmd, native_decide, set_option")
 SETTLE_S = 300
+MCP_TOOL_TIMEOUT_S = 3600   # Muse Code's per-server `tool_timeout_sec`; the run's wall cap still applies
 ARM_TOOLS = {
     "alone": "lean_build (Lean's output for `lake build Solution`, or `lake env lean <file>` for any .lean file here)",
     "proofforge": "the proofforge tools (lean_build, show_task, try_snippet, check_candidate, verify_passport, "
@@ -130,7 +131,10 @@ def settings_for(arm, ws, task, mcp_log, real_home):
                        "--profile", "lean" if arm == "alone" else "proofforge", "--blind", "--log", str(mcp_log)],
               "env": {"HOME": str(real_home), "DOCKER_CONFIG": str(real_home / ".docker"),
                       "PF_CONTAINER_SLOTS": os.environ.get("PF_CONTAINER_SLOTS", "2")},
-              "mode": "required"}
+              "mode": "required",
+              # A full check or a Passport reproduction takes minutes; past Muse Code's default MCP
+              # tool timeout the call fails and the server's connection is closed for the session.
+              "tool_timeout_sec": MCP_TOOL_TIMEOUT_S}
     return {"schema_version": 1, "telemetry": {"enabled": False}, "mcp_servers": {"proofforge": server}}
 
 

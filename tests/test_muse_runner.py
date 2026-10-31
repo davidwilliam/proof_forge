@@ -42,7 +42,7 @@ def test_runner_settings():
     s = muse_code.settings_for("alone", pathlib.Path("/w"), t, pathlib.Path("/o/mcp.jsonl"), pathlib.Path("/h"))
     srv = s["mcp_servers"]["proofforge"]
     assert s["schema_version"] == 1 and s["telemetry"] == {"enabled": False}
-    assert srv["transport"] == "stdio" and srv["mode"] == "required"
+    assert srv["transport"] == "stdio" and srv["mode"] == "required" and srv["tool_timeout_sec"] == 3600
     assert srv["args"][srv["args"].index("--profile") + 1] == "lean" and "--blind" in srv["args"]
     s = muse_code.settings_for("proofforge", pathlib.Path("/w"), t, pathlib.Path("/o/mcp.jsonl"), pathlib.Path("/h"))
     srv = s["mcp_servers"]["proofforge"]
