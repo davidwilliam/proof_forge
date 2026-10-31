@@ -15,7 +15,7 @@ This describes the system as built. Each section names the code that implements 
 | Repair agents | `agents/repair.py`, `agents/baseline.py`, `agents/meta_client.py`, `agents/budget.py` | Meta models fix the code and write the proofs |
 | Evaluation | `eval/e1.py`, `eval/e2.py`, `eval/freeze.py`, `harness/ordinary.py` | completion under equal budgets (E1); integrity of checking (E2) |
 | PR gate | `.github/workflows/proofforge.yml` | judges a pull request's candidate from a trusted checkout |
-| API and web | `server/app.py`, `server/controls.py`, `web/` | jobs, replays, checks, Passports, the payout sidecar, the hidden challenge |
+| API and web | `server/app.py`, `server/controls.py`, `web/` | jobs, replays, checks, Passports, the payout and swap sidecars, the hidden challenge |
 | Images and hosting | `infra/docker/`, `infra/fly/`, `infra/vercel/` | pinned Lean image; Fly.io Machine for the API and judge; Vercel for the web |
 
 ## Task
@@ -99,6 +99,7 @@ E1 (`eval/e1.py`) runs every arm once per task under identical caps and scores e
 - Tasks (`GET /api/tasks`, `GET /api/tasks/{id}`): the benchmark tasks and the real-world tasks under `realworld/tasks` (split `realworld`), each with its locked requirements; `?split=` filters by split. Hidden variants are never listed.
 - Checks (`POST /api/verify`): the full Passport pipeline on a submitted candidate, under a request-wide deadline. With `"counterexample": true`, each requirement the property tests refute also gets the counterexample stage (a Lean refutation checked by the six kernels, `leanchecker` and the axiom audit), within the same deadline; the site's "Check a fix" panel sends it for the real-world tasks.
 - The payout sidecar (`POST /api/payout`): the buggy and repaired executables, built once and run on a single request.
+- The swap sidecar (`POST /api/swap`): one batch of at most 100 swaps on a two-token pool, run through the `swap-sidecar` of `rw-balancer-upscale` built from three fixed files (the deployed port, the plus-one hotfix and the verified Muse repair), each built once at startup. The input is rebuilt from checked whole numbers, every run shares a 20 s limit, whole numbers come back as decimal strings, and each version's committed Passport is returned only when it records that exact source file.
 - The hidden challenge (`POST /api/challenge`): 300 property cases against the start candidate of a hidden flagship variant, returning a witness or UNRESOLVED.
 - Operator controls (`/api/admin/*`): replay-only mode and stopping live jobs.
 

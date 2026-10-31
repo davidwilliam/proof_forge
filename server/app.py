@@ -1,5 +1,5 @@
 """ProofForge API: forge jobs (live or replayed), event streams, verification, Passports,
-the payout sidecar, and results.
+the payout and swap sidecars, and results.
 
 Statuses shown to clients come only from runner records: agent events, judge and
 binary-check results, and Passports built by harness/passport.py.
@@ -12,10 +12,10 @@ Environment (admission, quotas and spending are documented in server/controls.py
                           reserved against the daily limit until the job settles at the
                           prices actually charged
   PF_JOB_BUDGET_WALL=2700 per live job wall clock; the process is killed 300 s after it
-  PF_VERIFY_DEADLINE_S=240, PF_CHALLENGE_DEADLINE_S=45, PF_PAYOUT_DEADLINE_S=20
-                          request-wide limits on Lean and binary runs; a check stopped by
+  PF_VERIFY_DEADLINE_S=240, PF_CHALLENGE_DEADLINE_S=45, PF_PAYOUT_DEADLINE_S=20,
+  PF_SWAP_DEADLINE_S=20   request-wide limits on Lean and binary runs; a check stopped by
                           its limit is reported UNRESOLVED, never REFUTED
-  PF_PREWARM=1            build sidecars and hidden variants at startup
+  PF_PREWARM=1            build the payout and swap sidecars and hidden variants at startup
   PF_DATA=runs            jobs, Passports, builds and server.db
 """
 import asyncio, json, os, pathlib, shutil, signal, subprocess, sys, tempfile, threading, time, traceback, uuid
@@ -531,6 +531,144 @@ def payout(body: PayoutRequest, request: Request):
             "result": res, "elapsed_ms": r["elapsed_ms"]}
 
 
+# Balancer swap replay: one batch of swaps through the swap-sidecar built from each version of
+# the Balancer V2 swap wrapper (realworld/tasks/rw-balancer-upscale). Only these fixed files are
+# built; a request supplies numbers, never code.
+
+SWAP_TASK = "rw-balancer-upscale"
+SWAP_VERSIONS = {
+    # key: (candidate file, committed Passport of that file)
+    "deployed": ("realworld/tasks/rw-balancer-upscale/attacks/balancer_port.lean",
+                 "results/counterexamples-1/balancer-port/passport.json"),
+    "plus_one": ("realworld/tasks/rw-balancer-upscale/attacks/plus_one.lean",
+                 "results/balancer-1/plus-one/passport.json"),
+    "repaired": ("results/balancer-1/repair-A2-1/final.lean",
+                 "results/balancer-1/repair-A2-1/passport.json"),
+}
+SWAP_MAX_SWAPS = 100
+SWAP_MAX_AMOUNT = 10 ** 30          # balances and amounts, in raw token units (below 2^112)
+SWAP_MAX_RATE = 10 ** 24            # scaling factors, 1e18 = 1.0
+SWAP_MAX_FEE = 10 ** 17             # 10%; 1e18 is 100%
+SWAP_MAX_AMP = 5_000_000            # StableMath amplification times 1000 (Balancer's maximum)
+
+
+class SwapRequest(BaseModel):
+    math: str = "product"           # product | stable
+    amp: int | str | None = None    # for stable: amplification times 1000
+    pool: dict
+    swaps: list
+    versions: list[str] | None = None
+
+
+def nat(v, name, lo, hi):
+    """A whole number from a JSON integer or a string of decimal digits, within [lo, hi]."""
+    if isinstance(v, bool):
+        raise HTTPException(400, f"{name} must be a whole number")
+    if isinstance(v, str):
+        if not v.isascii() or not v.isdigit() or len(v) > 40:
+            raise HTTPException(400, f"{name} must be a whole number")
+        v = int(v)
+    if not isinstance(v, int) or not lo <= v <= hi:
+        raise HTTPException(400, f"{name} must be a whole number from {lo} to {hi}")
+    return v
+
+
+def swap_input(body: SwapRequest):
+    """The sidecar's input, rebuilt field by field from validated numbers."""
+    if body.math not in ("product", "stable"):
+        raise HTTPException(400, "math must be product or stable")
+    balances, rates = body.pool.get("balances"), body.pool.get("rates")
+    if not isinstance(balances, list) or not isinstance(rates, list) or len(balances) != 2 or len(rates) != 2:
+        raise HTTPException(400, "the pool has two tokens: two balances and two rates")
+    pool = {"balances": [nat(b, "balance", 0, SWAP_MAX_AMOUNT) for b in balances],
+            "rates": [nat(r, "rate", 1, SWAP_MAX_RATE) for r in rates],
+            "fee": nat(body.pool.get("fee"), "fee", 0, SWAP_MAX_FEE)}
+    if not 1 <= len(body.swaps) <= SWAP_MAX_SWAPS:
+        raise HTTPException(400, f"a batch has 1 to {SWAP_MAX_SWAPS} swaps")
+    swaps = []
+    for s in body.swaps:
+        if not isinstance(s, dict) or s.get("kind") not in ("in", "out"):
+            raise HTTPException(400, "each swap has kind in or out")
+        i, o = nat(s.get("in"), "token in", 0, 1), nat(s.get("out"), "token out", 0, 1)
+        if i == o:
+            raise HTTPException(400, "a swap's token in and token out differ")
+        swaps.append({"kind": s["kind"], "in": i, "out": o, "amount": nat(s.get("amount"), "amount", 0, SWAP_MAX_AMOUNT)})
+    out = {"math": body.math, "pool": pool, "swaps": swaps}
+    if body.math == "stable":
+        out["amp"] = nat(body.amp, "amp", 1, SWAP_MAX_AMP)
+    return out
+
+
+def stringify(v):
+    """Whole numbers as decimal strings: they exceed what a browser's JSON numbers hold exactly."""
+    if isinstance(v, bool) or v is None:
+        return v
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, list):
+        return [stringify(x) for x in v]
+    if isinstance(v, dict):
+        return {k: stringify(x) for k, x in v.items()}
+    return v
+
+
+def committed_passport(rel, solution_sha):
+    """The committed Passport of a version, only when it records this exact source file."""
+    f = ROOT / rel
+    if not f.exists():
+        return None
+    p = json.loads(f.read_text())
+    if solution_sha not in p.get("solution", {}).get("files", {}).values():
+        return None
+    return {"passport_sha256": p["passport_sha256"], "status": p["status"], "path": rel,
+            "requirements": {r["id"]: r["status"] for r in p["requirements"]}}
+
+
+def run_sidecar(d, exe, line):
+    """One request line through a built sidecar; output goes to a file, so long batches are whole."""
+    with tempfile.TemporaryDirectory(dir=d, prefix="in-") as tmp:
+        name = pathlib.Path(tmp).name
+        (d / name / "in.jsonl").write_text(line + "\n")
+        r = judge.in_container(d, f".lake/build/bin/{exe} < {name}/in.jsonl > {name}/out.jsonl")
+        out = (d / name / "out.jsonl").read_text() if (d / name / "out.jsonl").exists() else ""
+    if judge.TIMEOUT_MARK in r["output_tail"]:
+        raise HTTPException(504, "the sidecar did not answer within its time limit")
+    lines = out.strip().splitlines()
+    res = json.loads(lines[-1]) if lines else None
+    if isinstance(res, dict) and "error" in res:
+        raise HTTPException(400, "the sidecar refused the input")
+    if r["exit_code"] != 0 or not isinstance(res, dict):
+        raise HTTPException(500, "the sidecar produced no result")
+    return res, r["elapsed_ms"]
+
+
+@app.post("/api/swap")
+def swap(body: SwapRequest, request: Request):
+    keys = list(SWAP_VERSIONS) if body.versions is None else body.versions
+    if not keys or len(set(keys)) != len(keys) or any(k not in SWAP_VERSIONS for k in keys):
+        raise HTTPException(400, f"versions are among {', '.join(SWAP_VERSIONS)}")
+    line = json.dumps(swap_input(body))
+    if len(line) > 20_000:
+        raise HTTPException(413, "input too large")
+    if not WARM.is_set():
+        raise HTTPException(503, "the sidecar builds are warming up; retry shortly", headers={"Retry-After": "30"})
+    CTRL.quota(request, "swap")
+    t = taskmod.load(SWAP_TASK)
+    t0 = time.monotonic()
+    # Built at startup (prewarm); a missing build is made once here, outside the run time limit.
+    builds = {k: built_project(t, ROOT / SWAP_VERSIONS[k][0]) for k in keys}
+    out = []
+    with judge.time_limit(seconds("PF_SWAP_DEADLINE_S", 20)):
+        for k in keys:
+            src, pp = SWAP_VERSIONS[k]
+            d, sha = builds[k]
+            res, ms = run_sidecar(d, t.exe, line)
+            out.append({"version": k, "source": src, "solution_sha256": sha,
+                        "executable_sha256": taskmod.sha256(d / ".lake/build/bin" / t.exe),
+                        "passport": committed_passport(pp, sha), "result": stringify(res), "elapsed_ms": ms})
+    return {"input": stringify(json.loads(line)), "versions": out, "elapsed_ms": int((time.monotonic() - t0) * 1000)}
+
+
 # Live challenge: a hidden flagship variant. A witness comes from the binary check within
 # the response contract; a repair, if requested, continues as a background job.
 
@@ -574,11 +712,17 @@ def challenge(body: ChallengeRequest, request: Request):
 
 
 def prewarm():
-    """Build the payout sidecars and every hidden variant once, so first requests are warm."""
+    """Build the payout and swap sidecars and every hidden variant once, so first requests are warm."""
     t = taskmod.load()
     for rel in BUILDS_ALLOWED.values():
         try:
             built_project(t, t.root / rel)
+        except HTTPException:
+            pass
+    st = taskmod.load(SWAP_TASK)
+    for src, _ in SWAP_VERSIONS.values():
+        try:
+            built_project(st, ROOT / src)
         except HTTPException:
             pass
     for d in sorted(HIDDEN.glob("*/task.json")):

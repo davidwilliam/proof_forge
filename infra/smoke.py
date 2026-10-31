@@ -123,6 +123,18 @@ def main():
     results.append({"case": "payout sidecar", **paid,
                     "passed": all(v["http"] == 200 for v in paid.values())})
 
+    # witnesses/attack_batch.lean, part 1: four rounds of the attack on the 67,000-wei pool.
+    rounds = [(66982, 2375365494), (66982, 1188037286), (66982, 594195912), (66978, 297187558)]
+    swaps = [s for a, w in rounds for s in ({"kind": "out", "in": 0, "out": 1, "amount": a},
+                                            {"kind": "out", "in": 0, "out": 1, "amount": 17},
+                                            {"kind": "out", "in": 1, "out": 0, "amount": w})]
+    status, r, secs = c.call("POST", "/api/swap", {
+        "math": "product", "swaps": swaps,
+        "pool": {"balances": [67000, 67000], "rates": ["1000000000000000000", "1058132408689971699"], "fee": "100000000000000"}})
+    after = {v["version"]: v["result"]["value_after"] for v in r.get("versions", [])} if status == 200 else {}
+    results.append({"case": "swap sidecar", "http": status, "seconds": round(secs, 1), "value_after": after,
+                    "passed": after == {"deployed": "297229191", "plus_one": "4749898000", "repaired": "4749898000"}})
+
     report = {"base": a.base, "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
               "passed": all(r["passed"] for r in results), "results": results}
     for r in results:
