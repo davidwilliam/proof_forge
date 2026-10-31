@@ -346,8 +346,12 @@ example (hl : l.Nodup) (hk : k ∈ l) : total l (setAt f k v) = total l f - f k 
   exact?        -- Machine.sumOver_upd hl f hk v
 ```
 
-Recursive restatements (a sum defined by pattern matching) are not definitionally equal to a fold;
-`ProofForgeFin.Sums.Eqns` identifies them by their equations.
+A sum restated by structural recursion on a list or a natural number (`S [] = 0`,
+`S (x :: xs) = f x + S xs`, or `S 0 = 0`, `S (n + 1) = S n + f n`) is not definitionally equal to
+a fold. For those, `lib_defs` then proves the equation `∀ x, S x = (x.map f).sum` (or the sum over
+`List.range n`) with the lemmas of `ProofForgeFin.Sums.Eqns`, checking the defining equations by
+`rfl`, and rewrites with it (`simp only ... at *`). Other definitions are not tried, so the tactic
+does not unfold a large step function looking for a sum.
 
 ## Tests
 
