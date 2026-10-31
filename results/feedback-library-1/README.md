@@ -13,9 +13,10 @@ Two features, built and measured without model calls:
 Library version: `source_tree_sha256` before
 `34d63d5e60d7027c0c3a6fea8171bd4238182ada1c9110a7a095398c885bfde3` (commit `0b54831`), after
 `5552fae308ba444d87cdc15da779a2c38625d376e3fa95b2259f96184b200301` (commit `8c9819a`). The
-salvage and the retrieval uses and evaluation were made at
+salvage and the retrieval uses were made at
 `ecb69ecac31ce01b33bdebe3420e9adf3053fb16ac563d8812f0d0fb06eb97eb` (commit `4433f37`), which has
-the same theorems and differs only in `lib_defs`. Older versions stay reproducible:
+the same theorems and differs only in `lib_defs`; the recall evaluation was run on both indexes
+and gives the same recall on every set. Older versions stay reproducible:
 `fin_lib.find_commit` finds `34d63d5e` at `0b54831` and `f2fbb0d3` (the version `library-1` ran
 with) at `a837ff2`, and `fin_lib.materialize` extracts them. No committed Passport vendors the
 library; `tests/test_committed_passports.py` passes.
