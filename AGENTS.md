@@ -37,7 +37,11 @@ edit `reference/`, `attacks/` or `witnesses/` to make a candidate pass.
 
 The `proofforge` MCP server (`integrations/muse/proofforge_mcp.py`) exposes the same steps as
 tools: `show_task`, `lean_build`, `try_snippet`, `search_library`, `check_candidate`,
-`verify_passport`. The skill `.agents/skills/proofforge/SKILL.md` describes the loop in detail.
+`verify_passport`. Its `full` profile adds the harness's proof tools
+(`integrations/muse/session_tools.py`): `goal_at` and `check_snippet_fast` on a persistent Lean
+session, `try_tactics` (the tactic portfolio), `refute_statement` (sampling on concrete values),
+`search_library` with a `goal`, and `prior_attempts` (the attempt ledger) in a resumed run. The
+skill `.agents/skills/proofforge/SKILL.md` describes the loop in detail.
 
 ## Candidate rules
 
