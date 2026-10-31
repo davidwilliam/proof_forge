@@ -12,7 +12,7 @@ list of operations with an induction, sums over account lists. The library state
 once, for every scale, state type and operation type, so a specification can name a library
 definition and a proof can cite a library theorem.
 
-The library has 1,724 theorems and 445 definitions in 70 files under fourteen top-level modules
+The library has 1,724 theorems and 446 definitions in 70 files under fourteen top-level modules
 (`Rounding`, `FixedPoint`, `Word`, `Shares`, `Seq`, `Ledger`, `Trading`, `Machine`, `Evm`, `Money`,
 `DeFi`, `Tactic`, `Sums`, `Accrual`) and the two generated ones (`Harvested`, `Salvaged`; source
 declarations counted with comments excluded, as `web/tests/contribution.test.ts` recounts them),
@@ -474,7 +474,7 @@ library and demonstration code:
 Measured in the pinned image: before the change to the Compound demonstration, con-leche and
 con-ron rejected `psi_moves`, `psi_upgrade` and `psi_noPosition` (`fuel exhausted: whnfCore`), and
 the three bounds that depend on them (`account_bounded`, `no_backdated`, `bounds_of_calls`) could
-not be checked; every other declaration passed all six kernels. Now all 10,126 safe constants of
+not be checked; every other declaration passed all six kernels. Now all 10,128 safe constants of
 the library and the demonstrations (5,982 theorems, counting compiler-generated ones) pass all
 six kernels in one Comparator run, and `leanchecker` accepts all 87 modules that declare
 constants (`results/feedback-library-1/kernels-full.json`). The 60 `_unsafe_rec` constants (Lean's compiled form of recursive definitions, which no
