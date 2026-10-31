@@ -11,14 +11,18 @@ results/spec-strength-1/summary.json and table.md. An existing report.json is ke
 Tasks run in at most `--jobs` worker threads (default 2); each task's containers run one at a
 time, and harness/spec_strength.py bounds this process to two containers at once.
 
+With --vacuity-probe it then runs harness/spec_vacuity.py on every report of a task with a
+counterexample adapter (sequentially; an existing vacuity-probe.json is kept unless --force) and
+counts a requirement as kernel-refuted when the report or the probe has an accepted refutation.
+
 Usage: eval/spec_strength.py [--only ID[,ID...]] [--jobs N] [--force] [--table-only]
-                             [--max-mutants N] [--extended-cases N]
+                             [--max-mutants N] [--extended-cases N] [--vacuity-probe]
 """
 import argparse, concurrent.futures, json, pathlib, sys, threading, time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "harness"))
-import spec_strength as ss, task as taskmod  # noqa: E402
+import spec_strength as ss, spec_vacuity as sv, task as taskmod  # noqa: E402
 
 OUT = ROOT / "results" / "spec-strength-1"
 FLAGSHIPS = ["payout-flagship", "rw-cetus-shlw", "rw-euler-donate", "rw-hundred-vault", "rw-balancer-upscale",
@@ -52,12 +56,27 @@ def variants(task_id):
     return [d.name for d in sorted(taskmod.TASKS.glob(f"{base}-b*")) if d.name != task_id] if task_id.endswith("-b1") else []
 
 
+def probe_of(tid):
+    f = OUT / tid / "vacuity-probe.json"
+    return json.loads(f.read_text()) if f.exists() else None
+
+
+def requirement_status(rep):
+    """Per requirement: `kernel-checked` (report or probe), `tested` or `not shown`."""
+    probe = probe_of(rep["task"]["id"])
+    probed = {p["requirement"] for p in (probe or {}).get("probes", []) if p["kernel_checked"]} \
+        if probe and probe.get("report_sha256") == rep["report_sha256"] else set()
+    return {v["requirement"]: "kernel-checked" if v["requirement"] in probed else v["not_trivially_true"]
+            for v in rep["vacuity"]}
+
+
 def row(rep):
     s, tid = rep["summary"], rep["task"]["id"]
     if not rep.get("supported"):
         return f"| `{tid}` | not measured: baseline {rep['baseline'].get('status')} | | | | | | | | |"
-    kernel_reqs = sum(1 for v in rep["vacuity"] if v["not_trivially_true"] == "kernel-checked")
-    tested_reqs = sum(1 for v in rep["vacuity"] if v["not_trivially_true"] != "not shown")
+    st = requirement_status(rep)
+    kernel_reqs = sum(1 for v in st.values() if v == "kernel-checked")
+    tested_reqs = sum(1 for v in st.values() if v != "not shown")
     return (f"| `{tid}` | {s['generated']} | {s['compiled']} | {s['equivalent']} | "
             f"{s['killed'] - s['killed_kernel_only']} | {s['killed_kernel_only']} | {s['killed_kernel']} | "
             f"{s['survived_differs']} | {s['survived_same']} | {s['kill_ratio']} | "
@@ -102,6 +121,7 @@ def main():
     ap.add_argument("--table-only", action="store_true")
     ap.add_argument("--max-mutants", type=int, default=None)
     ap.add_argument("--extended-cases", type=int, default=10000)
+    ap.add_argument("--vacuity-probe", action="store_true")
     a = ap.parse_args()
     ids = a.only.split(",") if a.only else targets()
     lock = threading.Lock()
@@ -132,13 +152,26 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(a.jobs, 2))) as ex:
             for f in concurrent.futures.as_completed([ex.submit(one, t) for t in ids]):
                 f.result()
+    if a.vacuity_probe:
+        for tid in ids:
+            f = OUT / tid / "report.json"
+            if not f.exists() or ((OUT / tid / "vacuity-probe.json").exists() and not a.force):
+                continue
+            try:
+                rec = sv.probe(f, log=log)
+            except Exception as e:
+                log(f"{tid}: vacuity probe FAILED: {type(e).__name__}: {e}")
+                continue
+            (OUT / tid / "vacuity-probe.json").write_text(json.dumps(rec, indent=2, ensure_ascii=False) + "\n")
     reports = [json.loads((OUT / t / "report.json").read_text()) for t in targets() if (OUT / t / "report.json").exists()]
     tbl, tot = table(reports)
     (OUT / "table.md").write_text(tbl + "\nSurviving mutants whose behaviour differs from the reference:\n\n"
                                   + survivors_md(reports))
     (OUT / "summary.json").write_text(json.dumps({
         "tasks": [{"task": r["task"]["id"], "report_sha256": r["report_sha256"], "shared_with": r.get("shared_with", []),
-                   "supported": r.get("supported"), "summary": r["summary"], "vacuity": r["vacuity"]} for r in reports],
+                   "supported": r.get("supported"), "summary": r["summary"], "vacuity": r["vacuity"],
+                   "requirements": requirement_status(r),
+                   "vacuity_probe_sha256": (probe_of(r["task"]["id"]) or {}).get("probe_sha256")} for r in reports],
         "total": tot}, indent=2) + "\n")
     print(tbl)
 

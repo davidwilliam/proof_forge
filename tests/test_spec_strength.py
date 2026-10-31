@@ -303,3 +303,26 @@ def test_committed_reports_verify():
     for f in reports:
         rep = json.loads(f.read_text())
         assert ss.verify_report(rep) == [], f
+
+
+def test_vacuity_probe_cases_and_hash():
+    import spec_vacuity as sv
+    m = {"counterexamples": [{"requirement": "A", "input": {"x": 1}, "output": {"y": 2}},
+                             {"requirement": "B", "input": {"x": 1}, "output": {"y": 2}},
+                             {"requirement": "C", "reason": "no case"},
+                             {"requirement": "D", "input": {"x": 3}, "output": {"y": 4}, "origin": {"input": {}}}]}
+    assert sv.cases_of(m) == [({"x": 1}, {"y": 2}, None), ({"x": 3}, {"y": 4}, {"input": {}})]
+    rep = {"report_sha256": "r" * 64}
+    rec = {"task": "t", "report_sha256": rep["report_sha256"], "probes": []}
+    rec["probe_sha256"] = sv.probe_hash(rec)
+    assert sv.verify(rec, rep) == []
+    assert "probe is for another report" in sv.verify(rec, {"report_sha256": "x"})
+    rec["probes"].append({"requirement": "A", "kernel_checked": True})
+    assert "probe content hash differs" in sv.verify(rec, rep)
+
+
+def test_committed_vacuity_probes_verify():
+    import spec_vacuity as sv
+    for f in sorted(RESULTS.glob("*/vacuity-probe.json")) if RESULTS.is_dir() else []:
+        rep = json.loads((f.parent / "report.json").read_text())
+        assert sv.verify(json.loads(f.read_text()), rep) == [], f
