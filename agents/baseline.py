@@ -7,7 +7,13 @@ ordinary checking gives: Lean errors, or, when the file compiles, the axiom audi
 required theorem (`#print axioms`) and the implementation-scan violations. No tests, no
 snippets, no planner. It repeats until the official judge accepts or the budget runs out.
 
+Like every repair run it writes ledger.json (agents/ledger.py). `--resume-from DIR[,DIR...]` starts
+from the prior attempts' best compiling candidate (the one with the most required theorems proved,
+re-checked by Lean in this run) and gives the model their failure summary; the budget is this
+attempt's own, as without it.
+
 Usage: baseline.py [--task T] [--model M] [--budget-usd X] [--budget-wall S] [--out DIR]
+                   [--resume-from DIR[,DIR...]]
 """
 import argparse, json, pathlib, re, sys, time
 
@@ -16,7 +22,7 @@ sys.path.insert(0, str(ROOT / "agents"))
 sys.path.insert(0, str(ROOT / "harness"))
 from meta_client import APIError  # noqa: E402
 from budget import Budget, BudgetExceeded  # noqa: E402
-import repair, task as taskmod  # noqa: E402
+import ledger, repair, task as taskmod  # noqa: E402
 
 PROTOCOL = """
 
@@ -34,9 +40,12 @@ def audit(s):
     r = s.compile(16000)
     text = s._clean(r["output_tail"])
     if "error:" in text:
-        return False, "The file does not compile. Lean output:\n" + text[-7000:]
+        feedback = "The file does not compile. Lean output:\n" + text[-7000:]
+        s.log(kind="audit", version=s.version, errors=True, feedback=feedback[-3000:])
+        return False, feedback
     scan = repair.judge.impl_scan([s.ws / "candidate/Solution.lean"], s.task)
     status = s.theorem_status()
+    s.log(kind="audit", version=s.version, errors=False, status=status, scan=scan["problems"])
     lines = [f"{t}: {'uses sorry' if v == 'SORRY' else 'missing' if v == 'MISSING' else 'no sorry'}"
              for t, v in status.items()]
     if scan["problems"]:
@@ -47,11 +56,14 @@ def audit(s):
     return s.accepted, verdict
 
 
-def run(s, a, state="current, buggy", library_text=""):
+def run(s, a, state="current, buggy", library_text="", resume_text=""):
     """Compile-and-retry. `library_text` is appended to the system prompt; A0 passes none (repair.py
-    phase 3 passes its library section when the library is on)."""
+    phase 3 passes its library section when the library is on). `resume_text` (a resumed A0) is the
+    prior attempts' failure summary, given after the file."""
     system = repair.task_brief(s.task, getattr(s, "mode", "repair")) + PROTOCOL + library_text
-    user = (repair.spec_text(s) + f"\n\n=== candidate/Solution.lean ({state}) ===\n" + s._source())
+    user = (repair.spec_text(s) + f"\n\n=== candidate/Solution.lean ({state}) ===\n" + s._source()
+            + (f"\n\nPrevious attempts on this task ended as follows; do not repeat what failed:\n{resume_text}"
+               if resume_text else ""))
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     extra = {} if a.effort == "default" else {"reasoning_effort": a.effort}
     for turn in range(a.max_turns):
@@ -91,14 +103,30 @@ def main():
     ap.add_argument("--budget-usd", type=float)
     ap.add_argument("--budget-wall", type=float)
     ap.add_argument("--out")
+    ap.add_argument("--resume-from", help="comma-separated run directories (or ledger.json files) of prior attempts on "
+                                          "the same task and locked spec: start from their best compiling candidate "
+                                          "with their failure summary")
     a = ap.parse_args()
     task = taskmod.load(a.task)
+    priors, record = repair.load_priors(ap, a, task)
     out = pathlib.Path(a.out) if a.out else ROOT / "runs" / f"repair-{time.strftime('%Y%m%d-%H%M%S')}-{task.id}-A0"
     out.mkdir(parents=True, exist_ok=True)
     s = FileSession(task, a.model, task.start, out, Budget(a.budget_usd, a.budget_wall))
     s.log(kind="start", arm="A0", **vars(a))
     try:
-        run(s, a)
+        state, resume_text = "current, buggy", ""
+        if priors:
+            s.resume_record = {"ledgers": record, "base": None, "carried": [], "dropped": [], "goals": []}
+            s.log(kind="resume", ledgers=record)
+            base = ledger.best_base(s, priors)
+            if base:
+                s.resume_record["base"] = {k: v for k, v in base.items() if k != "text"}
+                state = (f"from a previous attempt, {base['proved']} of {len(task.theorems)} required theorems "
+                         "proved without sorry")
+            else:
+                s._save(task.start.read_text(), "resume: no prior candidate compiles; task start")
+            resume_text = ledger.summary_text(priors)
+        run(s, a, state=state, resume_text=resume_text)
     except BudgetExceeded as e:
         s.log(kind="budget_stop", reason=str(e))
         print(f"budget exhausted: {e}", flush=True)

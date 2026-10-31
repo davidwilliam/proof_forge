@@ -10,6 +10,10 @@ import ProofForgeFin.Evm
 import ProofForgeFin.Money
 import ProofForgeFin.DeFi
 import ProofForgeFin.Tactic
+import ProofForgeFin.Sums
+import ProofForgeFin.Accrual
+import ProofForgeFin.Harvested
+import ProofForgeFin.Salvaged
 /-!
 # ProofForgeFin
 
@@ -24,4 +28,8 @@ no dependency beyond the Lean core library.
 * `ProofForgeFin.Seq`: runs of operations, traces, atomic runs, reachable states, invariants and
   accumulated bounds.
 * `ProofForgeFin.Ledger`: sums over accounts and conservation under transfers, mints and burns.
+* `ProofForgeFin.Sums`: sums restated by recursion, sums over positions, sums after one entry
+  changes, and sums of rounded-down parts.
+* `ProofForgeFin.Accrual`: a part rounded down plus at most one unit is within one unit; capped
+  increments stay within their cap.
 -/

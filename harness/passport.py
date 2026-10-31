@@ -8,6 +8,9 @@ Statuses come only from the judge and binary-check records assembled here:
   UNRESOLVED  neither; for example the proof was rejected and no witness was found
 The component is VERIFIED only when every requirement is.
 
+A Passport for a candidate of a resumed repair attempt also carries `resumed_from`: the prior run
+directories the attempt started from (from the run summary given as provenance).
+
 Optionally (`counterexample=True`), a REFUTED Passport also carries `counterexamples`: for each
 refuted requirement, the negation of its locked statement proved about the candidate's
 definitions on the witness input and checked by Comparator's kernels, leanchecker and the axiom
@@ -157,6 +160,10 @@ def build(task, candidate, j, b, provenance=None, counterexamples=None):
     }
     if counterexamples is not None:
         p["counterexamples"] = counterexamples
+    if isinstance(provenance, dict) and provenance.get("resumed_from"):
+        # A candidate from a resumed attempt (agents/ledger.py) names the prior run directories it
+        # started from; the field is absent otherwise, so earlier Passports are unchanged.
+        p["resumed_from"] = list(provenance["resumed_from"])
     if p["library"].get("vendored"):
         p["trust_assumptions"] = TRUST + [LIBRARY_TRUST]
     note = reconstruction(task)

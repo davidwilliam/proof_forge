@@ -332,14 +332,14 @@ export const PLANNER = [
 /** ProofForgeFin (lib/), counted from the sources; lib/README.md states the kernel check. */
 export const LIBRARY = {
   // declarations in lib/ProofForgeFin/**/*.lean, comments excluded (tests/contribution.test.ts recounts)
-  files: 55,
-  theorems: 1504,
-  definitions: 430,
+  files: 70,
+  theorems: 1724,
+  definitions: 446,
   // lib/ProofForgeFinDemo/**/*.lean
-  demoTheorems: 328,
-  // lib/README.md: "all 9,549 safe constants of the library and the demonstrations ... pass all six kernels"
-  constantsChecked: 9549,
-  modulesReplayed: 74,
+  demoTheorems: 329,
+  // lib/README.md: "all 10,128 safe constants of the library and the demonstrations ... pass all six kernels"
+  constantsChecked: 10128,
+  modulesReplayed: 87,
   // tests/fixtures/library/compound_lib.lean: implementation and per-call proofs from the reference
   // solution, the three sequence bounds from lib/ProofForgeFinDemo/DeFi/Compound.lean
   compoundFixture: "tests/fixtures/library/compound_lib.lean",

@@ -7,7 +7,10 @@ Run by the harness, never by a candidate, after the library is built:
 `lake env lean FinIndex.lean > index.jsonl`. Prints one JSON object per line for every module of
 `ProofForgeFin` (its module doc) and every declaration it makes (theorems, definitions,
 structures, inductive types, instances, tactic and other syntax), with the signature as Lean
-prints it and the doc string. Compiler-generated declarations are left out.
+prints it and the doc string. Compiler-generated declarations are left out. Each theorem also
+records the shape of its conclusion (`concl`: the relation at its head, the head constants of the
+two sides and the constants the conclusion mentions), which the goal-aware ranking of
+harness/fin_lib.py compares with a goal.
 -/
 
 open Lean Meta Elab Command
@@ -35,6 +38,42 @@ def indexKind (env : Environment) (n : Name) (ci : ConstantInfo) : MetaM (Option
   | .axiomInfo _ => return some "axiom"
   | _ => return none
 
+/-- The relations whose two sides the conclusion shape records, with the argument positions of
+the sides. -/
+def relSides : Name → Option (Nat × Nat)
+  | ``Eq => some (1, 2)
+  | ``Ne => some (1, 2)
+  | ``HEq => some (1, 3)
+  | ``LE.le => some (2, 3)
+  | ``LT.lt => some (2, 3)
+  | ``GE.ge => some (2, 3)
+  | ``GT.gt => some (2, 3)
+  | ``Iff => some (0, 1)
+  | ``Dvd.dvd => some (2, 3)
+  | _ => none
+
+/-- The constant at the head of an application, or the empty name. -/
+def headConst (e : Expr) : Name :=
+  e.consumeMData.getAppFn.constName?.getD .anonymous
+
+/-- The shape of a theorem's conclusion (the type after its binders and hypotheses): the head
+relation or constant, the head constants of the two sides of a relation, and the constants the
+conclusion mentions other than instances. -/
+def conclShape (ty : Expr) : MetaM Json :=
+  forallTelescope ty fun _ body => do
+    let body := body.consumeMData
+    let rel := headConst body
+    let args := body.getAppArgs
+    let (lhs, rhs) := match relSides rel with
+      | some (i, j) => (headConst (args.getD i (.sort .zero)), headConst (args.getD j (.sort .zero)))
+      | none => (Name.anonymous, Name.anonymous)
+    let mut consts : Array String := #[]
+    for c in body.getUsedConstants do
+      unless (← isInstance c) || c.isInternalDetail do
+        consts := consts.push (toString c)
+    let str (n : Name) : String := if n.isAnonymous then "" else toString n
+    return Json.mkObj [("rel", str rel), ("lhs", str lhs), ("rhs", str rhs), ("consts", toJson consts)]
+
 #eval show CommandElabM Unit from do
   let env ← getEnv
   let mods := env.header.moduleNames
@@ -57,6 +96,9 @@ def indexKind (env : Environment) (n : Name) (ci : ConstantInfo) : MetaM (Option
           pure ((← PrettyPrinter.ppSignature n).fmt.pretty 160)
         catch _ => pure ((← ppExpr ci.type).pretty 160)
       let doc := (← findDocString? env n).getD ""
+      let shape ← if kind == "theorem" then
+          try conclShape ci.type catch _ => pure Json.null
+        else pure Json.null
       return some (Json.compress (Json.mkObj [("kind", kind), ("name", toString n),
-        ("module", toString mods[idx.toNat]!), ("signature", sig), ("doc", doc)]))
+        ("module", toString mods[idx.toNat]!), ("signature", sig), ("doc", doc), ("concl", shape)]))
     if let some l := line then IO.println l

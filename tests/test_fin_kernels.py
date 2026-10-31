@@ -69,6 +69,15 @@ def test_dependents_are_closed_under_use():
     assert fin_kernels.dependents(decls, {"d"}) == {"d", "e"}
 
 
+def test_module_selection():
+    decls = {n: {"name": n, "module": m} for n, m in
+             {"a": "ProofForgeFin.Rounding", "b": "ProofForgeFin.Harvested.List", "c": "ProofForgeFin.Harvested",
+              "d": "ProofForgeFin.HarvestedX", "e": "ProofForgeFinDemo.Euler"}.items()}
+    assert set(fin_kernels.select(decls)) == set(decls)
+    assert set(fin_kernels.select(decls, ["ProofForgeFin.Harvested"])) == {"b", "c"}
+    assert set(fin_kernels.select(decls, ["ProofForgeFin.Rounding", "ProofForgeFinDemo"])) == {"a", "e"}
+
+
 def test_checker_builds_the_library_and_every_demonstration():
     files = fin_kernels.staged_files()
     assert "ProofForgeFin.lean" in files and "ProofForgeFinDemo.lean" in files and "Audit.lean" in files
