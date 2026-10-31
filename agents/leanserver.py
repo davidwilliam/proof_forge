@@ -224,10 +224,10 @@ class LeanServer:
         (LSP dicts). Only the part from the first differing character is re-elaborated."""
         if not self.alive():
             self.start()
-        t0 = time.monotonic()
         with judge.container_slot() as slot:
             if slot is None:
                 raise ServerTimeout("the run's deadline has passed")
+            t0 = time.monotonic()   # elaboration time, without the wait for a slot
             if self.text is None:
                 self.version = 1
                 self.notify("textDocument/didOpen", {"textDocument": {"uri": self.uri(), "languageId": "lean4",
