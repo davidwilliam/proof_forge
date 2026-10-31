@@ -415,19 +415,26 @@ def main():
             for k in reported:
                 reported[k] += m.get(k, 0)
     main_steps = (meter_summary["by_role"].get("main") or {}).get("calls", 0)
-    status = server.theorem_status(task) if "error:" not in proofforge_mcp.clean_lean(
-        server.lean("lake build Solution 2>&1 | tail -c 20000", timeout=900)["output_tail"]) else {}
     summary = {**config, "stop": stop if stop != "accepted" else None, "ended_by": stop, "accepted_in_run": accepted,
                "elapsed_s": elapsed, "session_parts": parts, "model_calls": meter_summary["calls"],
                "main_agent_calls": main_steps, "meter": meter_summary, "muse_reported_usage": reported,
-               "snapshots": sess.snaps, "final_theorem_status": status,
-               "requirements_proved_in_run": sum(v == "PROVED" for v in status.values())}
-    if not a.no_check:
-        p = official_check(task, out)
-        if p:
-            summary["passport"] = {"status": p["status"], "passport_sha256": p["passport_sha256"],
-                                   "requirements": {q["id"]: q["status"] for q in p["requirements"]},
-                                   "verified": sum(q["status"] == "VERIFIED" for q in p["requirements"])}
+               "snapshots": sess.snaps}
+    # The run's record is written before any further Lean work, so a failure there cannot lose it.
+    (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    try:
+        r = server.lean("lake build Solution 2>&1 | tail -c 20000", timeout=900)
+        if unavailable(r):
+            raise RuntimeError("Lean gave no verdict (time limit or Docker failure)")
+        status = server.theorem_status(task) if "error:" not in proofforge_mcp.clean_lean(r["output_tail"]) else {}
+        summary.update(final_theorem_status=status, requirements_proved_in_run=sum(v == "PROVED" for v in status.values()))
+        if not a.no_check:
+            p = official_check(task, out)
+            if p:
+                summary["passport"] = {"status": p["status"], "passport_sha256": p["passport_sha256"],
+                                       "requirements": {q["id"]: q["status"] for q in p["requirements"]},
+                                       "verified": sum(q["status"] == "VERIFIED" for q in p["requirements"])}
+    except Exception as e:   # recorded; the final candidate can be checked again with bin/proofforge check
+        summary["final_check_error"] = f"{type(e).__name__}: {e}"[:500]
     (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     shutil.copy(ws / "candidate/Solution.lean", out / "final.lean")
     reps = [(str(ws.resolve()), "<workspace>"), (str(ws), "<workspace>"), (str(home), "<muse-home>"),

@@ -16,10 +16,14 @@ def rows(base):
         p = s.get("passport") or {}
         m = s["meter"]
         n = len(p.get("requirements") or {}) or len(s.get("final_theorem_status") or {})
+        last = f.parent / "last_compiling.json"
+        proved = (f"{p.get('verified', 0)}/{n}" if p.get("status") == "VERIFIED" else
+                  f"{s.get('requirements_proved_in_run', 0)}/{n}" if s.get("final_theorem_status") else
+                  "{proved}/{required} last compiling".format(**json.loads(last.read_text())) if last.is_file() else f"0/{n}")
         yield {
             "task": s["task"], "run": f.parent.name, "arm": ARM.get(s["arm"], s["arm"]),
             "outcome": p.get("status", "not checked"),
-            "proved": f"{p.get('verified', 0) if p.get('status') == 'VERIFIED' else s.get('requirements_proved_in_run', 0)}/{n}",
+            "proved": proved,
             "time": f"{s['elapsed_s']:,.0f}",
             "list": f"{m['usd_list']:.2f}", "charged": f"{m['usd_actual']:.2f}",
             "calls": f"{m['calls']} ({s.get('main_agent_calls', 0)})",
