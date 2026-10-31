@@ -698,16 +698,23 @@ def prompt_notes(notes, name, limit=4000):
 
 
 def summary_text(ledgers, limit=6000):
-    """The failure summary of prior attempts for a whole-file prompt (A0, the free loop)."""
+    """The failure summary of prior attempts for a whole-file prompt (A0, the free loop): per run,
+    the required theorems it left unproved, what the run spent, its last Lean feedback, and the
+    notes of up to six goals it worked on one by one."""
     parts = []
     for led in ledgers:
         run = pathlib.Path(led["run_dir"]).name
         goals = led.get("open_goals", [])
         req = [g for g in goals if g.get("required")]
+        b = led.get("budget") or {}
         parts.append(f"Run {run} ({led.get('arm')}, {led.get('loop') or 'whole file'}): {len(req)} required theorem(s) "
-                     f"left unproved: {', '.join(g['name'] for g in req) or 'none'}.")
-        for g in goals[:6]:
-            parts.append(render_note(run, g, 1200))
+                     f"left unproved ({', '.join(g['name'] for g in req) or 'none'}) after "
+                     f"${(b.get('usd_list') or 0):.2f} at list prices.")
+        whole = next((g for g in goals if g.get("scope") == "run"), None)
+        if whole and whole.get("last_lean"):
+            parts.append(f"Its last Lean feedback:\n{whole['last_lean'][-900:]}")
+        for g in [g for g in goals if g.get("scope") != "run" and (g.get("turns") or g.get("tried"))][:6]:
+            parts.append(f"`{g['statement'][:300]}`\n" + render_note(run, g, 1200))
     text = "\n\n".join(parts)
     return text if len(text) <= limit else text[:limit - 3] + "..."
 
