@@ -339,8 +339,10 @@ def _messages(diags, text, first_line, label, last_line=None):
         if sev is None:
             continue
         msg = d.get("message", "")
-        col = codepoint_col(lines[ln] if ln < len(lines) else "", d["range"]["start"]["character"])
-        out.append(f"{label}:{ln - first_line + 1}:{col}: {sev}: {msg}")
+        shown = sev == "error" or not any(u in msg.split("\n", 1)[0] for u in UNSHOWN)
+        if shown:   # a warning the compile path does not show is left out whole, hints included
+            col = codepoint_col(lines[ln] if ln < len(lines) else "", d["range"]["start"]["character"])
+            out.append(f"{label}:{ln - first_line + 1}:{col}: {sev}: {msg}")
         if sev == "error":
             errors += 1
             continue

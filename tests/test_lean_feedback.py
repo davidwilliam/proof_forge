@@ -77,6 +77,7 @@ def test_positions_and_messages():
     # (the linter's first line is shown) and the deprecation does not; in it, all but the linter's.
     assert (errors, warnings, topdown_warnings) == (1, 2, 2), (errors, warnings, topdown_warnings)
     assert msgs[0].startswith("snippet:1:2: error: unsolved goals") and msgs[1].startswith("snippet:2:0: warning")
+    assert len(msgs) == 3 and not any("deprecated" in m for m in msgs)   # left out whole
     assert leanserver._render([]) .startswith("no goals") and "goal 2 of 2" in leanserver._render(["a", "b"])
 
 
