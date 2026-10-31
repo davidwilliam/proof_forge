@@ -50,7 +50,9 @@ class Script:
         self.calls.append((model, purpose, [t["function"]["name"] for t in tools or []]))
         for pat, fn in self.handlers:
             if re.search(pat, purpose):
-                return {"choices": [{"message": fn(purpose, messages)}], "usage": dict(USAGE), "model": model}
+                msg = dict(fn(purpose, messages))
+                usage = msg.pop("_usage", None) or dict(USAGE)
+                return {"choices": [{"message": msg}], "usage": usage, "model": model}
         raise AssertionError(f"unscripted model call: {purpose}")
 
 
@@ -71,11 +73,15 @@ def turns(replies):
     return fn
 
 
+HELPER_DIALOG = r":[dp]\d+:[^:]+:turn\d+$"
+
+
 def helper_dialogs(table):
-    """A handler for the obligation dialogs (`repair:<task>:d<k>:<name>:turn<n>`): table maps a
-    helper name to its list of replies."""
+    """A handler for the obligation dialogs (`repair:<task>:d<k>:<name>:turn<n>`, and the short
+    first attempts `repair:<task>:p<k>:<name>:turn<n>`): table maps a helper name to its list of
+    replies."""
     def fn(purpose, messages):
-        m = re.search(r":d\d+:([^:]+):turn(\d+)$", purpose)
+        m = re.search(r":[dp]\d+:([^:]+):turn(\d+)$", purpose)
         name, k = m.group(1), int(m.group(2))
         assert name in table, f"no scripted dialog for {name}"
         replies = table[name]
@@ -364,6 +370,33 @@ def test_compact_view_and_reading_one_declaration():
         s.library, s.lib_index = True, fin_lib.Index.load()
         hits = s.search_library("rounding down a sum of parts", limit=25)
         assert hits.count("\n[") + 1 <= repair.SEARCH_MAX_TOPDOWN, hits
+        # A checked decomposition inserts its lemmas right above the target.
+        new = s._insert_before(s._source(), "td0_open", "theorem td0_lemma : True := by sorry")
+        assert new.index("theorem td0_lemma") < new.index("theorem td0_open") and \
+            new.index("theorem td0_lemma") > new.index("theorem td0_short")
+    finally:
+        close(s)
+
+
+def test_subtree_cap_stops_model_calls():
+    s = session(BUCKET, cap=1.0)
+    try:
+        s.budget.wall_cap = 1000.0
+        usd, wall = s.share_cap(0.25)
+        assert abs(usd - 0.25) < 1e-9 and 240 < wall <= 251, (usd, wall)
+        script = Script([(r".", lambda p, m: say("ok"))])
+        with patch.object(repair, "chat", script):
+            s.call(SPARK, [{"role": "user", "content": "x"}], "first")
+            spent = s.budget.usd_list
+            with s.capped((spent, None)):
+                try:
+                    s.call(SPARK, [{"role": "user", "content": "x"}], "second")
+                    raise AssertionError("the capped call was made")
+                except repair.SubtreeBudget:
+                    pass
+            assert s.caps == [] and [p for _, p, _ in script.calls] == ["first"]
+            s.call(SPARK, [{"role": "user", "content": "x"}], "third")   # outside the block the run goes on
+        assert not issubclass(repair.SubtreeBudget, budget.BudgetExceeded)
     finally:
         close(s)
 
@@ -465,7 +498,7 @@ def test_bucket_a2_skeleton_refutation_and_restructure_reach_verified():
                 lean_block("Move the remaining step of the invalid case into td0_step_of_not.", SKELETON_BUCKET)],
             1: [lean_block("The capacity bound needs the hypothesis that the level starts within capacity.",
                            SKELETON_BUCKET_1)]})),
-        (r":d\d+:[^:]+:turn\d+$", helper_dialogs(HELPER_PROOFS_BUCKET)),
+        (HELPER_DIALOG, helper_dialogs(HELPER_PROOFS_BUCKET)),
     ])
     run_main(["--task", BUCKET.id, "--loop", "topdown", "--model", SPARK, "--planner", WONDER,
               "--budget-usd", "5", "--out", str(out)], script)
@@ -497,6 +530,125 @@ def test_bucket_a2_skeleton_refutation_and_restructure_reach_verified():
     assert not any(p.startswith("plan:") for _, p, _ in script.calls)
     print(f"   bucket: {len(script.calls)} scripted calls, {summary['versions']} versions, "
           f"{summary['budget']['elapsed_s']} s")
+    shutil.rmtree(out, ignore_errors=True)
+
+
+# Probes, checked decompositions and the helper cap (rate-limiters-bucket-b1, arm A2)
+
+CAPACITY_OPEN = """theorem td0_capacity_step (s : State) (r : Request) (hs : s.tokens ≤ s.capacity) :
+    (step s r).2.tokens ≤ (step s r).2.capacity := by sorry"""
+
+SKELETON_BUCKET_PROBE = SKELETON_BUCKET.replace(
+    """theorem td0_capacity_step (s : State) (r : Request) :
+    (step s r).2.tokens ≤ (step s r).2.capacity := by sorry""", CAPACITY_OPEN).replace(
+    "  intro s r _\n  exact td0_capacity_step s r", "  intro s r hs\n  exact td0_capacity_step s r hs")
+
+ADM_OF_OK = """theorem td0_adm_of_ok {s : State} {r : Request} (h : (step s r).1 = .ok) : Admissible s r := by
+  by_cases hv : Admissible s r
+  · exact hv
+  · rw [plan0_not_adm s r hv] at h; cases h"""
+
+NOT_ADM = "theorem plan0_not_adm (s : State) (r : Request) (h : ¬ Admissible s r) : (step s r).1 = .rejected := by sorry"
+
+DECOMPOSE_ADM = [
+    # 1. the proof of the target is itself `sorry`
+    lean_block("Split on admissibility.", NOT_ADM + "\n\ntheorem td0_adm_of_ok {s : State} {r : Request} "
+               "(h : (step s r).1 = .ok) : Admissible s r := by sorry"),
+    # 2. an open lemma the proof does not use
+    lean_block("Split on admissibility.", NOT_ADM + "\n\ntheorem plan0_extra (s : State) : s.tokens = s.tokens := by sorry\n\n"
+               + ADM_OF_OK),
+    # 3. accepted
+    lean_block("Split on admissibility; the rejected case contradicts `h`.", NOT_ADM + "\n\n" + ADM_OF_OK),
+]
+
+DECOMPOSE_CAPACITY = lean_block("An admitted request leaves at most the refilled level, which the capacity bounds.", """
+theorem plan1_cap_adm (s : State) (r : Request) : refilled s r.time - r.cost ≤ s.capacity := by sorry
+
+theorem td0_capacity_step (s : State) (r : Request) (hs : s.tokens ≤ s.capacity) :
+    (step s r).2.tokens ≤ (step s r).2.capacity := by
+  by_cases hv : Admissible s r
+  · rw [td0_step_of_adm hv]
+    show refilled s r.time - r.cost ≤ s.capacity
+    exact plan1_cap_adm s r
+  · rw [td0_step_of_not hv]; exact hs""")
+
+PROBE_DIALOGS = {
+    "td0_step_of_adm": HELPER_PROOFS_BUCKET["td0_step_of_adm"][1:],
+    "td0_step_of_not": HELPER_PROOFS_BUCKET["td0_step_of_not"],
+    "td0_adm_of_ok": [],          # the short attempt and the full one find nothing
+    "td0_capacity_step": [],
+    "plan0_not_adm": [say("", tool_call("try_snippet", code=NOT_ADM.replace("by sorry", "by\n  rw [td0_step_of_not h]")))],
+    "plan1_cap_adm": [say("", tool_call("try_snippet", code=(
+        "theorem plan1_cap_adm (s : State) (r : Request) : refilled s r.time - r.cost ≤ s.capacity := by\n"
+        "  have : refilled s r.time ≤ s.capacity := Nat.min_le_left _ _\n"
+        "  omega")))],
+}
+
+
+def planner_decompositions():
+    """Planner replies for decompose(): td0_adm_of_ok gets DECOMPOSE_ADM in turn; the first two
+    requests for td0_capacity_step are answered at length with no code block (32,000 completion
+    tokens each, so that the helper reaches its share of the budget), the third with
+    DECOMPOSE_CAPACITY."""
+    count = {}
+
+    def fn(purpose, _messages):
+        t = re.search(r"^plan:[^:]+:([^:]+):\d+$", purpose).group(1)
+        k = count[t] = count.get(t, -1) + 1
+        if t == "td0_adm_of_ok":
+            return say(DECOMPOSE_ADM[k])
+        assert t == "td0_capacity_step", f"unexpected decomposition of {t}"
+        if k < 2:
+            return {**say("Thinking about the refill first."), "_usage": {"prompt_tokens": 3000, "completion_tokens": 32000}}
+        return say(DECOMPOSE_CAPACITY)
+    return fn
+
+
+def test_bucket_a2_probes_checked_decompositions_and_helper_cap():
+    out = pathlib.Path(tempfile.mkdtemp(prefix="pf-topdown-probe-"))
+    script = Script([
+        (r"^skeleton:", planner_replies({0: [lean_block("Four facts about one step.", SKELETON_BUCKET_PROBE)]})),
+        (r"^plan:", planner_decompositions()),
+        (HELPER_DIALOG, helper_dialogs(PROBE_DIALOGS)),
+    ])
+    passing = '{"status": "PASS", "violations": {}, "examples": []}'
+    run_main(["--task", BUCKET.id, "--loop", "topdown", "--model", SPARK, "--planner", WONDER, "--budget-usd", "5",
+              "--helper-share", "0.2", "--start", str(fixed_start()), "--out", str(out)], script,
+             [patch.object(repair.Session, "run_tests", lambda self: passing)])
+    summary = json.loads((out / "summary.json").read_text())
+    ev = events(out)
+    assert summary["accepted_in_session"] is True, summary
+    assert set(summary["final_status"].values()) == {"PROVED"}, summary["final_status"]
+    # Every helper gets a short first attempt before any decomposition.
+    probes = [(e["name"], e["ok"]) for e in ev if e["kind"] == "probe"]
+    assert probes == [("td0_step_of_adm", True), ("td0_adm_of_ok", False), ("td0_step_of_not", True),
+                      ("td0_capacity_step", False)], probes
+    first_plan = next(i for i, e in enumerate(ev) if e["kind"] == "decompose")
+    assert max(i for i, e in enumerate(ev) if e["kind"] == "probe") < first_plan
+    probe_turns = [e for e in ev if e["kind"] == "turn" and e["label"] == "p0:td0_adm_of_ok"]
+    assert len(probe_turns) == 5, len(probe_turns)
+    # The checked decomposition of td0_adm_of_ok: Lean's feedback twice, then a derivation.
+    dec = [e for e in ev if e["kind"] == "decompose" and e["theorem"] == "td0_adm_of_ok"]
+    assert [e["derived"] for e in dec] == [False, False, True], dec
+    assert "the proof of `td0_adm_of_ok` uses `sorry` itself" in dec[0]["problems"]
+    assert "`plan0_extra` is left open (`sorry`) but the proof of `td0_adm_of_ok` does not use it" in dec[1]["problems"]
+    plans = {e["theorem"]: e for e in ev if e["kind"] == "plan"}
+    assert plans["td0_adm_of_ok"]["derived"] and plans["td0_adm_of_ok"]["open"] == ["plan0_not_adm"]
+    # Its lemma is proved by its own short attempt; the helper gets no full dialog of its own.
+    assert any(e["kind"] == "turn" and e["label"] == "p1:plan0_not_adm" for e in ev)
+    assert not any(e["kind"] == "turn" and e["label"] == "d0:td0_adm_of_ok" for e in ev)
+    # td0_capacity_step reaches its share of the budget, and is decomposed in the next round.
+    cap = [e for e in ev if e["kind"] == "helper_cap"]
+    assert [e["name"] for e in cap] == ["td0_capacity_step"], cap
+    helpers = [(e["name"], e["ok"], e["capped"]) for e in ev if e["kind"] == "helper"]
+    assert helpers == [("td0_adm_of_ok", True, False), ("td0_capacity_step", False, True),
+                       ("td0_capacity_step", True, False)], helpers
+    assert plans["td0_capacity_step"]["derived"] and plans["td0_capacity_step"]["open"] == ["plan1_cap_adm"]
+    final = (out / "final.lean").read_text()
+    assert "sorry" not in final and "plan0_extra" not in final
+    assert final.index("theorem plan1_cap_adm") < final.index("theorem td0_capacity_step")
+    print(f"   probes: {len(script.calls)} scripted calls, {summary['versions']} versions, "
+          f"{summary['budget']['elapsed_s']} s, ${summary['budget']['usd_list']}")
     shutil.rmtree(out, ignore_errors=True)
 
 
@@ -600,7 +752,7 @@ def compound_helper_dialogs():
                    "  ⟨rewards_bounded hOK hS hB hC hP, account_bounded hOK hS hB hC hP, no_backdated hOK hS hB hC hP⟩\n")
 
     def fn(purpose, _messages):
-        m = re.search(r":d\d+:([^:]+):turn(\d+)$", purpose)
+        m = re.search(r":[dp]\d+:([^:]+):turn(\d+)$", purpose)
         name, k = m.group(1), int(m.group(2))
         if k > 0:
             return say("No further steps.")
@@ -626,7 +778,7 @@ def test_compound_a1_library_reduction_reaches_verified():
             say("A first skeleton.", tool_call("search_library", query="every sequence of operations per-step reduction"),
                 tool_call("submit_skeleton", code=compound_skeleton(direct_sorry=True))),
             say("The bounds go through one reduction helper.", tool_call("submit_skeleton", code=compound_skeleton()))])),
-        (r":d\d+:[^:]+:turn\d+$", compound_helper_dialogs()),
+        (HELPER_DIALOG, compound_helper_dialogs()),
     ])
     passing = '{"status": "PASS", "violations": {}, "examples": []}'
     run_main(["--task", COMPOUND.id, "--loop", "topdown", "--model", SPARK, "--planner", "none",
@@ -657,6 +809,7 @@ def test_compound_a1_library_reduction_reaches_verified():
 
 LEAN = {"test_dependency_probe_separates_direct_and_helper_sorry",
         "test_bucket_a2_skeleton_refutation_and_restructure_reach_verified",
+        "test_bucket_a2_probes_checked_decompositions_and_helper_cap",
         "test_compound_a1_library_reduction_reaches_verified"}
 
 def limit_lean_threads(threads):

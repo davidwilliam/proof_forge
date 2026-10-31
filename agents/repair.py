@@ -27,13 +27,15 @@ and spends the rest on whole-file repair (phase 3). `--loop free` is one tool di
 proof skeleton that derives every open required theorem from named helper theorems, accepted
 only when Lean confirms that no required theorem uses `sorry` except through helpers) and a fill
 phase (the open helpers, found from the compiled candidate's dependency graph, become the
-obligations, shared helpers first); see topdown() and docs/ARCHITECTURE.md.
+obligations, shared helpers first; each gets a short first attempt, breadth first, and then checked
+planner decompositions within a share of the budget left); see topdown(), fill() and
+docs/ARCHITECTURE.md.
 
 Usage: repair.py [--task T] [--model muse-spark-1.3-contributor] [--planner muse-wonder-1.0|none]
                  [--mode repair|implement] [--loop orchestrated|free|topdown] [--library on|off]
                  [--budget-usd X] [--budget-wall S] [--out DIR] [--start FILE]
 """
-import argparse, json, pathlib, re, shutil, sys, tempfile, time
+import argparse, contextlib, json, pathlib, re, shutil, sys, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "agents"))
@@ -329,9 +331,15 @@ def tools_for(task, library=False, topdown=False, compact=False):
     ] + lib + (TOPDOWN_TOOLS if topdown else [])
 
 
+class SubtreeBudget(Exception):
+    """A helper's resolution reached its share of the budget (Session.capped); the fill phase
+    moves on to the next helper. Not a BudgetExceeded: the run goes on."""
+
+
 class Session:
     # Class defaults, so that a session built without __init__ (tests) behaves as in the other loops.
     topdown = False
+    caps = ()
 
     def __init__(self, task, model, start, out, budget=None, mode="repair", library=False):
         self.task, self.model, self.out, self.mode = task, model, out, mode
@@ -366,6 +374,8 @@ class Session:
         self.extra_tools = set()
         self.skeleton_ctx = None
         self.topdown = False   # compact candidate views, read_file by declaration, checked decompositions
+        self.probed = set()    # helpers that had their short first attempt
+        self.caps = []         # (usd, wall) limits of the helper resolutions in progress, see capped()
         # Declaration boundary: the next top-level item, an `open` command or the namespace end.
         self.boundary = (r"(?:@\[|/--|private |protected |noncomputable |theorem |lemma |def |instance |abbrev "
                          rf"|structure |inductive |open |{re.escape(self.end)})")
@@ -379,7 +389,11 @@ class Session:
         A response completed after the deadline is discarded. An attempt that ends at its own
         timeout before the run's deadline is a lost attempt like a network failure (charged at
         its worst case, retried within `attempts`); only reaching the run's deadline is the
-        wall stop."""
+        wall stop. A call made when a limit of capped() is reached raises SubtreeBudget instead."""
+        for usd, wall in self.caps:
+            if (usd is not None and self.budget.usd_list >= usd) or (wall is not None and self.budget.elapsed() >= wall):
+                raise SubtreeBudget(f"helper limit reached (${self.budget.usd_list:.2f} spent, "
+                                    f"{self.budget.elapsed():.0f} s)")
         payload_bytes = len(json.dumps({"messages": messages, "tools": tools}).encode())
         for i in range(attempts):
             mt, to = self.budget.call_limits(model, payload_bytes, len(messages), max_tokens, timeout)
@@ -407,6 +421,23 @@ class Session:
             u = r.get("usage") or {}
             self.budget.settle(tok, u)
             return r, u
+
+    def share_cap(self, share):
+        """(usd, wall) limits that leave a resolution `share` of the dollars and of the wall time
+        still left (None where the run has no cap)."""
+        b = self.budget
+        usd = None if b.usd_cap is None else b.usd_list + share * max(0.0, b.usd_cap - b.usd_list)
+        wall = None if b.wall_cap is None else b.elapsed() + share * max(0.0, b.remaining_wall())
+        return usd, wall
+
+    @contextlib.contextmanager
+    def capped(self, cap):
+        """Model calls inside the block raise SubtreeBudget once `cap` (from share_cap()) is reached."""
+        self.caps.append(cap)
+        try:
+            yield
+        finally:
+            self.caps.remove(cap)
 
     def pause(self, seconds):
         """Back off after a transient error, never past the deadline."""
@@ -468,6 +499,22 @@ class Session:
         (self.ws / "candidate/Solution.lean").write_text(text)
         (self.out / f"candidate_v{self.version:03d}.lean").write_text(text)
         self.log(kind="write", version=self.version, bytes=len(text), why=why)
+
+    def _insert_before(self, src, name, text):
+        """`src` with `text` inserted right above declaration `name` (above its attribute, doc
+        comment and `open ... in` lines), or before the namespace end when `name` is absent."""
+        lines = src.split("\n")
+        short = name.split(".")[-1]
+        at = next((i for i, l in enumerate(lines) for m in [self.DECL.match(l)]
+                   if m and m.group(1).split(".")[-1] == short), None)
+        if at is None:
+            return self._replace_in(src, f"{short}__absent", text)[0]
+        while at > 0 and (lines[at - 1].startswith("@[") or lines[at - 1].rstrip().endswith("-/")):
+            if lines[at - 1].rstrip().endswith("-/"):
+                while at > 0 and not lines[at - 1].lstrip().startswith("/-"):
+                    at -= 1
+            at -= 1
+        return "\n".join(lines[:at] + text.rstrip("\n").split("\n") + [""] + lines[at:])
 
     def _replace_in(self, src, name, text):
         """Return (new_source, action): replace declaration `name` with `text`, or insert it."""
@@ -1188,7 +1235,194 @@ def plan(s, a, spec, t, attempt):
     return [], ""
 
 
-def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
+def install_decomposition(s, t, code, derive=True):
+    """Install a planner decomposition of the open helper `t` (top-down loop): the lemmas go right
+    above `t`, and with `derive` the proof of `t` in the code replaces `t`'s proof under its current
+    statement. Kept only if the file compiles and, with `derive`, Lean's dependency graph shows that
+    `t`'s own proof has no `sorry` and uses every lemma left open. Returns (lemma names, problems);
+    the file is unchanged when there are problems."""
+    before = s._source()
+    code = fin_lib.strip_comments(code)
+    code, hoist, refusal = s._snippet_imports(code, before)
+    if refusal:
+        return [], [refusal.replace("error: not compiled: ", "")]
+    keep = [l for l in code.split("\n")
+            if not re.match(rf"^\s*(?:namespace|end)\s+{re.escape(s.ns)}\s*$", l) and not re.match(r"^\s*#\w+", l)]
+    problems = [f"`{l.strip()}` is not supported here: state every lemma at the top level with explicit binders"
+                for l in keep if SCOPE_CMD.match(l)]
+    chunks = s._chunks(s._snippet_opens("\n".join(keep)))
+    lemmas = [(n, c) for n, c in chunks if n != t]
+    proof = next((c for n, c in chunks if n == t), None)
+    names = [n for n, _ in lemmas]
+    if not lemmas:
+        problems.append("the code block has no lemmas")
+    for n in sorted({n for n in names if names.count(n) > 1}):
+        problems.append(f"`{n}` is declared more than once")
+    for n, c in lemmas:
+        if n in s.theorems or n in s.task.definitions:
+            problems.append(f"`{n}` is a required declaration; leave it out")
+        elif not re.match(rf"^{DECL_PREFIX}(?:theorem|lemma)\s", c):
+            problems.append(f"`{n}` is not a theorem; a decomposition adds lemmas only")
+    if derive and proof is None:
+        problems.append(f"the code block has no proof of `{t}` from the lemmas")
+    if problems:
+        return names, problems
+    src, new = before, []
+    for n, c in lemmas:
+        cur = decl_text(s, n, src)
+        if cur and "sorry" not in cur:
+            continue   # an existing complete declaration is kept
+        if cur:
+            src, _ = s._replace_in(src, n, "")
+        new.append(c)
+    src = s._insert_before(src, t, "\n\n".join(new))
+    if derive:
+        cur = decl_text(s, t, src)
+        head = re.match(r"(.*?):=", re.sub(r"^open\s[^\n]*?\bin\s+", "", cur), re.S)
+        body = re.match(r".*?(:=.*)$", proof, re.S)
+        if not head or not body:
+            return names, [f"`{t}`: no proof after `:=`"]
+        pre = re.match(r"^open\s[^\n]*?\bin\s+", proof)
+        src, _ = s._replace_in(src, t, (pre.group(0) if pre else "") + head.group(1).rstrip() + " " + body.group(1).strip())
+    if hoist:
+        lines = src.split("\n")
+        last = max([i for i, l in enumerate(lines) if re.match(r"^\s*import\s+\S+", l)], default=-1)
+        lines[last + 1:last + 1] = [f"import {m}" for m in hoist]
+        src = "\n".join(lines)
+    s._save(src, f"decompose {t}")
+    if not derive:
+        r = s.compile(6000)
+        if "error:" in r["output_tail"]:
+            s._save(before, f"revert decompose {t}")
+            return names, ["The lemma statements do not elaborate. Lean output:\n" + s._clean(r["output_tail"])[-3000:]]
+        return names, []
+    graph, err = s.dep_graph()
+    if graph is None:
+        s._save(before, f"revert decompose {t}")
+        return names, ["The file does not compile with the decomposition. Lean output:\n" + err[-4000:]]
+    full = next((n for n in graph if short_name(n) == t), None)
+    bad = []
+    if full is None or graph[full]["sorry"]:
+        bad.append(f"the proof of `{t}` uses `sorry` itself; it must follow from the lemmas")
+    else:
+        bad += [f"`{n}` is left open (`sorry`) but the proof of `{t}` does not use it" for n in
+                unreached_open(graph, [full], names)]
+    if bad:
+        s._save(before, f"revert decompose {t}")
+    return names, bad
+
+
+DECOMPOSE_ASK = (
+    "Reply with (1) a short proof plan in prose, then (2) exactly one ```lean code block containing, in dependency "
+    "order, 2 to 6 helper lemmas, each `theorem {prefix}<name> ... := by sorry` (give the proof instead when it is "
+    "immediate), and last `{t}` with exactly its current statement and a proof that uses the lemmas and contains no "
+    "`sorry`. The code is inserted right above `{t}` inside `namespace {ns}`, so the lemmas may use everything "
+    "declared before it. Lean checks that the proof of `{t}` compiles and uses every lemma left open; each open "
+    "lemma is then proved by itself (and split again if needed), so make each one a single step: one operation, "
+    "one case, or one arithmetic fact. No `?` or `!` in names.")
+
+
+def decompose(s, a, spec, t, attempt):
+    """Top-down decomposition of the open helper `t` by the planner: lemmas plus a proof of `t` from
+    them, checked by install_decomposition(), with Lean's feedback for up to 3 replies. The notes of
+    the failed attempts at `t` are in the request. If no reply derives `t`, the lemmas of the last
+    reply are installed without a derivation (when they elaborate), as plan() does. Returns
+    (lemma names, prose, derived)."""
+    stmt = statement_of(decl_text(s, t))
+    prefix = f"plan{attempt}_"
+    user = (f"{spec}\n\n=== candidate/Solution.lean (current) ===\n{compact_view(s, keep={t})}\n\n"
+            f"The prover could not prove `{stmt}`."
+            + (f"\nIts attempts ended like this:\n{notes_text(s, t)}" if s.notes.get(t) else "") + "\n\n"
+            + DECOMPOSE_ASK.format(prefix=prefix, t=t, ns=s.ns))
+    messages = [{"role": "system", "content": PLANNER_SYSTEM}, {"role": "user", "content": user}]
+    extra = {} if a.planner_effort == "default" else {"reasoning_effort": a.planner_effort}
+    tries, code, text = 3, None, ""
+    for k in range(tries):
+        try:
+            r, _ = s.call(a.planner, messages, f"plan:{s.task.id}:{t}:{attempt}", timeout=900, **extra)
+        except APIError as e:
+            s.log(kind="api_error", status=e.status, body=e.body[:300])
+            s.pause(20)
+            continue
+        text = r["choices"][0]["message"].get("content") or ""
+        messages.append({"role": "assistant", "content": text})
+        m = re.search(r"```lean\s*\n(.*?)```", text, re.S)
+        if not m:
+            messages.append({"role": "user", "content": "Your reply had no ```lean code block. Reply again in the "
+                                                        "required format."})
+            continue
+        code = m.group(1).strip()
+        names, problems = install_decomposition(s, t, code)
+        s.log(kind="decompose", theorem=t, attempt=attempt, reply=k, lemmas=names, derived=not problems,
+              problems="\n".join(problems)[:3000], code=code[:6000])
+        if not problems:
+            return _planned(s, a, t, attempt, names, text, m, derived=True)
+        messages.append({"role": "user", "content": "DECOMPOSITION REJECTED; candidate/Solution.lean is unchanged.\n"
+                         + "\n".join(f"- {p}" for p in problems)
+                         + "\n\nReply with the corrected plan and the complete corrected code block."})
+    if code:
+        names, problems = install_decomposition(s, t, code, derive=False)
+        if not problems:
+            return _planned(s, a, t, attempt, names, text, re.search(r"```lean\s*\n(.*?)```", text, re.S), derived=False)
+    return [], "", False
+
+
+def _planned(s, a, t, attempt, names, text, m, derived):
+    open_ = [n for n in names if decl_text(s, n) and not own_sorry_free(s, n)]
+    s.targets.update(names)
+    s.plan_count += 1
+    prose = text[: m.start()].strip()[-3000:]
+    (s.out / f"plan_{t}_{attempt}.md").write_text(text)
+    s.log(kind="plan", theorem=t, attempt=attempt, lemmas=names, open=open_, derived=derived, model=a.planner,
+          prose=prose[:3000], code=m.group(1)[:6000])
+    print(f"[plan {t}] {names} derived={derived}", flush=True)
+    return open_, prose, derived
+
+
+def resolve_td(s, a, system, spec, name, depth, plan_text="", probed=False):
+    """Top-down resolution of an open helper. A helper that can still be split (depth below
+    --max-depth, with a planner) gets a short attempt (--probe-turns) unless it already had one, and
+    then a checked decomposition (decompose()); its open lemmas get short attempts first, breadth
+    first, and are then resolved the same way one level down. A helper that cannot be split gets a
+    full dialog (--obligation-turns). The helper gets a full dialog of its own only when no
+    decomposition derived it, or when one of its lemmas was refuted (its previous proof is then
+    restored). Returns whether it is proved."""
+    split = depth < a.max_depth and a.planner != "none"
+
+    def is_open():
+        return not own_sorry_free(s, name) and name not in s.refuted
+    short = split and not probed and a.probe_turns > 0
+    if is_open() and not (probed and split):
+        prove_target(s, a, system, spec, name, a.probe_turns if short else a.obligation_turns,
+                     f"d{depth}", plan_text, probe=short)
+    lemmas = []
+    if is_open() and split:
+        before = decl_text(s, name)
+        lemmas, text, derived = decompose(s, a, spec, name, s.plan_count)
+        for l in lemmas:   # breadth: a short attempt at every open lemma first
+            if a.probe_turns > 0 and not own_sorry_free(s, l) and l not in s.refuted:
+                s.probed.add(l)
+                prove_target(s, a, system, spec, l, a.probe_turns, f"p{depth + 1}", text, probe=True)
+        for l in lemmas:
+            if not own_sorry_free(s, l) and l not in s.refuted:
+                resolve_td(s, a, system, spec, l, depth + 1, text, probed=True)
+        if derived and any(l in s.refuted for l in lemmas) and before:
+            s.replace_declaration(name, before.rstrip())   # the derivation used a false lemma
+        if is_open():   # not derived (or derived from a refuted lemma): a full dialog
+            prove_target(s, a, system, spec, name, a.obligation_turns, f"d{depth}", text or plan_text)
+    if own_sorry_free(s, name):
+        for dep in pending_deps(s, name):
+            if dep not in s.refuted and dep not in lemmas and not own_sorry_free(s, dep):
+                resolve_td(s, a, system, spec, dep, depth + 1, plan_text, probed=dep in s.probed)
+    ok = s.check_status([name]).get(name) == "PROVED"
+    s.log(kind="resolve", name=name, depth=depth, ok=ok)
+    return ok
+
+
+def prove_target(s, a, system, spec, t, budget, label, plan_text="", probe=False):
+    """One focused dialog on `t` with `budget` turns. A probe (top-down loop) is a short first
+    attempt: the prompt says so and asks, if the proof is not routine, for what it needs, which
+    the planner then reads."""
     src = s._source()
     m = re.search(rf"theorem\s+{re.escape(t)}\b[^\n]*(?:\n(?!theorem|lemma|def|end )[^\n]*)*", src)
     stmt = (m.group(0).split(":= by")[0].split(":= sorry")[0] if m else t).strip()
@@ -1210,7 +1444,10 @@ def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
             + (" If you find that the statement is false, prove its negation with refute_helper; the skeleton "
                "is then revised without it." if "refute_helper" in s.extra_tools and t not in s.theorems else "")
             + (f"\n\nEarlier attempts at this target ended like this (the file may have changed since):\n"
-               f"{notes_text(s, t)}" if s.extra_tools and s.notes.get(t) else ""))
+               f"{notes_text(s, t)}" if s.extra_tools and s.notes.get(t) else "")
+            + (f"\n\nThis is a short first attempt ({budget} turns): prove it now if the proof is routine. If it is "
+               "not, end with a short statement of what the proof needs (the facts that are missing, or the case "
+               "that blocks it); a longer attempt or a split into smaller lemmas follows." if probe else ""))
     def own_proof_done():
         """The target's own proof is sorry-free and the file compiles (dependencies may be pending),
         or the target was refuted."""
@@ -1654,13 +1891,23 @@ def structure(s, a, system, spec, rnd, feedback=""):
 
 def fill(s, a, system, spec, sk):
     """Fill phase: the open helpers of the compiled candidate (dependency graph) are the
-    obligations, in open_helpers() order, each dispatched through resolve() (dialog with
-    snippets and library hints, planner decomposition in A2). Rounds repeat until no helper is
-    open ("done"), a helper is refuted or every open helper has had --helper-attempts attempts
-    ("restructure", with the details), or --fill-rounds is reached ("stalled")."""
+    obligations, in open_helpers() order. Each round first gives every helper that has not had one
+    a short attempt (--probe-turns; breadth first, so that a helper that is easy is never left
+    waiting behind a hard one), then resolves the helpers still open one by one with resolve_td()
+    (checked planner decompositions in A2), each limited to --helper-share times an equal share of
+    the dollars and wall time left among the helpers still to go (SubtreeBudget). Rounds repeat until
+    no helper is open ("done"), a helper is refuted or every open helper has had --helper-attempts
+    resolutions ("restructure", with the details), or --fill-rounds is reached ("stalled")."""
     s.log(kind="phase", phase="fill", round=sk["round"])
     attempts = {}
     hs = []
+    prose = sk.get("prose", "")
+
+    def refuted_now(h):
+        if h["name"] in s.refuted:
+            s.refuted[h["name"]]["stmt"] = h["stmt"]
+            return "restructure", {"refuted": [h["name"]], "stuck": [], "attempts": attempts}
+        return None
     for rnd in range(a.fill_rounds):
         graph, err = s.dep_graph()
         if graph is None:
@@ -1681,16 +1928,35 @@ def fill(s, a, system, spec, sk):
                                    "stuck": [h for h in hs if h["name"] not in s.refuted and attempts.get(h["name"])]}
         s.log(kind="fill_order", round=rnd, order=[{"name": h["name"], "users": len(h["users"]), "lib": h["lib"],
                                                      "attempts": attempts.get(h["name"], 0)} for h in todo])
-        for h in todo:
+        if a.probe_turns > 0:
+            for h in todo:
+                if h["name"] in s.probed or own_sorry_free(s, h["name"]):
+                    continue
+                s.probed.add(h["name"])
+                prove_target(s, a, system, spec, h["name"], a.probe_turns, "p0", prose, probe=True)
+                s.log(kind="probe", name=h["name"], users=h["users"], ok=own_sorry_free(s, h["name"]),
+                      refuted=h["name"] in s.refuted)
+                out = refuted_now(h)
+                if out:
+                    return out
+        left = [h for h in todo if not own_sorry_free(s, h["name"])]
+        for i, h in enumerate(left):
             if own_sorry_free(s, h["name"]):
                 continue
             attempts[h["name"]] = attempts.get(h["name"], 0) + 1
-            ok = resolve(s, a, system, spec, h["name"], 1, sk.get("prose", ""))
+            cap = s.share_cap(min(1.0, a.helper_share / (len(left) - i)))
+            capped = False
+            try:
+                with s.capped(cap):
+                    ok = resolve_td(s, a, system, spec, h["name"], 0, prose, probed=h["name"] in s.probed)
+            except SubtreeBudget as e:
+                ok, capped = False, True
+                s.log(kind="helper_cap", name=h["name"], reason=str(e), usd_cap=cap[0], wall_cap=cap[1])
             s.log(kind="helper", name=h["name"], users=h["users"], ok=ok, attempt=attempts[h["name"]],
-                  refuted=h["name"] in s.refuted)
-            if h["name"] in s.refuted:
-                s.refuted[h["name"]]["stmt"] = h["stmt"]
-                return "restructure", {"refuted": [h["name"]], "stuck": [], "attempts": attempts}
+                  refuted=h["name"] in s.refuted, capped=capped)
+            out = refuted_now(h)
+            if out:
+                return out
         prune(s)
     return "stalled", {"stuck": hs, "attempts": attempts}
 
@@ -1810,6 +2076,12 @@ def parser():
     ap.add_argument("--helper-attempts", type=int, default=2,
                     help="topdown: resolutions of one open helper before it counts as stuck")
     ap.add_argument("--fill-rounds", type=int, default=6, help="topdown: fill rounds per skeleton")
+    ap.add_argument("--probe-turns", type=int, default=5,
+                    help="topdown: turns of the short first attempt every open helper and every planned lemma gets "
+                         "before longer attempts and decompositions (0: none)")
+    ap.add_argument("--helper-share", type=float, default=1.5,
+                    help="topdown: one helper's resolution may use this multiple of an equal share of the dollars and "
+                         "wall time left among the helpers still to go in the round")
     ap.add_argument("--restructures", type=int, default=2,
                     help="topdown: revised skeletons after a refuted helper or when every open helper is stuck")
     ap.add_argument("--phase0-turns", type=int, default=12)
