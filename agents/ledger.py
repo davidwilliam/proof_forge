@@ -341,7 +341,8 @@ def reconstruct(run_dir, task):
             f = d / f"skeleton_{e['round']}.lean"
             skels.append({"round": e["round"], "code": f.read_text() if f.exists() else e.get("code", ""),
                           "helpers": sorted(e.get("helpers") or {}), "derived": e.get("derived", [])})
-    led = build(task, d, list(dict.fromkeys(srcs)), ev, final, summ.get("final_status"), summ.get("arm"), summ,
+    status = summ.get("final_status") or summ.get("final_theorem_status")   # Muse Code runs (agents/muse_code.py)
+    led = build(task, d, list(dict.fromkeys(srcs)), ev, final, status, summ.get("arm"), summ,
                 reconstructed=True, spec=sha, skeletons=skels)
     led["task"] = summ.get("task")
     return led
