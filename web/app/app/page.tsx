@@ -17,7 +17,7 @@ export default function BalancerReplayPage() {
   const alone = MEASURED.alone;
   const forge = MEASURED.forge;
   return (
-    <main className="page replay">
+    <main id="main" className="page replay">
       <h1>The Balancer V2 rounding exploit, replayed</h1>
       <p className="lead">
         On November 3, 2025, attackers drained Balancer V2 Composable Stable Pools and their forks of more than $120 million (

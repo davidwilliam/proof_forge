@@ -14,7 +14,7 @@ export default async function ChallengePage() {
     [variants, tasks] = await Promise.all([getJson<string[]>("/api/challenge/variants"), getJson<TaskSummary[]>("/api/tasks")]);
   } catch (e) {
     return (
-      <main className="page">
+      <main id="main" className="page">
         <h1>Challenge a hidden variant</h1>
         <ErrorBox title="Could not load challenge variants." message={(e as Error).message} />
       </main>
@@ -23,7 +23,7 @@ export default async function ChallengePage() {
   const flagship = tasks.find((t) => t.id === "payout-flagship");
   const texts = Object.fromEntries((flagship?.requirements ?? []).map((r) => [r.id, requirementText(r.text, r.id)]));
   return (
-    <main className="page">
+    <main id="main" className="page">
       <h1>Challenge a hidden variant</h1>
       <p className="lead">
         Each variant is a buggy payout component that has not been shown to anyone. ProofForge builds its executable and runs the

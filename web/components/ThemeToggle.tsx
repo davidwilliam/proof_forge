@@ -31,7 +31,7 @@ export function ThemeToggle() {
 
   return (
     <label className="row small muted theme-toggle">
-      Theme
+      <span>Theme</span>
       <select value={theme} onChange={(e) => apply(e.target.value as Theme)} aria-label="Color theme">
         <option value="system">System</option>
         <option value="light">Light</option>

@@ -32,7 +32,7 @@ export default async function ResultsPage() {
     data = await getJson<Record<string, unknown>>("/api/results");
   } catch (e) {
     return (
-      <main className="page">
+      <main id="main" className="page">
         <h1>Results</h1>
         <ErrorBox title="Could not load results." message={(e as Error).message} />
       </main>
@@ -50,7 +50,7 @@ export default async function ResultsPage() {
   ];
 
   return (
-    <main className="page">
+    <main id="main" className="page">
       <h1>Results</h1>
       <p className="lead">
         E1 measures repair completion per agent arm under identical budgets. E2 measures integrity: the same candidate artifacts are checked by
