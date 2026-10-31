@@ -1179,7 +1179,8 @@ def plan(s, a, spec, t, attempt):
     """Ask the planner model for helper lemma statements; install them as sorry targets."""
     stmt = re.search(rf"theorem\s+{re.escape(t)}\s*:[^\n]*",
                      s.read_file(f"{s.task.spec_dir}/Challenge.lean") + s._source())
-    user = (f"{spec}\n\n=== candidate/Solution.lean (current) ===\n{s._source()}\n\n"
+    user = (f"{spec}\n\n=== candidate/Solution.lean (current) ===\n"
+            f"{compact_view(s) if getattr(s, 'resume_record', None) else s._source()}\n\n"
             f"The prover could not prove `{stmt.group(0).replace(' := sorry', '') if stmt else t}`.\n"
             "Reply with (1) a short proof plan in prose, then (2) exactly one ```lean code block containing 2 to 6 "
             "helper lemmas, each written as `theorem <unique_name> ... := by sorry`, in dependency order, inside no "
@@ -1238,7 +1239,9 @@ def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
     hints = s.library_hints(obligation_query(s, stmt)) if s.library else ""
     if hints:
         s.log(kind="library_hints", theorem=t, hits=re.findall(r"^\[\w+\] (\S+)", hints, re.M))
-    shown = compact_view(s, src, keep={t}) if s.topdown else src
+    # The top-down loop and resumed runs (whose files hold the carried declarations) show the
+    # candidate with long proofs of proved theorems elided.
+    shown = compact_view(s, src, keep={t}) if s.topdown or getattr(s, "resume_record", None) else src
     user = (f"{spec}\n\n=== candidate/Solution.lean (current) ===\n{shown}\n\n"
             f"Current requirement status: {', '.join(f'{k}={v}' for k, v in status.items())}\n\n"
             + (f"Proof plan from the architect:\n{plan_text}\n\n" if plan_text else "")
