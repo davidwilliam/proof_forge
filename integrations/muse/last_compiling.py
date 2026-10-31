@@ -29,6 +29,8 @@ def main():
         for snap in snaps:
             shutil.copy(snap, ws / "candidate/Solution.lean")
             r = server.lean("lake build Solution 2>&1 | tail -c 4000")
+            if muse_code.unavailable(r):   # Docker failure or time limit: no verdict, so no result
+                sys.exit(f"{run}: Lean gave no verdict on {snap.name}; rerun when Docker is available")
             if "error:" not in proofforge_mcp.clean_lean(r["output_tail"]) and r["exit_code"] == 0:
                 status = server.theorem_status(t)
                 found = {"snapshot": snap.name, "of": len(snaps), "theorem_status": status,
