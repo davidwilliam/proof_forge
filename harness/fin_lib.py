@@ -399,6 +399,10 @@ class Index:
         return cls(load_index(root))
 
     def search(self, query, limit=10, kinds=None):
+        return [e for _, e in self.scored(query, limit, kinds)]
+
+    def scored(self, query, limit=10, kinds=None):
+        """The best matches as (BM25 score, entry), best first."""
         q = tokens(query)
         q += [s for t in list(q) for s in SYNONYMS.get(t, [])]
         exact = {w for w in re.findall(r"[\w.']+", query or "") if "." in w or "_" in w}
@@ -420,7 +424,7 @@ class Index:
             if s > 0:
                 scored.append((s, e))
         scored.sort(key=lambda x: (-x[0], x[1]["name"]))
-        return [e for _, e in scored[:limit]]
+        return scored[:limit]
 
 
 def short_doc(doc, n=220):
