@@ -96,7 +96,8 @@ E1 (`eval/e1.py`) runs every arm once per task under identical caps and scores e
 `server/app.py` (FastAPI) serves:
 
 - Jobs (`POST /api/jobs`): a replay re-emits a recorded session's events with compressed timing, labeled "Recorded run", then checks the recorded final candidate fresh; a live job runs `agents/repair.py` as a separate process (Muse Spark 1.3 on the Contributor tier with the Wonder planner by default), then checks its final candidate fresh. Events stream over server-sent events. Only public tasks are reachable; hidden variants and paths are refused.
-- Checks (`POST /api/verify`): the full Passport pipeline on a submitted candidate, under a request-wide deadline.
+- Tasks (`GET /api/tasks`, `GET /api/tasks/{id}`): the benchmark tasks and the real-world tasks under `realworld/tasks` (split `realworld`), each with its locked requirements; `?split=` filters by split. Hidden variants are never listed.
+- Checks (`POST /api/verify`): the full Passport pipeline on a submitted candidate, under a request-wide deadline. With `"counterexample": true`, each requirement the property tests refute also gets the counterexample stage (a Lean refutation checked by the six kernels, `leanchecker` and the axiom audit), within the same deadline; the site's "Check a fix" panel sends it for the real-world tasks.
 - The payout sidecar (`POST /api/payout`): the buggy and repaired executables, built once and run on a single request.
 - The hidden challenge (`POST /api/challenge`): 300 property cases against the start candidate of a hidden flagship variant, returning a witness or UNRESOLVED.
 - Operator controls (`/api/admin/*`): replay-only mode and stopping live jobs.

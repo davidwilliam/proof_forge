@@ -90,9 +90,17 @@ def health():
             "disk_free_gb": round(free / 2**30, 1), "live_jobs": len(LIVE), **CTRL.state()}
 
 
+def listed_tasks():
+    """The benchmark tasks (harness/task.py all_tasks) and the real-world tasks under
+    realworld/tasks (split "realworld"), each with a locked specification; never hidden variants."""
+    realworld = [taskmod.Task(d) for d in sorted(taskmod.REALWORLD.glob("*")) if (d / "task.json").exists()]
+    return [t for t in taskmod.all_tasks() + realworld
+            if t.split != "hidden" and (t.root / "spec/locked.json").exists()]
+
+
 @app.get("/api/tasks")
 def tasks(split: str | None = None):
-    return [task_summary(t) for t in taskmod.all_tasks(split) if (t.root / "spec/locked.json").exists()]
+    return [task_summary(t) for t in listed_tasks() if split is None or t.split == split]
 
 
 @app.get("/api/tasks/{task_id}")
@@ -405,11 +413,14 @@ async def job_events(job_id: str, request: Request):
 class VerifyRequest(BaseModel):
     task: str = "payout-flagship"
     source: str
+    counterexample: bool = False    # also run the counterexample stage on a REFUTED result
 
 
 @app.post("/api/verify")
 def verify(body: VerifyRequest, request: Request):
-    """Synchronous fresh check of submitted candidate source (no model calls)."""
+    """Synchronous fresh check of submitted candidate source (no model calls). With
+    counterexample, each requirement the binary check refutes with a witness also gets a Lean
+    refutation checked by the same kernels (harness/counterexample.py), inside the same deadline."""
     if len(body.source) > 200_000:
         raise HTTPException(413, "candidate too large")
     t = public_task(body.task)
@@ -419,7 +430,7 @@ def verify(body: VerifyRequest, request: Request):
                 judge.time_limit(seconds("PF_VERIFY_DEADLINE_S", 240)):
             f = pathlib.Path(tmp) / "Solution.lean"
             f.write_text(body.source)
-            p = issue_passport(passport.run(f, t, cases=1000, seed=0), f)
+            p = issue_passport(passport.run(f, t, cases=1000, seed=0, counterexample=body.counterexample), f)
     return p
 
 
