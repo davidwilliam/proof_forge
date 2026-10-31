@@ -333,6 +333,41 @@ def test_library_prompt_mentions_reduction_theorems():
         assert task_word not in general.lower(), task_word
 
 
+def test_compact_view_and_reading_one_declaration():
+    s = session(BUCKET, start=fixed_start())
+    try:
+        proved = ("theorem td0_long (n : Nat) : n + 0 = n := by\n  have h : n + 0 = n := by\n    simp\n"
+                  "  exact h\n")
+        src = s._source().replace("end TokenBucket", proved + "\ntheorem td0_short (n : Nat) : n = n := rfl\n\n"
+                                  "theorem td0_open (n : Nat) : 0 + n = n := by\n  sorry\n\nend TokenBucket")
+        s._save(src, "fixture")
+        src = s._source()
+        view = repair.compact_view(s)
+        assert "theorem td0_long (n : Nat) : n + 0 = n := by\n  ...  -- proved (4 lines)" in view, view
+        assert "simp" not in view and "td0_short (n : Nat) : n = n := rfl" in view
+        assert "theorem td0_open (n : Nat) : 0 + n = n := by\n  sorry" in view
+        assert "read_file with `name`" in view and view.index("read_file with") > view.index("namespace TokenBucket")
+        assert "simp" in repair.compact_view(s, keep={"td0_long"})
+        assert s._source() == src                                  # the view never changes the file
+        # read_file: the full file outside the top-down loop; the view and one declaration in it.
+        assert s.read_file("candidate/Solution.lean") == src
+        s.topdown = True
+        assert s.read_file("candidate/Solution.lean") == view
+        assert s.read_file("candidate/Solution.lean", name="td0_long").startswith("theorem td0_long") and \
+            "simp" in s.read_file("", name="TokenBucket.td0_long")
+        assert s.read_file("", name="nope").startswith("error: no declaration `nope`")
+        tools = {t["function"]["name"]: t["function"] for t in repair.tools_for(BUCKET, True, True, compact=True)}
+        assert "name" in tools["read_file"]["parameters"]["properties"]
+        assert tools["search_library"]["parameters"]["properties"]["limit"]["maximum"] == repair.SEARCH_MAX_TOPDOWN
+        plain = {t["function"]["name"]: t["function"] for t in repair.tools_for(BUCKET, True, True)}
+        assert "name" not in plain["read_file"]["parameters"]["properties"]
+        s.library, s.lib_index = True, fin_lib.Index.load()
+        hits = s.search_library("rounding down a sum of parts", limit=25)
+        assert hits.count("\n[") + 1 <= repair.SEARCH_MAX_TOPDOWN, hits
+    finally:
+        close(s)
+
+
 # With Lean
 
 def test_dependency_probe_separates_direct_and_helper_sorry():

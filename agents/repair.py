@@ -280,6 +280,10 @@ def library_brief(index, tools=True):
     return "\n".join(lines)
 
 
+# Most hits search_library returns in the top-down loop (each hit is a signature and a doc string
+# that stays in the dialog for every later turn).
+SEARCH_MAX_TOPDOWN = 10
+
 TOPDOWN_TOOLS = [
     {"type": "function", "function": {"name": "submit_skeleton", "description": "Install a proof skeleton in candidate/Solution.lean: helper theorems (their proofs may be `sorry`), any definitions they need (complete bodies), and every unproved required theorem with exactly its statement and a proof that uses no `sorry` itself, only helper theorems. Kept only if the file compiles and Lean confirms that no required theorem uses `sorry` except through helper theorems; otherwise the file is unchanged and the reasons are returned.",
      "parameters": {"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]}}},
@@ -289,20 +293,29 @@ TOPDOWN_TOOLS = [
 ]
 
 
-def tools_for(task, library=False, topdown=False):
+def tools_for(task, library=False, topdown=False, compact=False):
     """Tool definitions. The top-down tools are listed only with `topdown` (dialogs pick their
-    tools by name, so the other loops never see them)."""
+    tools by name, so the other loops never see them). `compact` (the top-down loop's dialogs)
+    gives read_file its `name` argument and search_library its lower maximum."""
+    read_props = {"path": {"type": "string", "enum": task.readable}}
+    read_desc = "Read a file from the workspace."
+    if compact:
+        read_props["name"] = {"type": "string", "description": "a declaration of candidate/Solution.lean to show "
+                                                               "in full (path is then ignored)"}
+        read_desc = ("Read a file from the workspace. candidate/Solution.lean is shown with long proofs of proved "
+                     "theorems elided; give `name` to see one declaration in full.")
     lib = [
         {"type": "function", "function": {"name": "search_library", "description": "Search the ProofForgeFin library index (theorems, definitions, structures, tactics, simp sets, modules) by keywords, declaration names or a statement. Returns the best matches with signature, module to import and doc string.",
          "parameters": {"type": "object", "properties": {"query": {"type": "string"},
-                                                         "limit": {"type": "integer", "minimum": 1, "maximum": 25}},
+                                                         "limit": {"type": "integer", "minimum": 1,
+                                                                   "maximum": SEARCH_MAX_TOPDOWN if compact else 25}},
                         "required": ["query"]}}},
         {"type": "function", "function": {"name": "add_import", "description": "Add `import <module>` for a ProofForgeFin module at the top of candidate/Solution.lean; kept only if the file still compiles.",
          "parameters": {"type": "object", "properties": {"module": {"type": "string"}}, "required": ["module"]}}},
     ] if library else []
     return [
-        {"type": "function", "function": {"name": "read_file", "description": "Read a file from the workspace.",
-         "parameters": {"type": "object", "properties": {"path": {"type": "string", "enum": task.readable}}, "required": ["path"]}}},
+        {"type": "function", "function": {"name": "read_file", "description": read_desc,
+         "parameters": {"type": "object", "properties": read_props, "required": ["path"]}}},
         {"type": "function", "function": {"name": "write_solution", "description": "Replace candidate/Solution.lean with the full given content.",
          "parameters": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]}}},
         {"type": "function", "function": {"name": "replace_declaration", "description": f"Replace one top-level declaration (def, theorem, lemma, instance) in candidate/Solution.lean, identified by its name, with the given full text. If no declaration has that name, the text is inserted before `end {task.ns}`.",
@@ -317,6 +330,9 @@ def tools_for(task, library=False, topdown=False):
 
 
 class Session:
+    # Class defaults, so that a session built without __init__ (tests) behaves as in the other loops.
+    topdown = False
+
     def __init__(self, task, model, start, out, budget=None, mode="repair", library=False):
         self.task, self.model, self.out, self.mode = task, model, out, mode
         self.ns, self.theorems = task.ns, task.theorems
@@ -349,6 +365,7 @@ class Session:
         self.notes = {}
         self.extra_tools = set()
         self.skeleton_ctx = None
+        self.topdown = False   # compact candidate views, read_file by declaration, checked decompositions
         # Declaration boundary: the next top-level item, an `open` command or the namespace end.
         self.boundary = (r"(?:@\[|/--|private |protected |noncomputable |theorem |lemma |def |instance |abbrev "
                          rf"|structure |inductive |open |{re.escape(self.end)})")
@@ -402,9 +419,16 @@ class Session:
         with (self.out / "events.jsonl").open("a") as f:
             f.write(json.dumps(kw) + "\n")
 
-    def read_file(self, path):
+    def read_file(self, path, name=None):
+        """A readable file. In the top-down loop the candidate is returned as compact_view() and
+        `name` returns one declaration of the candidate in full."""
+        if self.topdown and name:
+            text = decl_text(self, str(name).split(".")[-1].strip())
+            return text.rstrip() if text else f"error: no declaration `{name}` in candidate/Solution.lean"
         if path not in self.task.readable:
             return "error: not readable"
+        if self.topdown and path == "candidate/Solution.lean":
+            return compact_view(self)
         return (self.ws / path).read_text()
 
     def write_solution(self, content):
@@ -810,7 +834,7 @@ class Session:
         if not self.lib_index:
             return "error: the library is not available in this run"
         try:
-            limit = max(1, min(25, int(limit or 10)))
+            limit = max(1, min(SEARCH_MAX_TOPDOWN if self.topdown else 25, int(limit or 10)))
         except (TypeError, ValueError):
             limit = 10
         hits = self.lib_index.search(query or "", limit=limit)
@@ -860,7 +884,7 @@ class Session:
 
 def dialog(s, model, effort, system, user, tool_names, max_turns, done, label):
     """Run one tool-using dialog until done() or the turn budget is spent."""
-    tools = [t for t in tools_for(s.task, s.library, topdown=True) if t["function"]["name"] in tool_names]
+    tools = [t for t in tools_for(s.task, s.library, topdown=True, compact=s.topdown) if t["function"]["name"] in tool_names]
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     extra = {} if effort == "default" else {"reasoning_effort": effort}
     for turn in range(max_turns):
@@ -893,7 +917,7 @@ def dialog(s, model, effort, system, user, tool_names, max_turns, done, label):
                 args = json.loads(c["function"].get("arguments") or "{}")
             except json.JSONDecodeError:
                 args = {}
-            fn = {"read_file": lambda: s.read_file(args.get("path", "")),
+            fn = {"read_file": lambda: s.read_file(args.get("path", ""), args.get("name")),
                   "write_solution": lambda: s.write_solution(args.get("content", "")),
                   "replace_declaration": lambda: s.replace_declaration(args.get("name", ""), args.get("text", "")),
                   "try_snippet": lambda: s.try_snippet(args.get("code", "")),
@@ -1009,6 +1033,36 @@ def decl_text(s, name, src=None):
     m = re.search(rf"^{DECL_PREFIX}{DECL_KINDS}\s+{re.escape(name)}(?=[\s:({{\[]).*?"
                   rf"(?=^{s.boundary})", s._source() if src is None else src, re.S | re.M)
     return m.group(0) if m else ""
+
+
+COMPACT_NOTE = ("-- Proofs of proved theorems longer than {n} lines are elided below (`...`); "
+                "read_file with `name` shows one declaration in full.\n")
+
+
+def compact_view(s, src=None, keep=(), min_lines=4):
+    """The candidate as shown to the top-down dialogs and the planner: definitions, statements and
+    open proofs in full, the proof of a theorem without `sorry` replaced by `...` when it has at
+    least `min_lines` lines (declarations in `keep` stay whole). The file itself is unchanged."""
+    src = s._source() if src is None else src
+    out, n = src, 0
+    for m in s.DECL.finditer(src):
+        name = m.group(1).split(".")[-1]
+        if name in keep:
+            continue
+        text = decl_text(s, name, src)
+        if not text or "sorry" in text or not re.match(rf"^{DECL_PREFIX}(?:theorem|lemma)\s", text):
+            continue
+        body = text.rstrip()
+        lines = body.count("\n") + 1
+        stmt = statement_of(body)
+        if lines < min_lines or stmt == body.strip():
+            continue
+        out = out.replace(body, f"{stmt} := by\n  ...  -- proved ({lines} lines)", 1)
+        n += 1
+    if not n:
+        return out
+    head, sep, rest = out.partition(f"namespace {s.ns}\n")
+    return head + sep + COMPACT_NOTE.format(n=min_lines - 1) + rest if sep else COMPACT_NOTE.format(n=min_lines - 1) + out
 
 
 def own_sorry_free(s, name):
@@ -1143,7 +1197,8 @@ def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
     hints = s.library_hints(obligation_query(s, stmt)) if s.library else ""
     if hints:
         s.log(kind="library_hints", theorem=t, hits=re.findall(r"^\[\w+\] (\S+)", hints, re.M))
-    user = (f"{spec}\n\n=== candidate/Solution.lean (current) ===\n{src}\n\n"
+    shown = compact_view(s, src, keep={t}) if s.topdown else src
+    user = (f"{spec}\n\n=== candidate/Solution.lean (current) ===\n{shown}\n\n"
             f"Current requirement status: {', '.join(f'{k}={v}' for k, v in status.items())}\n\n"
             + (f"Proof plan from the architect:\n{plan_text}\n\n" if plan_text else "")
             + (f"ProofForgeFin declarations the library index ranks highest for this obligation "
@@ -1515,7 +1570,7 @@ def skeleton_user(s, spec, status, pending, rnd, feedback, for_tools):
            "ProofForgeFin...` and `open` lines first, new definitions with complete bodies, helper theorems "
            "(`theorem <name> ... := by sorry` unless the proof is immediate), and every required theorem listed "
            "above with exactly its statement and a proof without `sorry`. ")
-    return (f"{spec}\n\n=== candidate/Solution.lean (current) ===\n{s._source()}\n\n"
+    return (f"{spec}\n\n=== candidate/Solution.lean (current) ===\n{compact_view(s)}\n\n"
             f"Requirement status: {', '.join(f'{k}={v}' for k, v in status.items())}\n\n"
             "Required theorems not yet proved:\n" + "\n".join(f"- `{statement(s, t)}`" for t in pending) + "\n\n"
             + (f"ProofForgeFin declarations the library index ranks highest for these requirements and for "
@@ -1668,6 +1723,7 @@ def topdown_phases(s, a, system, spec):
     stuck. If no skeleton is accepted at all, the run continues with the per-obligation phases
     of the orchestrated loop (structured())."""
     s.extra_tools = {"refute_helper"}
+    s.topdown = True
     try:
         status = s.check_status()
         if all(v == "PROVED" for v in status.values()):
@@ -1696,6 +1752,7 @@ def topdown_phases(s, a, system, spec):
         s.check()
     finally:
         s.extra_tools = set()
+        s.topdown = False
 
 
 def topdown(s, a):
