@@ -182,6 +182,17 @@ export const LIBRARY_RUN = {
   what: "Muse with ProofForge and the ProofForgeFin library against Muse alone",
 } as const;
 
+/**
+ * The library-1 runs with the library on Compound (orchestrated and top-down): the most requirements
+ * any final snapshot proved (summary.json final_status), and how many of them proved one of the three
+ * sequence bounds that the build team's library proof closes.
+ */
+export const LIBRARY_COMPOUND = {
+  bestProved: 4,
+  bounds: ["req_rewards_bounded", "req_account_bounded", "req_no_backdated"],
+  runsProvingABound: 0,
+} as const;
+
 /** Every Muse-alone run of a COMPARISON row: baseline-flagships-1 and library-1. */
 export const aloneRuns = (row: ComparisonRow): Runs => merge("A0", [row.alone, row.library?.alone ?? null]);
 

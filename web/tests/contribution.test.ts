@@ -9,6 +9,7 @@ import {
   COUNTEREXAMPLES,
   HACKATHON,
   LIBRARY,
+  LIBRARY_COMPOUND,
   LIBRARY_RUN,
   OPEN_WEIGHTS,
   PLANNER,
@@ -119,6 +120,16 @@ describe("Muse alone against Muse with ProofForge", () => {
     const row = COMPARISON.find((r) => r.key === "compound")!;
     for (const run of row.library!.alone!.runs) expect(readRunSummary(`${run}/summary.json`).seconds, run).toBeGreaterThanOrEqual(14400);
     for (const run of row.alone.runs) expect(readRunSummary(`${run}/summary.json`).seconds, run).toBeLessThan(14400);
+  });
+
+  it("how far the library runs got on Compound", () => {
+    const lib = COMPARISON.find((r) => r.key === "compound")!.library!;
+    const status = (run: string) => (readExact(`${run}/summary.json`) as { final_status: Record<string, string> }).final_status;
+    const runs = [...lib.withLibrary.runs, ...lib.topdown!.runs];
+    expect(Math.max(...runs.map((r) => Object.values(status(r)).filter((v) => v === "PROVED").length))).toBe(LIBRARY_COMPOUND.bestProved);
+    expect(runs.filter((r) => LIBRARY_COMPOUND.bounds.some((b) => status(r)[b] === "PROVED")).length).toBe(LIBRARY_COMPOUND.runsProvingABound);
+    const task = JSON.parse(text("realworld/tasks/rw-compound-comp/task.json")) as { requirements: [string, string][] };
+    for (const b of LIBRARY_COMPOUND.bounds) expect(task.requirements.map((r) => r[1])).toContain(b);
   });
 
   it("no method has verified Compound; the build team's library proof is VERIFIED", () => {
