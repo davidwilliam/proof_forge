@@ -1,6 +1,6 @@
 // Creates a Passport for the repaired build the payout sidecar runs
 // (formal/evidence/muse-repair-002/Solution.lean) via POST /api/verify, and records its
-// sha256 in generated/repaired-passport.json for the /app page. No model calls are made.
+// sha256 in generated/repaired-passport.json for the /app/payout page. No model calls are made.
 // Usage: node scripts/repaired-passport.mjs   (takes about 30 to 60 s)
 
 import { createHash } from "node:crypto";
