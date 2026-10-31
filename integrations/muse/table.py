@@ -3,13 +3,15 @@
 
 Usage: table.py <results-dir>   (each run in <results-dir>/<task>/<run>/summary.json)
 """
-import json, pathlib, sys
+import json, pathlib, re, sys
 
 ARM = {"alone": "Muse Code alone", "proofforge": "Muse Code + ProofForge"}
 
 
 def rows(base):
     for f in sorted(pathlib.Path(base).glob("*/*/summary.json")):
+        if not re.fullmatch(r"(alone|proofforge)-\d+", f.parent.name):   # measured runs only
+            continue
         s = json.loads(f.read_text())
         p = s.get("passport") or {}
         m = s["meter"]
