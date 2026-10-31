@@ -1277,6 +1277,29 @@ def analyze(s, graph):
             "open": opens, "reach": reach}
 
 
+def reach_from(graph, roots):
+    """Every declaration of the dependency graph that one of `roots` (full names) uses, directly or
+    through others."""
+    seen, todo = set(), list(roots)
+    while todo:
+        for d in graph.get(todo.pop(), {}).get("deps", ()):
+            if d not in seen:
+                seen.add(d)
+                todo.append(d)
+    return seen
+
+
+def unreached_open(graph, roots, names):
+    """The names among `names` (short names) whose declaration mentions `sorry` and that nothing
+    in `roots` uses. A skeleton or a decomposition that leaves such a helper has not wired it into
+    a proof, and prune() would delete it."""
+    full = {}
+    for n in graph:
+        full.setdefault(short_name(n), n)
+    seen = reach_from(graph, roots)
+    return [n for n in names if n in full and graph[full[n]]["sorry"] and full[n] not in seen]
+
+
 def lib_score(s, stmt):
     """How strongly the library index matches a statement (top BM25 score of a non-module hit);
     0 without the library."""
@@ -1416,6 +1439,10 @@ def accept_skeleton(s, code, ctx):
         ref = s.refuted.get(short)
         if ref and _norm(ref["stmt"]) == _norm(statement_of(decl_text(s, short))):
             bad.append(f"`{short}` was refuted (Lean accepted a proof of its negation); the skeleton must not use it")
+    bad += [f"`{n}` is left open (`sorry`) but no required theorem uses it, so it would be dropped: use it in the "
+            f"proof of the helper or required theorem it is meant for (write that proof now; a statement over every "
+            f"sequence follows from its one-step helper by induction), or leave it out"
+            for n in unreached_open(graph, [f"{s.ns}.{t}" for t in s.theorems], info["helpers"])]
     if bad:
         s._save(before, f"revert skeleton {rnd}")
         return reject("Lean's dependency check:\n" + "\n".join(f"- {b}" for b in bad))
@@ -1446,6 +1473,7 @@ must elaborate against the given file. Avoid Mathlib names (no Finset, no linari
 
 TOPDOWN_GUIDANCE = """How to write the skeleton:
 - Prove each required theorem in a few lines from named helper theorems. A helper's proof may be `sorry`; every `sorry` must sit inside a helper theorem, because a required theorem whose own proof contains `sorry` is rejected (Lean checks this on the compiled file).
+- Every helper you leave as `sorry` must be used by a proof in the skeleton: if a helper follows from other helpers (a statement over every sequence from its one-step helper, by induction), write that proof now instead of `sorry`. An open helper that no required theorem uses is rejected.
 - Prefer helpers that several required theorems share. State each helper with its hypotheses as explicit binders (no `variable`, `section` or `namespace`), small enough for one focused proof: one operation, one call or one case where possible.
 - A requirement about every sequence of operations or every reachable state follows from facts about one step: an invariant that holds at the start, is preserved by every step and implies the requirement, or, for an upper bound on a quantity that only accumulates, a potential (what was accumulated plus what is still owed) that no step raises by more than what the step adds. Such a reduction can be one helper about every implementation that satisfies the per-step facts, taking them as hypotheses.
 - Required theorems that are themselves about single calls are per-step facts: the proof of a required theorem may use the required theorems listed before it. Required theorems stay at the end of the file in the listed order, after every helper, so helpers cannot use them.

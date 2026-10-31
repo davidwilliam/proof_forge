@@ -291,6 +291,11 @@ def test_dependency_analysis():
     an = repair.analyze(s, g)
     assert an["direct"] == ["r3"] and an["missing"] == [] and an["proved"] == []
     assert an["open"] == {"N.h3": ["r1", "r2"], "N.h2": ["r2"]}, an["open"]
+    # An open helper that only another open helper's (sorry) proof was meant to use is unreached.
+    g["N.h4"] = {"kind": "theorem", "sorry": True, "deps": set()}
+    assert repair.unreached_open(g, ["N.r1", "N.r2", "N.r3"], ["h1", "h2", "h3", "h4", "d"]) == ["h4"]
+    assert repair.unreached_open(g, ["N.h1"], ["h2", "h3"]) == ["h2"]
+    del g["N.h4"]
     g["N.h3"]["sorry"] = False
     an = repair.analyze(s, g)
     assert an["proved"] == ["r1"] and an["open"] == {"N.h2": ["r2"]}
@@ -414,7 +419,9 @@ def run_main(argv, script, extra_patches=()):
 
 def test_bucket_a2_skeleton_refutation_and_restructure_reach_verified():
     out = pathlib.Path(tempfile.mkdtemp(prefix="pf-topdown-bucket-"))
-    bad = SKELETON_BUCKET.replace("intro s r h; exact td0_step_of_not h", "intro s r h; sorry")
+    # The first skeleton has a direct sorry and an open helper that no proof uses.
+    bad = SKELETON_BUCKET.replace("intro s r h; exact td0_step_of_not h", "intro s r h; sorry") + (
+        "\ntheorem td0_unused_step (s : State) (r : Request) : (step s r).2.capacity = s.capacity := by sorry\n")
     script = Script([
         (r":implement:turn\d+$", turns([say("Fix the cap and the cost bound.",
                                             tool_call("write_solution", content=FIXED_BUCKET), tool_call("run_tests"))])),
@@ -436,6 +443,7 @@ def test_bucket_a2_skeleton_refutation_and_restructure_reach_verified():
     sk = [e for e in ev if e["kind"] == "skeleton"]
     assert [(e["round"], e["accepted"]) for e in sk] == [(0, False), (0, True), (1, True)], sk
     assert "req_invalid_noop` uses `sorry` in its own proof" in sk[0]["problems"]
+    assert "`td0_unused_step` is left open (`sorry`) but no required theorem uses it" in sk[0]["problems"]
     assert sk[1]["helpers"]["td0_step_of_adm"] == ["req_valid_succeeds", "req_allow_iff_sufficient",
                                                    "req_time_monotone", "req_remaining", "req_effects"]
     order = [h["name"] for h in next(e for e in ev if e["kind"] == "fill_order")["order"]]
