@@ -23,7 +23,9 @@ import copy, pathlib, re, shutil, subprocess, sys, tempfile, threading, time
 from budget import BudgetExceeded, list_cost  # noqa: E402
 
 TURNS = 2
-DEFAULT_K = 2
+# Off by default: replayed on recorded token counts (results/feedback-2), variants did not win at
+# list prices; --variants K turns them on.
+DEFAULT_K = 0
 
 FRAMINGS = [
     ("retry", "Take a different route from the first attempt (its end is quoted above): do not repeat a step "
