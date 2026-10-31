@@ -44,10 +44,16 @@ per session gives the model `goal_at` (the proof state at each `sorry`, error or
 declaration) and answers a try_snippet with an error or a `sorry` from incremental elaboration,
 without compiling the whole file again.
 
+Refutation on concrete values (`--refute on`, the default; agents/refute.py): a planner lemma, a
+skeleton helper or a helper the model states with `sorry` is evaluated on sampled instances (the
+task's generator values first) before any turn is spent on it, and refused with the instance when
+Lean's kernel accepts the refutation.
+
 Usage: repair.py [--task T] [--model muse-spark-1.3-contributor] [--planner muse-wonder-1.0|none]
                  [--mode repair|implement] [--loop orchestrated|free|topdown] [--library on|off]
                  [--budget-usd X] [--budget-wall S] [--out DIR] [--start FILE]
                  [--resume-from DIR[,DIR...]] [--portfolio on|off] [--goal-tool on|off]
+                 [--refute on|off]
 """
 import argparse, hashlib, json, pathlib, re, shutil, sys, tempfile, time
 
@@ -57,7 +63,7 @@ sys.path.insert(0, str(ROOT / "harness"))
 from meta_client import chat, APIError, DeadlineReached  # noqa: E402
 from budget import Budget, BudgetExceeded, list_cost  # noqa: E402
 import judge, binary_check, fin_lib, task as taskmod  # noqa: E402
-import ledger, portfolio, leanserver  # noqa: E402
+import ledger, portfolio, leanserver, refute  # noqa: E402
 
 FORBIDDEN_TEXT = ("sorry, axiom, opaque, implemented_by, extern, unsafe, export, macro, elab, syntax, "
                   "initialize, #eval, run_cmd, native_decide, set_option")
@@ -353,6 +359,7 @@ class Session:
     resume_goals = ()
     round_offset = 0
     goal_tool = False        # --goal-tool: persistent Lean session (agents/leanserver.py)
+    refute_samples = 0       # --refute: instances per new helper statement (agents/refute.py)
 
     def __init__(self, task, model, start, out, budget=None, mode="repair", library=False):
         self.task, self.model, self.out, self.mode = task, model, out, mode
@@ -543,6 +550,14 @@ class Session:
             self._save(before, f"revert {name}")
             return (f"REVERTED: the edit to {name} broke compilation, so the file is unchanged "
                     f"(version {self.version}). Errors:\n" + self._clean(r["output_tail"])[-5000:])
+        short = name.split(".")[-1]
+        if self.refute_samples and "sorry" in (text or "") and short not in self.theorems:
+            false = refute.check(self, [short], f"replace_declaration:{short}")
+            if false:   # a helper the model states with sorry is refused when Lean shows it false
+                self._save(before, f"revert false {short}")
+                return (f"REVERTED: `{short}` is false, so the file is unchanged (version {self.version}). Lean "
+                        f"evaluated it on concrete values: counterexample {false[short]} (the kernel checked the "
+                        "refutation). State a true helper instead.")
         return f"{action} declaration {name} (version {self.version}); file compiles"
 
     @staticmethod
@@ -1233,6 +1248,14 @@ def plan(s, a, spec, t, attempt):
             user += ("\n\nThese lemma statements do not elaborate. Fix them. Compiler output:\n"
                      + s._clean(r2["output_tail"])[-3000:])
             continue
+        false = refute.check(s, names, f"plan:{t}")
+        if false:   # refused before any turn is spent on them
+            s._save(before, f"revert false plan {t} {attempt}")
+            s.log(kind="plan_refuted", theorem=t, attempt=attempt, false=false, model=a.planner,
+                  usd_list=round(list_cost(a.planner, u or {}), 4))
+            user += ("\n\nLean evaluated these lemmas on concrete values and found them false:\n"
+                     + refute.feedback(false) + "\nReply again with a plan whose lemmas are all true.")
+            continue
         s.targets.update(names)
         s.plan_count += 1
         prose = text[: m.start()].strip()[-3000:]
@@ -1248,6 +1271,11 @@ def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
     if portfolio.close_goals(s, a, [t], label).get(t):
         s.log(kind="obligation", label=label, theorem=t, ok=True, by="portfolio")
         return True
+    if t not in s.theorems and t not in s.refuted and (false := refute.check(s, [t], label)):
+        # A helper Lean shows false on concrete values gets no turns.
+        s.refuted[t] = {"proof": "", "counterexample": false[t], "stmt": statement_of(decl_text(s, t))}
+        s.log(kind="obligation", label=label, theorem=t, ok=False, by="refuted", counterexample=false[t])
+        return False
     src = s._source()
     m = re.search(rf"theorem\s+{re.escape(t)}\b[^\n]*(?:\n(?!theorem|lemma|def|end )[^\n]*)*", src)
     stmt = (m.group(0).split(":= by")[0].split(":= sorry")[0] if m else t).strip()
@@ -1560,6 +1588,10 @@ def accept_skeleton(s, code, ctx):
             f"proof of the helper or required theorem it is meant for (write that proof now; a statement over every "
             f"sequence follows from its one-step helper by induction), or leave it out"
             for n in unreached_open(graph, [f"{s.ns}.{t}" for t in s.theorems], info["helpers"])]
+    if not bad:   # open helpers that Lean shows false on concrete values
+        false = refute.check(s, [short_name(f) for f in an["open"]], f"skeleton:{rnd}")
+        bad += [f"`{n}` is false: Lean evaluated it on concrete values and the kernel checked the refutation; "
+                f"counterexample {cex}. Replace it with a true statement" for n, cex in false.items()]
     if bad:
         s._save(before, f"revert skeleton {rnd}")
         return reject("Lean's dependency check:\n" + "\n".join(f"- {b}" for b in bad))
@@ -1767,6 +1799,10 @@ def restructure_feedback(s, info):
     lines = ["The previous skeleton did not work out."]
     for name in info.get("refuted", []):
         ref = s.refuted.get(name, {})
+        if ref.get("counterexample"):
+            lines.append(f"- FALSE: `{ref.get('stmt') or name}`. Counterexample (the kernel checked the refutation): "
+                         f"{ref['counterexample'][:800]}")
+            continue
         lines.append(f"- FALSE: `{ref.get('stmt') or name}`. Lean accepted this proof of its negation:\n"
                      f"{textwrap_indent(ref.get('proof', '')[:800], '    ')}")
     for h in info.get("stuck", []):
@@ -1954,19 +1990,24 @@ def parser():
     ap.add_argument("--goal-tool", default="on", choices=["on", "off"],
                     help="on (default): a persistent Lean server per session for goal_at and the fast check of "
                          "try_snippet; off: every check compiles")
+    ap.add_argument("--refute", default="on", choices=["on", "off"],
+                    help="on (default): evaluate new helper statements on concrete values and refuse false ones")
+    ap.add_argument("--refute-samples", type=int, default=refute.SAMPLES, help="instances per statement")
     return ap
 
 
 def configure(s, a):
-    """Session switches from the options: the goal tool."""
+    """Session switches from the options: the goal tool and refutation."""
     s.goal_tool = getattr(a, "goal_tool", "on") != "off"
+    s.refute_samples = (getattr(a, "refute_samples", refute.SAMPLES) or refute.SAMPLES) \
+        if getattr(a, "refute", "on") != "off" else 0
 
 
 def features_summary(s, a):
-    """The summary.json records of the tactic portfolio and the goal tool."""
+    """The summary.json records of the tactic portfolio, the goal tool and refutation."""
     return {"portfolio": {"enabled": a.portfolio == "on", "heartbeats": a.portfolio_heartbeats,
                           "seconds": a.portfolio_seconds, **portfolio.summary(s)},
-            "goal_tool": leanserver.summary(s, a)}
+            "goal_tool": leanserver.summary(s, a), "refute": refute.summary(s, a)}
 
 
 def resume_setup(s, a, priors, record):
