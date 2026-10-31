@@ -183,8 +183,7 @@ class Session:
         if h != self.snap_hash:
             self.snap_hash = h
             self.snaps += 1
-            (self.out / "snapshots").mkdir(exist_ok=True)
-            (self.out / f"snapshots/v{self.snaps:03d}.lean").write_text(text)
+            (self.out / f"candidate_v{self.snaps:03d}.lean").write_text(text)   # not tracked (.gitignore)
 
     def run(self, prompt, n):
         pfile = self.out / f"prompt-{n:02d}.txt"
