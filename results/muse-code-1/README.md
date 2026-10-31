@@ -212,6 +212,7 @@ results.
 
 - **MCP tool timeout.** Muse Code ends an MCP tool call at its tool timeout, and then reports "MCP
   stdio connection is closed" for that server for the rest of the session.
+  - The default is about 300 s: a tool that sleeps 600 s failed 304 s into the run.
   - The timeout is set per server with `tool_timeout_sec` in `mcp_servers.<id>`. A 60 s tool fails
     at 20 s and succeeds at 90 s.
   - In the measured runs, at the default, `check_candidate` took up to 236 s and `verify_passport`
