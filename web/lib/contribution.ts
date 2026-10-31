@@ -28,8 +28,12 @@ export interface Refutation {
 /** results/library-1: Muse with ProofForge and the ProofForgeFin library against Muse alone. */
 export interface LibraryResult {
   source: string;
-  /** Muse with ProofForge and the library, in the same form as the other arms. */
+  /** Muse Spark alone (A0) under the same caps, run in the same window; null where library-1 has none. */
+  alone: Runs | null;
+  /** Muse with the ProofForge harness, the Muse Wonder planner and the library (A2, orchestrated loop). */
   withLibrary: Runs;
+  /** A2 with the library on the top-down loop (`--loop topdown`); null where library-1 has none. */
+  topdown: Runs | null;
 }
 
 export interface ComparisonRow {
@@ -46,10 +50,7 @@ export interface ComparisonRow {
   /** Implement mode: Muse starts from a stub generated from the locked specification. */
   implement: Runs;
   refutations: Refutation[];
-  /**
-   * results/library-1, running when this module was written. Null until its results are committed;
-   * the site then shows that the measurement is pending, never a figure.
-   */
+  /** results/library-1 on Compound, Knight and Balancer; null for the tasks it did not run. */
   library: LibraryResult | null;
 }
 
@@ -115,7 +116,16 @@ export const COMPARISON: ComparisonRow[] = [
     ],
     implement: { arm: "A1", runs: ["results/balancer-1/implement-1", "results/balancer-1/implement-2"], accepted: 1 },
     refutations: [{ target: "balancer-port", label: "deployed swap path", refuted: 3, kernelChecked: 3 }],
-    library: null,
+    library: {
+      source: "results/library-1",
+      alone: {
+        arm: "A0",
+        runs: ["results/library-1/rw-balancer-upscale/A0-1", "results/library-1/rw-balancer-upscale/A0-2", "results/library-1/rw-balancer-upscale/A0-3"],
+        accepted: 1,
+      },
+      withLibrary: { arm: "A2", runs: ["results/library-1/rw-balancer-upscale/A2-1", "results/library-1/rw-balancer-upscale/A2-2"], accepted: 2 },
+      topdown: null,
+    },
   },
   {
     key: "knight",
@@ -130,7 +140,12 @@ export const COMPARISON: ComparisonRow[] = [
     ],
     implement: { arm: "A2", runs: ["results/implement-flagships-1/rc-knight-router-A2-1"], accepted: 1 },
     refutations: [{ target: "knight-start", label: "reconstructed router", refuted: 6, kernelChecked: 6 }],
-    library: null,
+    library: {
+      source: "results/library-1",
+      alone: null,
+      withLibrary: { arm: "A2", runs: ["results/library-1/rc-knight-router/A2-1", "results/library-1/rc-knight-router/A2-2"], accepted: 2 },
+      topdown: null,
+    },
   },
   {
     key: "compound",
@@ -138,7 +153,8 @@ export const COMPARISON: ComparisonRow[] = [
     incident: "Compound Proposal 62",
     year: 2021,
     requirements: 8,
-    // baseline-flagships-1/README.md: both runs ended early on a per-call timeout treated as a wall stop
+    // baseline-flagships-1/README.md: both of its runs ended early on a per-call timeout treated as a
+    // wall stop; the two library-1 runs ran the full 14,400 s
     alone: { arm: "A0", runs: ["results/baseline-flagships-1/rw-compound-comp/A0-1", "results/baseline-flagships-1/rw-compound-comp/A0-2"], accepted: 0 },
     harness: [
       { arm: "A1", runs: ["results/compound-1/repair-A1-1", "results/compound-1/repair-A1-2"], accepted: 0 },
@@ -146,15 +162,80 @@ export const COMPARISON: ComparisonRow[] = [
     ],
     implement: { arm: "A1", runs: ["results/compound-1/implement-1", "results/compound-1/implement-2"], accepted: 0 },
     refutations: [{ target: "compound-p62-port", label: "Proposal 62 port", refuted: 5, kernelChecked: 5 }],
-    library: null,
+    library: {
+      source: "results/library-1",
+      alone: { arm: "A0", runs: ["results/library-1/rw-compound-comp/A0-1", "results/library-1/rw-compound-comp/A0-2"], accepted: 0 },
+      withLibrary: { arm: "A2", runs: ["results/library-1/rw-compound-comp/A2-1", "results/library-1/rw-compound-comp/A2-2"], accepted: 0 },
+      topdown: {
+        arm: "A2",
+        runs: ["results/library-1/rw-compound-comp/A2-topdown-1", "results/library-1/rw-compound-comp/A2-topdown-2", "results/library-1/rw-compound-comp/A2-topdown-3"],
+        accepted: 0,
+      },
+    },
   },
 ];
 
-/** The library comparison that is running; shown as pending until COMPARISON rows carry results. */
+/** The library comparison; its runs are in the `library` field of the COMPARISON rows for these tasks. */
 export const LIBRARY_RUN = {
   source: "results/library-1",
   tasks: ["rw-compound-comp", "rc-knight-router", "rw-balancer-upscale"],
   what: "Muse with ProofForge and the ProofForgeFin library against Muse alone",
+} as const;
+
+/** Every Muse-alone run of a COMPARISON row: baseline-flagships-1 and library-1. */
+export const aloneRuns = (row: ComparisonRow): Runs => merge("A0", [row.alone, row.library?.alone ?? null]);
+
+/** Every run with the Muse Wonder planner (A2) of a COMPARISON row, with and without the library, on either loop. */
+export const plannerRuns = (row: ComparisonRow): Runs | null => {
+  const parts = [...row.harness.filter((h) => h.arm === "A2"), row.library?.withLibrary ?? null, row.library?.topdown ?? null];
+  return parts.some((p) => p) ? merge("A2", parts) : null;
+};
+
+function merge(arm: Runs["arm"], parts: (Runs | null)[]): Runs {
+  const xs = parts.filter((p): p is Runs => p !== null);
+  return { arm, runs: xs.flatMap((p) => p.runs), accepted: xs.reduce((n, p) => n + p.accepted, 0) };
+}
+
+/**
+ * Muse alone against Muse with ProofForge and the Muse Wonder planner, on the tasks where both were
+ * accepted at least once, over every measured run at the same caps (aloneRuns and plannerRuns).
+ * List dollars are summary.json budget.usd_list summed over all runs, verified or not, and divided
+ * by the verified runs; tests/contribution.test.ts recomputes every figure, including the
+ * one-sided Fisher exact test on the verification rate.
+ */
+export const COST_PER_VERIFIED = [
+  // results/library-1/README.md, "Balancer across all measured runs"
+  {
+    key: "balancer",
+    incident: "Balancer",
+    alone: { verified: 2, runs: 5, usdList: 40.04, usdPerVerified: 20.02 },
+    planner: { verified: 3, runs: 3, usdList: 9.18, usdPerVerified: 3.06 },
+    fisherOneSidedP: 0.18,
+  },
+  {
+    key: "knight",
+    incident: "Knight Capital",
+    alone: { verified: 1, runs: 2, usdList: 16.22, usdPerVerified: 16.22 },
+    planner: { verified: 3, runs: 4, usdList: 26.54, usdPerVerified: 8.85 },
+    fisherOneSidedP: 0.6,
+  },
+] as const;
+
+/** results/spec-strength-1/summary.json total; docs/SPEC_STRENGTH.md describes the gate. */
+export const SPEC_STRENGTH = {
+  source: "results/spec-strength-1",
+  doc: "docs/SPEC_STRENGTH.md",
+  // summary.json: one task per locked specification
+  specifications: 25,
+  // README: "the 25 runs cover all 68 tasks"
+  tasksCovered: 68,
+  mutants: 1676,
+  compiled: 1114,
+  rejected: 999,
+  kernelChecked: 730,
+  // survivors whose outputs differ from the reference's while the property tests accept them
+  survivedDiffers: 10,
+  survivedSame: 105,
 } as const;
 
 /** results/counterexamples-1/summary.json and README.md. */
@@ -252,8 +333,9 @@ export const LIBRARY = {
   // solution, the three sequence bounds from lib/ProofForgeFinDemo/DeFi/Compound.lean
   compoundFixture: "tests/fixtures/library/compound_lib.lean",
   compoundFixtureSha256: "aa13206eeb42f4f19646a742efe4c2dc79c3b2c6dcc3f0418eeb02942feffb54",
-  // Issued by the deployed judge (GET /api/passports?solution_sha256=<fixture sha256>); not committed.
+  // Issued by the deployed judge (POST /api/verify) and committed with its candidate in results/library-live-1.
   compoundLivePassport: "b654d456e1a5eec1057ee259be2c2726fee3a4d3b89d1373dcc3bcbf1c4b7f59",
+  compoundLivePassportFile: "results/library-live-1/passport.json",
 } as const;
 
 /** ORIGIN.md and the first commit of the repository (535b942, 2026-10-26 19:43 -04:00). */

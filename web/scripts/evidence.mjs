@@ -158,7 +158,7 @@ const evidence = {
     },
   },
   muse_alone_vs_proofforge: {
-    note: `Every run is Muse Spark 1.3 (Contributor tier), capped at $${K.RUN_CAPS.usdList} at list prices and ${K.RUN_CAPS.seconds} s, and judged by ProofForge against the same locked specification. A0: Muse alone, compile-and-retry with Lean's errors and the axiom audit. A1: the ProofForge harness. A2: A1 with Muse Wonder 1.0 as lemma planner. On these tasks the harness did not complete more tasks than Muse alone; the refutations, the specification and the check are ProofForge's.`,
+    note: `Every run is Muse Spark 1.3 (Contributor tier), capped at $${K.RUN_CAPS.usdList} at list prices and ${K.RUN_CAPS.seconds} s, and judged by ProofForge against the same locked specification. A0: Muse alone, compile-and-retry with Lean's errors and the axiom audit. A1: the ProofForge harness. A2: A1 with Muse Wonder 1.0 as lemma planner. On Cetus, Euler and Hundred both Muse alone and the harness were accepted in every run. On Balancer and Knight, A2 was accepted more often and at a lower list price per verified run than Muse alone; at these sample sizes the difference in rate is not statistically significant (cost_per_verified_run). On Compound no run of any method has proved every requirement; the build team's library-based proof is VERIFIED on the deployed judge.`,
     rows: K.COMPARISON.map((r) => ({
       task: r.task,
       incident: r.incident,
@@ -167,10 +167,25 @@ const evidence = {
       with_proofforge: r.harness.map((h) => ({ arm: h.arm, accepted: h.accepted, runs: h.runs })),
       implement_from_specification: { arm: r.implement.arm, accepted: r.implement.accepted, runs: r.implement.runs },
       vulnerable_code_refuted: r.refutations.map((x) => ({ candidate: x.label, passport: `results/counterexamples-1/${x.target}/passport.json`, refuted_requirements: x.refuted, kernel_checked_refutations: x.kernelChecked })),
-      with_proofforge_and_library: r.library ?? "pending",
+      library_1: r.library
+        ? {
+            source: r.library.source,
+            muse_alone_A0: r.library.alone ? { accepted: r.library.alone.accepted, runs: r.library.alone.runs } : null,
+            A2_planner_and_library: { accepted: r.library.withLibrary.accepted, runs: r.library.withLibrary.runs },
+            A2_planner_and_library_topdown: r.library.topdown ? { accepted: r.library.topdown.accepted, runs: r.library.topdown.runs } : null,
+          }
+        : null,
+      all_runs: { muse_alone_A0: K.aloneRuns(r).accepted + " of " + K.aloneRuns(r).runs.length, ...(K.plannerRuns(r) ? { A2_with_wonder_planner: K.plannerRuns(r).accepted + " of " + K.plannerRuns(r).runs.length } : {}) },
     })),
-    library_comparison: { source: K.LIBRARY_RUN.source, tasks: K.LIBRARY_RUN.tasks, status: "running; no results committed" },
+    library_comparison: { source: K.LIBRARY_RUN.source, tasks: K.LIBRARY_RUN.tasks, readme: `${K.LIBRARY_RUN.source}/README.md` },
+    cost_per_verified_run: K.COST_PER_VERIFIED.map((c) => ({
+      incident: c.incident,
+      muse_alone_A0: { verified: c.alone.verified, runs: c.alone.runs, usd_list_price_all_runs: c.alone.usdList, usd_list_price_per_verified_run: c.alone.usdPerVerified },
+      A2_with_wonder_planner: { verified: c.planner.verified, runs: c.planner.runs, usd_list_price_all_runs: c.planner.usdList, usd_list_price_per_verified_run: c.planner.usdPerVerified },
+      fisher_exact_one_sided_p_on_rate: c.fisherOneSidedP,
+    })),
   },
+  specification_strength: { ...K.SPEC_STRENGTH, note: "Single-site mutants of each reference solution, built in the judge image; rejected means failing the property tests, and kernelChecked counts rejections that also carry a kernel-checked refutation of a locked requirement." },
   counterexamples: { ...K.COUNTEREXAMPLES, cetus_hotfix: K.CETUS_HOTFIX },
   open_weight_models: K.OPEN_WEIGHTS,
   wonder_planner: K.PLANNER,
@@ -240,12 +255,18 @@ function llms() {
     const runs = (x) => `${x.accepted} of ${x.runs.length}`;
     L.push(`- ${r.incident} (${r.task}): Muse alone accepted ${runs(r.muse_alone_A0)}; ${r.with_proofforge.map((h) => `${h.arm} ${runs(h)}`).join(", ")}; implement mode ${runs(r.implement_from_specification)}; vulnerable code refuted on ${r.vulnerable_code_refuted.map((x) => `${x.kernel_checked_refutations} of ${x.refuted_requirements} requirements (${x.candidate}) by kernel-checked counterexamples`).join(" and ")}.`);
   }
-  L.push(`- Pending: ${K.LIBRARY_RUN.source}, ${K.LIBRARY_RUN.what}; no results committed.`);
+  for (const r of K.COMPARISON.filter((x) => x.library)) {
+    const pl = K.plannerRuns(r);
+    L.push(`- ${r.incident} over all measured runs, including ${K.LIBRARY_RUN.source}: Muse alone ${K.aloneRuns(r).accepted} of ${K.aloneRuns(r).runs.length}; with the Muse Wonder planner ${pl.accepted} of ${pl.runs.length}.`);
+  }
+  for (const c of K.COST_PER_VERIFIED)
+    L.push(`- ${c.incident}, list price per verified run: $${c.planner.usdPerVerified.toFixed(2)} with ProofForge and the Muse Wonder planner (${c.planner.verified} of ${c.planner.runs} verified), $${c.alone.usdPerVerified.toFixed(2)} for Muse alone (${c.alone.verified} of ${c.alone.runs}). One-sided Fisher exact p = ${c.fisherOneSidedP} on the rate: not statistically significant at these sample sizes.`);
+  L.push(`- Specification strength (${K.SPEC_STRENGTH.source}, ${K.SPEC_STRENGTH.doc}): the ${K.SPEC_STRENGTH.specifications} locked specifications reject ${K.SPEC_STRENGTH.rejected} of ${K.SPEC_STRENGTH.compiled} compiling single-site mutants of their reference solutions, ${K.SPEC_STRENGTH.kernelChecked} with kernel-checked counterexamples; ${K.SPEC_STRENGTH.survivedDiffers} surviving mutants behave differently and are reported as specification gaps.`);
   L.push(`- Counterexamples (${K.COUNTEREXAMPLES.source}): ${K.COUNTEREXAMPLES.kernelChecked} of ${K.COUNTEREXAMPLES.refuted} refuted requirements over ${K.COUNTEREXAMPLES.candidates} candidates refuted by a Lean theorem accepted by six kernels and leanchecker. The Cetus same-day hotfix: ${K.CETUS_HOTFIX.statement} at n = ${K.CETUS_HOTFIX.input} (2^192).`);
   for (const o of K.OPEN_WEIGHTS)
     L.push(`- ${o.model} (${o.serving}; ${o.source}${o.complete ? "" : ", incomplete"}): A0 ${o.a0.completed} of ${o.a0.n}, A1 ${o.outage ? `${o.outage.a1Completed} of ${o.outage.a1N} excluding runs ended by an outage (${o.a1.completed} of ${o.a1.n} including them)` : `${o.a1.completed} of ${o.a1.n}`}; McNemar p = ${o.mcnemarP}, 95% interval of the difference [${o.ci95.join(", ")}].`);
   for (const p of K.PLANNER) L.push(`- Muse Wonder planner on ${p.incident}: A1 proved ${p.a1.join(" and ")} of ${p.requirements} requirements, A2 ${p.a2.join(" and ")}; A2 accepted in ${p.a2Accepted} of ${p.a2.length}.`);
-  L.push(`- ProofForgeFin (lib/): ${K.LIBRARY.theorems} theorems and ${K.LIBRARY.definitions} definitions in ${K.LIBRARY.files} files; ${K.LIBRARY.constantsChecked} constants of the library and demonstrations accepted by six kernels. A library-based Compound candidate written by the build team (${K.LIBRARY.compoundFixture}) is VERIFIED on the deployed judge, Passport ${K.LIBRARY.compoundLivePassport} (not committed).`);
+  L.push(`- ProofForgeFin (lib/): ${K.LIBRARY.theorems} theorems and ${K.LIBRARY.definitions} definitions in ${K.LIBRARY.files} files; ${K.LIBRARY.constantsChecked} constants of the library and demonstrations accepted by six kernels. A library-based Compound candidate written by the build team (${K.LIBRARY.compoundFixture}) is VERIFIED on the deployed judge, Passport ${K.LIBRARY.compoundLivePassport} (${K.LIBRARY.compoundLivePassportFile}).`);
   L.push(`- Built during the ${K.HACKATHON.event}: first commit ${K.HACKATHON.firstCommit}, submissions due ${K.HACKATHON.submissionsDue} (ORIGIN.md).`);
   L.push(`- Scope: ${K.SCOPE}`);
   L.push("");
