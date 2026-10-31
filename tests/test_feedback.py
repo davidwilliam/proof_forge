@@ -275,6 +275,7 @@ def test_portfolio_respects_the_time_limit():
             took = time.monotonic() - t0
         ev = [e for e in s.events if e["kind"] == "portfolio"][-1]
         assert closed == {} and ev["stopped"] and took < 30, (closed, ev, took)
+        assert ev["retried"]   # stopped once with the searches, then once more without them
         assert not repair.own_sorry_free(s, "easy_succ_le")
         # The run's deadline stops it too: past the deadline nothing is tried.
         s.budget = budget.Budget(None, 0.001)

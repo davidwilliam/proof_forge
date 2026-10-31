@@ -69,6 +69,17 @@ def restated(events, name):
     return None
 
 
+def reopen(src, task, name):
+    """`src` with the proof of theorem `name` replaced by `sorry` (a goal the final candidate of an
+    approximate context already proves, or proves wrongly, is asked again on its statement)."""
+    for n, kind, text in ledger.declarations(src, task.ns):
+        if n == name and kind in ("theorem", "lemma") and not ledger.has_sorry(text):
+            head, _ = ledger.split_proof(text)
+            if head:
+                return src.replace(text, head.rstrip() + " := by\n  sorry", 1)
+    return src
+
+
 def contexts(run_dir, task):
     """(goal records, {context key: (source, approximate)}) for one run directory."""
     d = pathlib.Path(run_dir)
@@ -87,6 +98,8 @@ def contexts(run_dir, task):
     for g in goals:
         f = d / f"candidate_v{g['first_version']:03d}.lean" if g["first_version"] else None
         src, approx = (f.read_text(), False) if f and f.exists() else (final, True)
+        if approx:
+            src = reopen(src, task, g["goal"])
         if not re.search(rf"^{repair.DECL_PREFIX}{repair.DECL_KINDS}\s+{re.escape(g['goal'])}(?=[\s:({{\[])", src, re.M):
             stmt = restated(ev, g["goal"])
             end = f"end {task.ns}"
@@ -122,14 +135,8 @@ def replay_run(run_dir, heartbeats, seconds, log):
             (s.ws / "candidate/Solution.lean").write_text(src)
             found = [(g, portfolio.goal_of(s, g["goal"], src)) for g in mine]
             batch = [x for _, x in found if x]
-            res, info = (portfolio.run_batch(s, batch, heartbeats=heartbeats, seconds=seconds, src=src)
+            res, info = (portfolio.run_portfolio(s, batch, heartbeats=heartbeats, seconds=seconds, src=src)
                          if batch else ({}, {"ms": 0, "attempts": 0, "stopped": False}))
-            if info.get("stopped") and len(batch) > 1:
-                res = {}
-                for x in batch:
-                    r1, i1 = portfolio.run_batch(s, [x], heartbeats=heartbeats, seconds=seconds, src=src)
-                    res.update(r1)
-                    info["ms"] += i1["ms"]
             for g, x in found:
                 r = res.get(g["goal"], {})
                 closed = [k for k, _, _ in portfolio.PORTFOLIO if r.get(k, {}).get("ok")]
@@ -137,6 +144,7 @@ def replay_run(run_dir, heartbeats, seconds, log):
                 rec.update({"approximate_context": approx, "statement": x["head"] if x else None,
                             "replayed": x is not None, "closed_by": closed[0] if closed else None, "closing": closed,
                             "batch": bi, "batch_ms": info["ms"], "batch_goals": len(batch), "stopped": info.get("stopped", False),
+                            "retried_without_search": info.get("retried", False),
                             "tactics": {k: {kk: v[kk] for kk in ("ok", "ms", "limit", "error")} | {"suggest": v["suggest"][:1]}
                                         for k, v in r.items()}})
                 out.append(rec)

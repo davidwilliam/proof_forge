@@ -19,7 +19,9 @@ imports them, exact?, try?), two entries unfold the definitions the goal's own s
 No model is called and no dollars are spent. Every Lean run goes through judge.in_container, so
 it stops at the run's deadline and its time counts against the wall cap like any other Lean run.
 The per-tactic limit is Lean's heartbeat counter (`maxHeartbeats`, deterministic); the batch as a
-whole is also stopped after a wall allowance of `seconds` per attempt.
+whole is also stopped after a wall allowance of `seconds` per attempt. `exact?` and `try?` do not
+stop at the heartbeat limit (measured: one ran 516 s), so a stopped batch is compiled once more
+without them.
 """
 import hashlib, json, re, time
 
@@ -45,9 +47,9 @@ PORTFOLIO = [
 SEARCH = {"exact?", "try?"}          # tactics banked as the proof they suggest
 PREFIX = "pfport_"                   # names of the copies in the batch file (never banked)
 HEARTBEATS = 50000                   # per-tactic limit, in Lean's `maxHeartbeats` units (default 200000)
-SECONDS = 20                         # per-attempt wall allowance of a batch
-BASE_SECONDS = 120                   # elaborating the candidate before the attempts
-MAX_BATCH_SECONDS = 900
+SECONDS = 5                          # per-attempt wall allowance of a batch
+BASE_SECONDS = 60                    # elaborating the candidate before the attempts
+MAX_BATCH_SECONDS = 600
 PROFILE_MS = 10                      # attempts faster than this report no time
 
 
@@ -233,6 +235,20 @@ def run_batch(s, goals, entries=None, heartbeats=HEARTBEATS, seconds=SECONDS, sr
     return results, {"ms": ms, "attempts": len(attempts), "stopped": stopped, "timeout_s": timeout}
 
 
+def run_portfolio(s, goals, heartbeats=HEARTBEATS, seconds=SECONDS, src=None):
+    """run_batch, and when the wall allowance stopped it, one more batch without the searching
+    tactics (the entries the heartbeat limit does not bound). Returns (results, info) with the
+    time of both batches and `retried` when the second one ran."""
+    src = s._source() if src is None else src
+    results, info = run_batch(s, goals, heartbeats=heartbeats, seconds=seconds, src=src)
+    if info["stopped"] and not s.budget.past_deadline():
+        cheap = [e for e in available(s, src) if e[0] not in SEARCH]
+        results, again = run_batch(s, goals, entries=cheap, heartbeats=heartbeats, seconds=seconds, src=src)
+        info = {"ms": info["ms"] + again["ms"], "attempts": info["attempts"] + again["attempts"],
+                "stopped": again["stopped"], "timeout_s": again["timeout_s"], "retried": True}
+    return results, info
+
+
 def bank_text(goal, key, res):
     """The text banked for a goal closed by `key`: its statement with the tactic (or, for a
     search, the first suggestion) as proof."""
@@ -279,14 +295,7 @@ def close_goals(s, a, names, label=""):
         return {}
     for k in keys.values():
         seen.add(k)
-    results, info = run_batch(s, goals, heartbeats=heartbeats, seconds=seconds, src=src)
-    if info["stopped"] and len(goals) > 1 and not s.budget.past_deadline():
-        # One runaway attempt stops the whole batch: each goal gets its own batch instead.
-        results = {}
-        for g in goals:
-            r1, i1 = run_batch(s, [g], heartbeats=heartbeats, seconds=seconds, src=src)
-            results.update(r1)
-            info["ms"] += i1["ms"]
+    results, info = run_portfolio(s, goals, heartbeats=heartbeats, seconds=seconds, src=src)
     closed = {}
     for g in goals:
         res = results.get(g["name"], {})
@@ -307,7 +316,7 @@ def close_goals(s, a, names, label=""):
                 closed[g["name"]] = key
                 break
     s.log(kind="portfolio", label=label, goals=[g["name"] for g in goals], closed=closed, ms=info["ms"],
-          attempts=info["attempts"], stopped=info["stopped"], heartbeats=heartbeats,
+          attempts=info["attempts"], stopped=info["stopped"], retried=info.get("retried", False), heartbeats=heartbeats,
           results={n: {k: [int(v["ok"]), v["ms"], int(v["limit"])] for k, v in r.items()} for n, r in results.items()})
     if closed:
         print(f"[portfolio] closed {closed}", flush=True)

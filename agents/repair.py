@@ -1928,7 +1928,7 @@ def parser():
     ap.add_argument("--portfolio-heartbeats", type=int, default=portfolio.HEARTBEATS,
                     help="per-tactic limit of the portfolio, in Lean maxHeartbeats units")
     ap.add_argument("--portfolio-seconds", type=float, default=portfolio.SECONDS,
-                    help="wall allowance per portfolio attempt; a batch is stopped after 120 s plus this per attempt")
+                    help="wall allowance per portfolio attempt; a batch is stopped after 60 s plus this per attempt")
     return ap
 
 
