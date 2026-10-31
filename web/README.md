@@ -20,6 +20,7 @@ pnpm realworld           # real-world bug results from results/realworld-1/summa
 pnpm evidence            # machine-readable summary of the home page; writes public/evidence.json and public/llms.txt
 node scripts/check-fixes.mjs  # candidates and recorded Passports for the "Check a fix" panel; writes public/check/
 node scripts/proof-graph.mjs  # dependency graph of the verified Balancer repair for the home hero (Docker, pinned Lean image); writes generated/proof-graph.json
+node scripts/proof-shapes.mjs  # shapes of the guarantees of the verified flagship repairs and holes of failed runs (Docker or PF_LEAN_HOME); writes generated/shapes/, see docs/SHAPES.md
 pnpm dev                 # http://localhost:3000
 ```
 
