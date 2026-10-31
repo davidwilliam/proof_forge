@@ -147,7 +147,8 @@ class Server:
         return p
 
     def lean(self, script, timeout=None):
-        return judge.in_container(self.ws, script, timeout=timeout or self.lean_timeout)
+        """`script` in the pinned image on the workspace; with pipefail, so Lean's exit code survives `| tail`."""
+        return judge.in_container(self.ws, "set -o pipefail; " + script, timeout=timeout or self.lean_timeout)
 
     # -- tools ---------------------------------------------------------------------------------
     def lean_build(self, file=None):
