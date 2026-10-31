@@ -18,6 +18,7 @@ pnpm test                # property and reducer tests; writes generated/property
 pnpm passport:repaired   # Passport for the repaired sidecar build; writes generated/repaired-passport.json
 pnpm realworld           # real-world bug results from results/realworld-1/summary.json; writes generated/realworld.json
 pnpm evidence            # machine-readable summary of the home page; writes public/evidence.json and public/llms.txt
+node scripts/check-fixes.mjs  # candidates and recorded Passports for the "Check a fix" panel; writes public/check/
 pnpm dev                 # http://localhost:3000
 ```
 
@@ -39,10 +40,11 @@ pnpm start
 
 | Path | Content |
 |---|---|
-| `/` | Overview: the Cetus, Euler Finance and Hundred Finance exploits with their Passports and real-code results (`lib/flagships.ts`, checked against `results/` and `realworld/tasks/` by `tests/flagships.test.ts`), the benchmark, headline E1 and E2 figures (`lib/evidence.ts`, checked by `tests/evidence.test.ts`) and released real-world bugs (`generated/realworld.json`) |
+| `/` | Overview: the Cetus hotfix refuted and fixed, the trust model, Muse alone against Muse with ProofForge, open-weight, planner and library figures (`lib/contribution.ts`, checked by `tests/contribution.test.ts`), the "Check a fix" panel (`lib/checkfix.ts`, `components/CheckFix.tsx`, `public/check/`, checked by `tests/checkfix.test.ts`), the Cetus, Balancer, Euler, Knight Capital and Hundred Finance cases with their Passports and real-code results (`lib/flagships.ts`, checked against `results/` and `realworld/tasks/` by `tests/flagships.test.ts`), the benchmark, headline E1 and E2 figures (`lib/evidence.ts`, checked by `tests/evidence.test.ts`) and released real-world bugs (`generated/realworld.json`) |
+| `/opengraph-image`, `/twitter-image` | The card shown for shared links, from the same data modules |
 | `/llms.txt`, `/evidence.json` | The same claims, figures, Passport hashes, source paths and reproduction commands for agents (`scripts/evidence.mjs`; `tests/evidence-files.test.ts` fails when they are stale) |
 | `/forge` | Forge session. Query parameters: `job` (attach to an existing job), `recording`, `task`; `/` with any of them redirects here |
 | `/passport/<sha256>` | Passport evidence view |
 | `/challenge` | Binary check of a hidden variant |
 | `/app` | Split a payout on the buggy and repaired builds |
-| `/results` | E1 and E2 results |
+| `/results` | E1 and E2 results; the E2 case rows load from the API when opened |

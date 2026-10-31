@@ -1,24 +1,83 @@
 # ProofForge
 
-AI-written financial code that ships with a proof.
+ProofForge turns Meta's Muse models into provers of financial code.
 
-Meta's Muse Spark writes and repairs the logic behind real exploits and proves every locked requirement in Lean 4. ProofForge rechecks each proof in a fresh sandbox (Lean's Comparator with six kernels, `leanchecker`, an axiom audit, and property tests on the executable rebuilt from the same source) and issues a Proof Passport. No proof, no merge.
+Each task states what financial code must guarantee as locked Lean 4 requirements. ProofForge refutes code that breaks a requirement with a counterexample checked in the Lean kernel, and accepts a fix, written by Muse Spark or by people, only when Lean's Comparator checks its proof with six independent kernels in a fresh sandbox, `leanchecker` replays it, an axiom audit passes, and the executable rebuilt from the same source passes property tests. Every verdict is a Proof Passport, bound by hash to the specification, the source, the executable and the judge image, that anyone can re-run. No proof, no merge.
 
-Live site: https://proofforge.dev. Machine-readable summaries generated from the committed results: [/llms.txt](https://proofforge.dev/llms.txt) and [/evidence.json](https://proofforge.dev/evidence.json).
+ProofForge proves the logic of code against a written specification. It does not protect keys, servers, oracles, bridges or other infrastructure, and it does not prove deployed Solidity or Move bytecode.
 
-## Three real exploits
+Live site: https://proofforge.dev (with a "Check a fix" panel that sends a real-world candidate to the deployed judge). Machine-readable summaries generated from the committed results: [/llms.txt](https://proofforge.dev/llms.txt) and [/evidence.json](https://proofforge.dev/evidence.json).
 
-Each task is a Lean 4 port of the code behind a real exploit and a locked specification of the property the attack broke. Muse Spark 1.3 on the Contributor tier (arm A1: the ProofForge harness, no planner) repaired each port on its first attempt. In implement mode it also wrote each implementation from the locked specification alone, without seeing the vulnerable code, the issue report or a reference solution. Every VERIFIED Passport below records acceptance by Comparator's six kernels and `leanchecker`, a clean axiom audit and 2,001 property cases on the rebuilt executable. Costs are at standard list prices, then as charged on the Contributor tier.
+## Quickstart without Docker
 
-| Incident | Loss, as sourced | Property proved in Lean 4 | Vulnerable code | Muse repair | Implemented from the specification alone | Real code, unmodified |
+Read the evidence, check committed Passports' hashes, and judge a candidate on the deployed API, with Python 3.12, Node 20 and `jq`:
+
+```sh
+git clone https://github.com/davidwilliam/proof_forge && cd proof_forge
+
+# Every committed Passport's passport_sha256 matches its content (no Lean, no Docker)
+python3 tests/test_committed_passports.py
+
+# Every figure on the site, recomputed from results/ (no Lean, no Docker)
+cd web && pnpm install && pnpm vitest run && cd ..
+
+# The claims, figures, Passport hashes and reproduction commands, as published
+jq '.muse_alone_vs_proofforge.rows[] | {incident, muse_alone_A0, with_proofforge}' web/public/evidence.json
+
+# Judge the Cetus same-day hotfix on the deployed judge: REQ-SHLW-EXACT is REFUTED at n = 2^192
+jq -n --rawfile s realworld/tasks/rw-cetus-shlw/attacks/pr6_mask_only.lean '{task: "rw-cetus-shlw", source: $s}' \
+  | curl -s -X POST -H 'Content-Type: application/json' -d @- https://proofforge.fly.dev/api/verify \
+  | jq '{status, passport_sha256, requirements: [.requirements[] | {id, status, witness: .witness.message}]}'
+```
+
+`GET https://proofforge.fly.dev/api/tasks?split=realworld` lists the real-world tasks with their locked requirements. Re-running a Passport's checks locally (`bin/proofforge verify`) needs Docker and the pinned Lean image; see [Reproduce the Passports](#reproduce-the-passports).
+
+## Five real failures
+
+Each task is a Lean 4 port of the code behind a real failure and a locked specification of the property it broke; Knight Capital's code is not public, so its router is reconstructed from the SEC order. Every VERIFIED Passport below records acceptance by Comparator's six kernels and `leanchecker`, a clean axiom audit and 2,001 property cases on the rebuilt executable. Repairs and implementations are by Muse Spark 1.3 on the Contributor tier: arm A1 is the ProofForge harness, A2 adds Muse Wonder 1.0 as lemma planner. Implement mode starts from the locked specification alone, without the vulnerable code, the issue report or a reference solution. Costs are at standard list prices, then as charged on the Contributor tier.
+
+| Incident | Loss, as sourced | Property proved in Lean 4 | Vulnerable code | Muse repair | Implemented from the specification alone | Real code |
 |---|---|---|---|---|---|---|
-| Cetus (Sui), 2025-05-22 | about $223 million taken (The Block, from Cetus's incident report) | REQ-DELTA-A-COVERS: the overflow check never loses a bit, so a deposit is always charged at least the exact amount it owes | REFUTED: the attack deposit is charged 1 unit of token A; the exact amount owed, rounded up, is 31572840708638430117170542. Passport [`b79e965381258ef8`](results/cetus-1/passports/original-port.json) | VERIFIED, 5 of 5 requirements, first attempt, 428 s, $0.1871 list, $0.0111 charged. Passport [`9131dfdfd3e27da8`](results/cetus-1/repair-A1-1/passport.json) | VERIFIED, 5 of 5, 122 s, $0.12 list, $0.008 charged. Passport [`b2cf6c2de4f91b8e`](results/implement-flagships-1/rw-cetus-shlw/passport.json) | Move at 3 pinned commits, 2,007 inputs, Sui CLI 1.83.0: 658 break a requirement on the original, 0 on the final fix |
-| Euler Finance v1, 2023-03-13 | about $197 million in net profit to the attacker (Cyfrin); CoinDesk later reported that all recoverable funds were returned | REQ-NO-BAD-DEBT: no sequence of operations leaves any account with more debt than its risk-adjusted collateral | REFUTED: the attack sequence leaves 134,000,000 of debt with no collateral behind it. Passport [`cec7d847f1d0b6a6`](results/euler-1/rw-euler-donate/passports/port.json) | VERIFIED, 6 of 6, first attempt, 1,682 s, $0.8324 list, $0.0489 charged. Passport [`6de7bb94c38cf23a`](results/euler-1/rw-euler-donate/repair-A1-1/passport.json) | VERIFIED, 6 of 6, 1,324 s, $1.22 list, $0.066 charged. Passport [`27d4ec2838e9bbfc`](results/implement-flagships-1/rw-euler-donate/passport.json) | Solidity at b1ee326 in Foundry, 1,004 sequences: 57 break a requirement; 0 with `checkLiquidity(account)` added (a local copy, not an upstream release) |
-| Hundred Finance (Optimism), 2023-04-15 | about $7 million in reported losses (rekt.news gives $7.4M; not checked here) | REQ-SHARE-VALUE: no sequence of operations, donations included, lowers the value of a share while shares are outstanding | REFUTED: after the attack's own amounts, the last share unit is backed by 2 satoshi. [Kernel-checked witness](realworld/tasks/rw-hundred-vault/witnesses/hundred_attack.lean) | VERIFIED, 10 of 10, first attempt, 1,200 s, $0.6513 list, $0.037 charged. Passport [`08fe86f17f27c49d`](results/vault-1/repair-A1-1/passport.json) | VERIFIED, 10 of 10, 663 s, $0.60 list, $0.033 charged. Passport [`eee7e2cdbedf658d`](results/implement-flagships-1/rw-hundred-vault/passport.json) | deployed hWBTC bytecode on an Optimism fork, 501 sequences: identical to the Lean port on all 501; 292 break a requirement; the Muse repair breaks none |
+| Cetus (Sui), 2025-05-22 | about $223 million taken (The Block, from Cetus's incident report) | REQ-DELTA-A-COVERS: the overflow check never loses a bit, so a deposit is always charged at least the exact amount it owes | REFUTED: the attack deposit is charged 1 unit of token A; the exact amount owed, rounded up, is 31572840708638430117170542. Passport [`b79e965381258ef8`](results/cetus-1/passports/original-port.json) | VERIFIED, 5 of 5 requirements, A1, first attempt, 428 s, $0.1871 list, $0.0111 charged. Passport [`9131dfdfd3e27da8`](results/cetus-1/repair-A1-1/passport.json) | VERIFIED, 5 of 5, 122 s, $0.12 list, $0.008 charged. Passport [`b2cf6c2de4f91b8e`](results/implement-flagships-1/rw-cetus-shlw/passport.json) | Move at 3 pinned commits, 2,007 inputs, Sui CLI 1.83.0: 658 break a requirement on the original, 0 on the final fix |
+| Balancer V2, 2025-11-03 | more than $120 million across Balancer and its forks (OpenZeppelin) | REQ-BATCH-KEEPS-VALUE: for any pool math meeting the stated contract, no batch of swaps of any length lowers the pool's value | REFUTED: four rounds of the attack's three swaps lower the pool's value from 4,749,898,000 to 297,229,191. Passport [`d65bd405a13bfd4f`](results/balancer-1/passports/port.json) | VERIFIED, 8 of 8, A2, first attempt, 2,344 s, $2.51 list, $0.41 charged. Passport [`48930efdd4d67460`](results/balancer-1/repair-A2-1/passport.json) | VERIFIED, 8 of 8, second attempt, 4,444 s, $3.81 list, $0.21 charged. Passport [`65d5a81fef2352eb`](results/balancer-1/implement-2/passport.json) | deployed Vault and osETH/WETH pool on an Ethereum fork, 501 batches: identical to the Lean port on all 501; the pool's value falls in 56, never with the Muse repair |
+| Euler Finance v1, 2023-03-13 | about $197 million in net profit to the attacker (Cyfrin); CoinDesk later reported that all recoverable funds were returned | REQ-NO-BAD-DEBT: no sequence of operations leaves any account with more debt than its risk-adjusted collateral | REFUTED: the attack sequence leaves 134,000,000 of debt with no collateral behind it. Passport [`cec7d847f1d0b6a6`](results/euler-1/rw-euler-donate/passports/port.json) | VERIFIED, 6 of 6, A1, first attempt, 1,682 s, $0.8324 list, $0.0489 charged. Passport [`6de7bb94c38cf23a`](results/euler-1/rw-euler-donate/repair-A1-1/passport.json) | VERIFIED, 6 of 6, 1,324 s, $1.22 list, $0.066 charged. Passport [`27d4ec2838e9bbfc`](results/implement-flagships-1/rw-euler-donate/passport.json) | Solidity at b1ee326 in Foundry, 1,004 sequences: 57 break a requirement; 0 with `checkLiquidity(account)` added (a local copy, not an upstream release) |
+| Knight Capital, 2012-08-01 (reconstructed from SEC order 34-70694; not Knight's code) | $460 million realized trading loss (SEC order); not an exploit | REQ-NEVER-OVERROUTE: on every server and code version, after any sequence of events, the shares sent for an order never exceed its quantity | REFUTED: for every n, n rounds of a 100-share routing opportunity and a fill send 100 × n shares for one 100-share order. Passport [`ca3e7312fe7af22f`](results/knight-1/start/passport.json) | VERIFIED, 6 of 6, A2, second attempt, 4,079 s, $4.96 list, $0.98 charged; both A1 attempts and the first A2 attempt UNRESOLVED. Passport [`98cfed64ae1ec596`](results/knight-1/A2-2/passport.json) | VERIFIED, 6 of 6, A2, 5,257 s, $6.04 list, $1.46 charged. Passport [`80721c043007d840`](results/implement-flagships-1/rc-knight-router-A2-1/passport.json) | none: the code is not public |
+| Hundred Finance (Optimism), 2023-04-15 | about $7 million in reported losses (rekt.news gives $7.4M; not checked here) | REQ-SHARE-VALUE: no sequence of operations, donations included, lowers the value of a share while shares are outstanding | REFUTED: after the attack's own amounts, the last share unit is backed by 2 satoshi. [Kernel-checked witness](realworld/tasks/rw-hundred-vault/witnesses/hundred_attack.lean) | VERIFIED, 10 of 10, A1, first attempt, 1,200 s, $0.6513 list, $0.037 charged. Passport [`08fe86f17f27c49d`](results/vault-1/repair-A1-1/passport.json) | VERIFIED, 10 of 10, 663 s, $0.60 list, $0.033 charged. Passport [`eee7e2cdbedf658d`](results/implement-flagships-1/rw-hundred-vault/passport.json) | deployed hWBTC bytecode on an Optimism fork, 501 sequences: identical to the Lean port on all 501; 292 break a requirement; the Muse repair breaks none |
+| Compound Proposal 62, 2021-09-29 | at worst 280,000 COMP, about $80 million at the time (The Block, quoting Robert Leshner); not included in the total below | REQ-REWARDS-BOUNDED, REQ-ACCOUNT-BOUNDED, REQ-NO-BACKDATED-REWARDS: COMP credited never exceeds COMP emitted, over every pre-upgrade state and every sequence of operations | REFUTED on 5 requirements; the first witness is the cSUSHI claim made on mainnet 139 blocks after the upgrade. Passport [`3ac121be0f5748fe`](results/compound-1/passports/port.json) | UNRESOLVED in all four repair runs (A1 0 of 8 proved twice, A2 5 of 8 twice). The build team's port of the Proposal 64 fix is VERIFIED, 8 of 8. Passport [`7ccce9a2ebe8bffb`](results/compound-1/passports/reference.json) | UNRESOLVED in both runs (3 and 4 of 8) | Comptrollers compiled from the pinned commits, 503 sequences: each identical to its Lean counterpart; Proposal 62 breaks a requirement in 279, Proposal 65 in 0 |
 
-Each vulnerable port is refuted by a counterexample checked in the Lean kernel (the `witnesses/` directory of each task). The counterexample stage now produces such refutations automatically from the failing property case: on the Cetus, Euler, Balancer, Knight and Compound ports, 20 of 20 refuted requirements are refuted by a generated theorem accepted by Comparator's six kernels and `leanchecker` (`results/counterexamples-1`, 82 of 85 over 33 candidates including benchmark start candidates). The Hundred port has no Passport in `results/vault-1`; the judge rejects it and its executable is REFUTED on generated cases (`harness/validate_task.py`), and its Passport in `results/counterexamples-1/rw-hundred-vault-start` refutes REQ-SHARE-VALUE on the attack's first round (deposit, redeem to 2 share units, donate, withdraw) by a generated theorem checked by the six kernels. Task details: [Cetus](realworld/tasks/rw-cetus-shlw/README.md), [Euler](realworld/tasks/rw-euler-donate/README.md), [Hundred](realworld/tasks/rw-hundred-vault/README.md); runs: `results/cetus-1`, `results/euler-1`, `results/vault-1`, `results/implement-flagships-1`.
+The five failures with a quoted dollar loss total more than $1 billion. The figures measure different things: the amounts taken from Cetus and from Balancer and its forks, Hundred's reported losses, the net profit of Euler's attacker (later returned), and Knight Capital's realized trading loss, which was not an exploit.
 
-**The Cetus hotfix.** Cetus merged two fixes on the day of the attack; the first, pull request 6 (14:37 UTC), refuses the attack deposit but is REFUTED: `checkedShlw(2^192) = (0, false)`, so a deposit with liquidity × price difference = 2^192 is charged 0 (Passport [`d489c01595c30739`](results/cetus-1/passports/pr6-port.json)). Pull request 7 (16:09 UTC) changed the test from `n > mask` to `n >= mask` and is VERIFIED for every 256-bit input and every `u128` price and liquidity (Passport [`37d236fb45a80f41`](results/cetus-1/passports/pr7-port.json)). Muse's repair, written from the original code, is proved equal to pull request 7 on every 256-bit input (`muse_eq_pr7` in `results/cetus-1/repair-A1-1/Equivalence.lean`, axioms `propext` and `Quot.sound`), and the real pull request 7 Move code returned the same output as the proved repair on all 2,007 inputs.
+Each vulnerable port is refuted by a counterexample checked in the Lean kernel (the `witnesses/` directory of each task). The counterexample stage now produces such refutations automatically from the failing property case: on the Cetus, Euler, Balancer, Knight and Compound ports, 20 of 20 refuted requirements are refuted by a generated theorem accepted by Comparator's six kernels and `leanchecker` (`results/counterexamples-1`, 82 of 85 over 33 candidates including benchmark start candidates). The Hundred port has no Passport in `results/vault-1`; the judge rejects it and its executable is REFUTED on generated cases (`harness/validate_task.py`), and its Passport in `results/counterexamples-1/rw-hundred-vault-start` refutes REQ-SHARE-VALUE on the attack's first round (deposit, redeem to 2 share units, donate, withdraw) by a generated theorem checked by the six kernels. Task details: [Cetus](realworld/tasks/rw-cetus-shlw/README.md), [Balancer](realworld/tasks/rw-balancer-upscale/README.md), [Euler](realworld/tasks/rw-euler-donate/README.md), [Knight](realworld/tasks/rc-knight-router/README.md), [Hundred](realworld/tasks/rw-hundred-vault/README.md), [Compound](realworld/tasks/rw-compound-comp/README.md); runs: `results/cetus-1`, `results/balancer-1`, `results/euler-1`, `results/knight-1`, `results/vault-1`, `results/compound-1`, `results/implement-flagships-1`.
+
+**The Cetus hotfix.** Cetus merged two fixes on the day of the attack; the first, pull request 6 (14:37 UTC), refuses the attack deposit but is REFUTED: `checkedShlw(2^192) = (0, false)`, so a deposit with liquidity × price difference = 2^192 is charged 0 (Passport [`d489c01595c30739`](results/cetus-1/passports/pr6-port.json); the generated refutation `¬ (ShlwExact checkedShlw)`, accepted by all six kernels, is in [`results/counterexamples-1/cetus-pr6-port`](results/counterexamples-1/cetus-pr6-port/passport.json)). Pull request 7 (16:09 UTC) changed the test from `n > mask` to `n >= mask` and is VERIFIED for every 256-bit input and every `u128` price and liquidity (Passport [`37d236fb45a80f41`](results/cetus-1/passports/pr7-port.json)). Muse's repair, written from the original code, is proved equal to pull request 7 on every 256-bit input (`muse_eq_pr7` in `results/cetus-1/repair-A1-1/Equivalence.lean`, axioms `propext` and `Quot.sound`), and the real pull request 7 Move code returned the same output as the proved repair on all 2,007 inputs. Whether a deposit with liquidity × price difference = 2^192 was reachable through the pool's entry points under pull request 6 is not claimed.
+
+## Muse alone and Muse with ProofForge
+
+`results/baseline-flagships-1` runs Muse Spark 1.3 alone (arm A0: it replies with whole files and sees only Lean's errors and the axiom audit) on the six real-world tasks, two attempts each at $10 list and 14,400 s, the caps of the repair runs. Both columns are judged by ProofForge against the same locked specification.
+
+| Task | Muse alone (A0), accepted | With the ProofForge harness (A1), accepted | With the harness and Wonder planner (A2), accepted | Implemented from the specification alone |
+|---|---|---|---|---|
+| Cetus | 2 of 2 | 1 of 1 | not run | 1 of 1 |
+| Euler | 2 of 2 | 1 of 1 | not run | 1 of 1 |
+| Hundred | 2 of 2 | 1 of 1 | not run | 1 of 1 |
+| Balancer | 1 of 2 | 1 of 2 | 1 of 1 | 1 of 2 |
+| Knight | 1 of 2 | 0 of 2 | 1 of 2 | 1 of 1 (A2) |
+| Compound | 0 of 2 | 0 of 2 | 0 of 2 | 0 of 2 |
+
+On these tasks the harness did not complete more tasks than Muse alone. Both Compound A0 runs ended early when one model call reached its 600 s per-attempt timeout, which `agents/repair.py` treated as the run's wall stop; they did not use their full budget. What ProofForge provides here is the locked specification every run proves, the kernel-checked refutation of each vulnerable version, and the check behind every acceptance. Where the agent harness and the planner measurably change outcomes:
+
+- Muse Spark Open, Meta's open-weight model (`results/e1-test-open-1`, 30 frozen test tasks, $3 and 3,600 s per run): A0 completed 21 of 30, A1 24 of 30; A1's final executables passed the property tests on all 30, A0's built on 21. Difference +0.10, 95% interval [-0.17, +0.38], McNemar exact p = 0.51: not significant.
+- Muse Glimmer 30B, self-hosted on one Modal H100 (`results/e1-test-glimmer-1`, incomplete: 31 of 60 runs scored before the host paused the workspace): A0 0 of 15, A1 3 of 13 excluding three runs ended by the outage (3 of 16 including them); McNemar exact p = 0.25.
+- Muse Wonder 1.0 as planner: on Compound the A1 runs proved 0 of 8 requirements twice and the A2 runs 5 of 8 twice, none accepted (`results/compound-1`); on Knight A1 proved 1 of 6 twice, A2 5 of 6 and then 6 of 6, VERIFIED (`results/knight-1`).
+- Pending: `results/library-1` (Muse with ProofForge and the ProofForgeFin library against Muse alone on Compound, Knight and Balancer) is running; no results are committed.
+
+## ProofForgeFin
+
+`lib/` is a Lean 4 library of proved facts about money code: rounding and fixed point at any scale, share accounting, runs of operations with invariants, conservation over accounts, trading systems, state machines, EVM machine arithmetic, money in minor units, DeFi primitives and proof automation; 1,504 theorems and 430 definitions in 55 files, with no dependency beyond Lean's core library. All 9,549 constants of the library and its demonstrations are accepted by the judge's six kernels, and `leanchecker` replays all 74 modules (`harness/fin_kernels.py`). Candidates may import it; the judge vendors the exact version and each Passport records it. `tests/fixtures/library/compound_lib.lean`, a Compound candidate whose three sequence bounds come from the library (written by the build team from the reference solution), is VERIFIED, 8 of 8, including on the deployed judge (Passport `b654d456e1a5eec1057ee259be2c2726fee3a4d3b89d1373dcc3bcbf1c4b7f59`, not committed). Details: [lib/README.md](lib/README.md).
+
+## Built during the hackathon
+
+Everything in this repository was created on or after 2026-10-26, the kickoff of the Meta Global AI Developer Hackathon (first commit `535b942`, 2026-10-26 19:43 -04:00; submissions due 2026-11-04). That includes the judge and its Comparator configuration, the Passport and `bin/proofforge`, the counterexample stage, the 59 benchmark tasks, the real-world tasks with their adapters to the real Move and Solidity code, the Muse agents and the evaluation runners, ProofForgeFin, the API, the PR gate and this site. The dependencies that were not built during the event (the Lean 4 toolchain with Comparator and `leanchecker`, bubblewrap, the Meta Model API, FastAPI, Next.js and others) are listed in [ORIGIN.md](ORIGIN.md).
 
 ## Reproduce the Passports
 
@@ -34,17 +93,34 @@ bin/proofforge verify results/cetus-1/repair-A1-1/passport.json --candidate resu
 bin/proofforge verify results/cetus-1/passports/pr6-port.json --candidate realworld/tasks/rw-cetus-shlw/attacks/pr6_mask_only.lean
 bin/proofforge verify results/cetus-1/passports/pr7-port.json --candidate realworld/tasks/rw-cetus-shlw/reference/SolutionA.lean
 
+# Balancer: deployed swap path, Muse repair (A2)
+bin/proofforge verify results/balancer-1/passports/port.json --candidate realworld/tasks/rw-balancer-upscale/attacks/balancer_port.lean
+bin/proofforge verify results/balancer-1/repair-A2-1/passport.json --candidate results/balancer-1/repair-A2-1/final.lean
+
 # Euler: vulnerable port, Muse repair
 bin/proofforge verify results/euler-1/rw-euler-donate/passports/port.json --candidate realworld/tasks/rw-euler-donate/candidate/Solution.lean
 bin/proofforge verify results/euler-1/rw-euler-donate/repair-A1-1/passport.json --candidate results/euler-1/rw-euler-donate/repair-A1-1/final.lean
 
+# Knight Capital (reconstructed): start candidate, Muse repair (A2)
+bin/proofforge verify results/knight-1/start/passport.json --candidate realworld/tasks/rc-knight-router/candidate/Solution.lean
+bin/proofforge verify results/knight-1/A2-2/passport.json --candidate results/knight-1/A2-2/final.lean
+
 # Hundred: Muse repair
 bin/proofforge verify results/vault-1/repair-A1-1/passport.json --candidate results/vault-1/repair-A1-1/final.lean
+
+# Compound: Proposal 62 port, the proved Proposal 64 fix
+bin/proofforge verify results/compound-1/passports/port.json --candidate realworld/tasks/rw-compound-comp/attacks/p62_port.lean
+bin/proofforge verify results/compound-1/passports/reference.json --candidate realworld/tasks/rw-compound-comp/reference/SolutionA.lean
+
+# The Cetus same-day hotfix with its kernel-checked counterexample
+bin/proofforge verify results/counterexamples-1/cetus-pr6-port/passport.json --candidate realworld/tasks/rw-cetus-shlw/attacks/pr6_mask_only.lean
 
 # Implemented from the specification alone
 bin/proofforge verify results/implement-flagships-1/rw-cetus-shlw/passport.json --candidate results/implement-flagships-1/rw-cetus-shlw/final.lean
 bin/proofforge verify results/implement-flagships-1/rw-euler-donate/passport.json --candidate results/implement-flagships-1/rw-euler-donate/final.lean
 bin/proofforge verify results/implement-flagships-1/rw-hundred-vault/passport.json --candidate results/implement-flagships-1/rw-hundred-vault/final.lean
+bin/proofforge verify results/balancer-1/implement-2/passport.json --candidate results/balancer-1/implement-2/final.lean
+bin/proofforge verify results/implement-flagships-1/rc-knight-router-A2-1/passport.json --candidate results/implement-flagships-1/rc-knight-router-A2-1/final.lean
 ```
 
 `verify` re-runs the full pipeline on the candidate and compares every recorded hash and status with the Passport; exit code 0 means reproduced. The executable hash is compared only on the CPU architecture that issued the Passport, after the executable is rebuilt and re-tested.
@@ -53,7 +129,7 @@ bin/proofforge verify results/implement-flagships-1/rw-hundred-vault/passport.js
 
 - Proved: the Lean 4 implementation accepted by the judge meets every locked requirement for every input in the stated domain. For Cetus that is every 256-bit `n` and every `u128` pair of sqrt prices and `u128` liquidity; for Euler, every state reachable from the empty market by any sequence of operations; for Hundred, any history and any further sequence of operations by any actors.
 - The requirements are formal Lean statements, not prose. A requirement covers exactly what its Lean statement says.
-- Not proved: the Solidity and Move code. Each port is a reviewed hand translation, tested against the real code on the stated inputs (2,007 inputs for Cetus, 1,004 sequences for Euler, 501 for Hundred); the translation is not machine-checked.
+- Not proved: the Solidity and Move code. Each port is a reviewed hand translation, tested against the real code on the stated inputs (2,007 inputs for Cetus, 501 batches for Balancer, 1,004 sequences for Euler, 501 for Hundred, 503 for Compound); the translation is not machine-checked. Knight Capital's code is not public; its router is reconstructed from the SEC order and nothing in that task is Knight's code.
 - Each port models only the logic named in its task README. Cetus: `get_delta_b`, the tick math and the rest of the pool (positions, swaps, fees) are not specified, and whether a deposit with liquidity × price difference = 2^192 was reachable through the pool's entry points under pull request 6 is not claimed. Euler: one asset priced at 1, an eToken exchange rate fixed at 1 and no interest; flash loans, sub-accounts and multiple collateral assets are not modeled. Hundred: only share accounting is modeled; the comptroller, borrowing, liquidation, interest and reserves are not, and the specification does not prevent the first-depositor inflation attack.
 - Implement mode turns a precise formal specification into executable code. It does not measure writing code from an informal description. The real-code comparisons were run against the repairs, not against the implementations.
 - Loss figures are quoted from the sources each task README cites.
@@ -145,7 +221,7 @@ A component's requirements are written once as Lean 4 predicates over its implem
 All model calls go through the Meta Model API (`agents/`).
 
 - Muse Spark 1.3 (`muse-spark-1.3-contributor`) is the repairer, implementer and prover. It fixes behavior against the binary tests first, then proves each requirement through tools: compile a snippet, bank proved lemmas, check per-theorem status, run tests on the compiled binary.
-- Muse Wonder 1.0 (`muse-wonder-1.0`) is the lemma planner in arm A2: when an obligation resists direct proof, it proposes helper lemma statements that Spark then proves. On the E1 test tasks it did not change completion and added cost; the flagship exploit repairs and implementations used no planner.
+- Muse Wonder 1.0 (`muse-wonder-1.0`) is the lemma planner in arm A2: when an obligation resists direct proof, it proposes helper lemma statements that Spark then proves. On the E1 test tasks it did not change completion and added cost. Of the real-world repairs, Balancer and Knight were accepted with the planner (A2), and the Knight implementation used it; Cetus, Euler and Hundred used none.
 - Costs are tracked at two prices (`agents/budget.py`): Muse Spark 1.3 at standard list prices ($1.25 input, $0.15 cached input, $4.25 output per million tokens), which the per-run dollar caps use, and as charged on the Contributor tier ($0.10, $0.002 and $0.20).
 
 ### The payout task
@@ -208,11 +284,13 @@ Measured on the deployed host:
 
 | Path | Contents |
 |---|---|
-| `realworld/` | real-world tasks (Cetus, Euler, Hundred, Spliit, go-money, moneyphp) and the adapters that run the real code |
+| `realworld/` | real-world tasks (Cetus, Balancer, Euler, Knight Capital, Hundred, Compound, Spliit, go-money, moneyphp) and the adapters that run the real code |
 | `formal/` | payout task: locked spec and challenge, executable wrapper, oracle, references, attacks, evidence |
 | `tasks/` | benchmark tasks |
 | `hidden/` | hidden live-challenge variants of the payout task |
-| `harness/` | judge, binary check, ordinary checking, lock, validator, Passport |
+| `harness/` | judge, binary check, counterexample stage, ordinary checking, lock, validator, Passport, ProofForgeFin vendoring |
+| `lib/` | ProofForgeFin, the proved library candidates may import |
+| `counterexamples/` | per-task adapters that turn a failing property case into a Lean refutation |
 | `bin/proofforge` | `check`, `verify` and `tasks` commands |
 | `agents/` | Meta Model API client, budget, repair agent, compile-and-retry baseline |
 | `eval/` | E1, E2, implement-mode, real-code and natural-failure runners |
