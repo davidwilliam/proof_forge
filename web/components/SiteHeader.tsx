@@ -8,7 +8,7 @@ const LINKS = [
   { href: "/", label: "Overview" },
   { href: "/forge", label: "Forge session" },
   { href: "/challenge", label: "Challenge" },
-  { href: "/app", label: "Payouts app" },
+  { href: "/app", label: "Balancer replay" },
   { href: "/results", label: "Results" },
 ];
 

@@ -9,9 +9,9 @@ Environment (defaults in parentheses):
                           example fly-client-ip or x-forwarded-for (unset: socket peer)
   PF_ADMIN_KEY            secret for /api/admin/*; unset disables the admin endpoints
   PF_JUDGE_KEY            requests with X-Judge-Key get the judge quotas
-  PF_QUOTA_<KIND>         per-client daily quota for live, replay, verify, challenge, payout
-                          (2, 30, 20, 40, 300); judge quotas are PF_JUDGE_QUOTA_<KIND>
-                          (30, 300, 200, 400, 3000)
+  PF_QUOTA_<KIND>         per-client daily quota for live, replay, verify, challenge, payout,
+                          swap (2, 30, 20, 40, 300, 300); judge quotas are PF_JUDGE_QUOTA_<KIND>
+                          (30, 300, 200, 400, 3000, 3000)
   PF_DAILY_LIVE_USD       live spending per UTC day at the prices actually charged, all
                           clients (30); a running job holds its full cap at standard list
                           prices, an upper bound on its actual cost
@@ -25,8 +25,8 @@ import contextlib, os, pathlib, sqlite3, threading, time
 from fastapi import HTTPException, Request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-QUOTA = {"live": 2, "replay": 30, "verify": 20, "challenge": 40, "payout": 300}
-JUDGE_QUOTA = {"live": 30, "replay": 300, "verify": 200, "challenge": 400, "payout": 3000}
+QUOTA = {"live": 2, "replay": 30, "verify": 20, "challenge": 40, "payout": 300, "swap": 300}
+JUDGE_QUOTA = {"live": 30, "replay": 300, "verify": 200, "challenge": 400, "payout": 3000, "swap": 3000}
 
 
 def env_int(name, default):

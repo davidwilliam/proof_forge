@@ -1,6 +1,6 @@
 // Property tests for the TESTED_ONLY TypeScript glue in lib/money.ts.
 // The run writes generated/property-tests.json with the number of cases executed;
-// the /app page displays that count.
+// the /app/payout page displays that count.
 
 import { afterAll, describe, expect, it } from "vitest";
 import fc from "fast-check";

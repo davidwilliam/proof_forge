@@ -46,5 +46,6 @@ pnpm start
 | `/forge` | Forge session. Query parameters: `job` (attach to an existing job), `recording`, `task`; `/` with any of them redirects here |
 | `/passport/<sha256>` | Passport evidence view |
 | `/challenge` | Binary check of a hidden variant |
-| `/app` | Split a payout on the buggy and repaired builds |
+| `/app` | Replay the Balancer V2 rounding exploit on the deployed code, the plus-one hotfix and the verified Muse repair (`POST /api/swap`) |
+| `/app/payout` | Split a payout on the buggy and repaired builds |
 | `/results` | E1 and E2 results; the E2 case rows load from the API when opened |

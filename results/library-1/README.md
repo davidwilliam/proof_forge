@@ -41,6 +41,12 @@ $2.51, run before the library existed).
 | Muse alone (A0) | 2 of 5 | 40.04 | 20.02 |
 | Muse with ProofForge and the planner (A2, library on in 2 of the 3 runs) | 3 of 3 | 9.18 | 3.06 |
 
+The three Muse-alone runs that did not verify (`library-1` A0-1 and A0-2, `baseline-flagships-1` A0-1)
+were checked again with `bin/proofforge check` on their `final.lean` (`passport.json`, `check.txt` in each
+run directory): each is UNRESOLVED, with all eight proofs `sorry` and its executable passing all 2,001
+generated property cases. Each rewrote the given-out path to price the exact amount out rounded up and
+to refuse it unless that amount is below the scaled balance; none is refuted.
+
 One-sided Fisher exact test on the verification rate: p = 0.18. The difference in rate is not
 significant at these sample sizes. The difference in cost per verified run is the stronger result.
 
