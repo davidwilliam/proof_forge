@@ -206,6 +206,7 @@ def test_passport_names_prior_runs_only_when_resumed():
 
 def opts(**kw):
     a = repair.parser().parse_args([])
+    a.variants = 0   # these tests cover the portfolio; tests/test_lean_feedback.py covers the variants
     for k, v in kw.items():
         setattr(a, k, v)
     return a
@@ -300,6 +301,7 @@ def test_resume_carries_rechecked_declarations_and_works_open_goals_first():
     passing = '{"status": "PASS", "violations": {}, "examples": []}'
     td.run_main(["--task", BUCKET.id, "--loop", "orchestrated", "--model", SPARK, "--planner", "none",
                  "--start", str(td.fixed_start()), "--resume-from", f"{d_bad},{d_prior}", "--portfolio", "off",
+                 "--goal-tool", "off", "--refute", "off", "--variants", "0",
                  "--obligation-turns", "2", "--budget-usd", "5", "--out", str(out)], script,
                 [patch.object(repair.Session, "run_tests", lambda self: passing)])
     summary = json.loads((out / "summary.json").read_text())

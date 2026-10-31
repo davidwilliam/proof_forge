@@ -483,10 +483,12 @@ def test_bucket_a2_skeleton_refutation_and_restructure_reach_verified():
                            SKELETON_BUCKET_1)]})),
         (r":d\d+:[^:]+:turn\d+$", helper_dialogs(HELPER_PROOFS_BUCKET)),
     ])
-    # The tactic portfolio is off: this test scripts the model's proofs of the helpers
-    # (tests/test_feedback.py covers the portfolio).
+    # The tactic portfolio, the goal tool, refutation by sampling and variants are off: this test
+    # scripts the model's proofs of the helpers and its refutation of the false one
+    # (tests/test_feedback.py covers the portfolio, tests/test_lean_feedback.py the others).
     run_main(["--task", BUCKET.id, "--loop", "topdown", "--model", SPARK, "--planner", WONDER,
-              "--budget-usd", "5", "--portfolio", "off", "--out", str(out)], script)
+              "--budget-usd", "5", "--portfolio", "off", "--goal-tool", "off", "--refute", "off", "--variants", "0",
+              "--out", str(out)], script)
     summary = json.loads((out / "summary.json").read_text())
     ev = events(out)
     kinds = [e["kind"] for e in ev]
@@ -648,7 +650,8 @@ def test_compound_a1_library_reduction_reaches_verified():
     ])
     passing = '{"status": "PASS", "violations": {}, "examples": []}'
     run_main(["--task", COMPOUND.id, "--loop", "topdown", "--model", SPARK, "--planner", "none",
-              "--budget-usd", "5", "--portfolio", "off", "--start", str(start), "--out", str(out)], script,
+              "--budget-usd", "5", "--portfolio", "off", "--goal-tool", "off", "--refute", "off", "--variants", "0",
+              "--start", str(start), "--out", str(out)], script,
              # Phase 0's binary check is covered by the bucket test; the start already implements the fix.
              [patch.object(repair.Session, "run_tests", lambda self: passing)])
     summary = json.loads((out / "summary.json").read_text())
