@@ -19,7 +19,7 @@ The task (harness/task.py) defaults to the flagship payout component in formal/.
 A bare .lean file is treated as a workspace containing only candidate/Solution.lean.
 Statuses come only from exit codes recorded here; nothing a model writes is trusted.
 """
-import argparse, contextlib, fcntl, hashlib, json, os, pathlib, re, shlex, shutil, signal, subprocess, sys, tempfile, threading, time
+import argparse, contextlib, fcntl, hashlib, json, os, pathlib, posixpath, re, shlex, shutil, signal, subprocess, sys, tempfile, threading, time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import task as taskmod  # noqa: E402
@@ -269,25 +269,95 @@ def image_platform():
     return r.stdout.strip() or "unknown"
 
 
+# Docker Desktop shares the host directory with its Linux VM through a file system whose VM-side
+# caches can lag behind changes made on the host: a file the host rewrote can be read in a new
+# container with its previous size (Lean then reports `unexpected end of input` in a file that is
+# complete on disk), and a file the host deleted can keep its directory entry, so creating it
+# again in the container fails. Every container run therefore first checks that the project's
+# input files have the content the host wrote, and is started again until they do; outputs that
+# the host reads go to names no earlier run used (output_name).
+VIEW_MARK = "PF_STALE_VIEW"
+VIEW_EXIT = 97
+VIEW_WAIT = float(os.environ.get("PF_VIEW_WAIT", "180"))   # seconds to wait for a consistent view
+
+
+class StaleView(RuntimeError):
+    """The container kept seeing files that differ from the host's after VIEW_WAIT seconds."""
+
+
+def view_manifest(project: pathlib.Path):
+    """[(relative path, sha256)] of the project's input files: every regular file whose path has
+    no component starting with `.` (so not `.lake`, where the containers write)."""
+    out = []
+    for root, dirs, files in os.walk(project):
+        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        for f in sorted(files):
+            p = pathlib.Path(root) / f
+            if not f.startswith(".") and p.is_file() and not p.is_symlink():
+                out.append((p.relative_to(project).as_posix(), sha256_bytes(p.read_bytes())))
+    return out
+
+
+def view_check(manifest):
+    """Shell preamble: exit VIEW_EXIT, printing VIEW_MARK and the differing files, unless every
+    file of `manifest` has the listed content inside the container. The directories are listed
+    first: in probes on Docker Desktop a listing refreshed the sizes the VM had cached."""
+    if not manifest:
+        return ""
+    lines = "".join(f"{h}  {p}\n" for p, h in manifest)
+    dirs = sorted({posixpath.dirname(p) or "." for p, _ in manifest})
+    return (f"ls -la {' '.join(shlex.quote(d) for d in dirs)} > /dev/null 2>&1; "
+            f"printf %s {shlex.quote(lines)} | sha256sum --check --quiet --strict - > /tmp/pf-view.txt 2>&1 "
+            f"|| {{ echo {VIEW_MARK}; cat /tmp/pf-view.txt; exit {VIEW_EXIT}; }}; ")
+
+
+def output_name(stem, suffix=".txt"):
+    """A new file name for output that a container run writes and the host then reads. A name is
+    never reused once the host has deleted the file (see VIEW_MARK above)."""
+    return f".{stem}-{os.getpid()}-{time.monotonic_ns()}{suffix}"
+
+
 def in_container(project: pathlib.Path, script: str, timeout=900):
     """Run `script` in the pinned Lean image with `project` as the working directory. Inside
     the image itself (PF_IN_IMAGE=1, as in the verify image and on Linux hosts) it runs
-    directly; Comparator's bubblewrap sandbox applies in both cases."""
+    directly; Comparator's bubblewrap sandbox applies in both cases. Through Docker the run
+    starts only once the container sees the host's version of every input file (view_check):
+    a container that sees another version is stopped before the script and a new one is
+    started after a pause, up to VIEW_WAIT seconds, then StaleView is raised."""
     if IN_IMAGE:
         with container_slot():
             return run(["bash", "-lc", f"cd {shlex.quote(str(project))} && {script}"], timeout=timeout)
-    name = f"pf-{os.getpid()}-{time.monotonic_ns()}"
-    cmd = [
-        "docker", "run", "--rm", "--name", name, "--network", "none",
-        # bubblewrap (Comparator's sandbox) needs user namespaces inside the container.
-        "--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined",
-        "--security-opt", "systempaths=unconfined", "--cap-add", "SYS_ADMIN",
-        "--memory", "4g", "--pids-limit", "512",
-        "-v", f"{project}:/work", "-w", "/work", IMAGE, "bash", "-lc", script,
-    ]
-    with container_slot():
-        return run(cmd, timeout=timeout,
-                   on_timeout=lambda: subprocess.run(["docker", "kill", name], capture_output=True))
+    project = pathlib.Path(project)
+    manifest = view_manifest(project)
+    waited, pause = 0.0, 0.5
+    while True:
+        name = f"pf-{os.getpid()}-{time.monotonic_ns()}"
+        cmd = [
+            "docker", "run", "--rm", "--name", name, "--network", "none",
+            # bubblewrap (Comparator's sandbox) needs user namespaces inside the container.
+            "--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined",
+            "--security-opt", "systempaths=unconfined", "--cap-add", "SYS_ADMIN",
+            "--memory", "4g", "--pids-limit", "512",
+            "-v", f"{project}:/work", "-w", "/work", IMAGE, "bash", "-lc", view_check(manifest) + script,
+        ]
+        with container_slot():
+            r = run(cmd, timeout=timeout,
+                    on_timeout=lambda: subprocess.run(["docker", "kill", name], capture_output=True))
+        r["command"] = cmd[:-1] + [script]   # the record names the script, not the view check
+        if r["exit_code"] != VIEW_EXIT or VIEW_MARK not in r["output_tail"]:
+            if waited:
+                r["view_wait_s"] = round(waited, 1)
+            return r
+        stale = r["output_tail"].split(VIEW_MARK, 1)[1].strip()
+        if waited >= VIEW_WAIT:
+            raise StaleView(f"after {waited:.0f} s the container still sees other versions of files in {project}:\n{stale}")
+        if deadline() is not None and time.monotonic() + pause >= deadline():
+            return {**r, "exit_code": 124, "output_tail": f"{VIEW_MARK}\n{stale}\n{TIMEOUT_MARK}"}
+        print(f"judge: the container sees other versions of files in {project}; new container in {pause:g} s:\n{stale}",
+              file=sys.stderr, flush=True)
+        time.sleep(pause)
+        waited += pause
+        pause = min(2 * pause, 8.0)
 
 
 def setup_failure(err) -> dict:
