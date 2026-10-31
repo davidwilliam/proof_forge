@@ -315,9 +315,25 @@ def close_goals(s, a, names, label=""):
             if ok:
                 closed[g["name"]] = key
                 break
+    st = s.__dict__.setdefault("portfolio_stats", {"batches": 0, "goals": 0, "closed": 0, "ms": 0, "stopped": 0,
+                                                   "closed_by": {}})
+    st["batches"] += 1
+    st["goals"] += len(goals)
+    st["closed"] += len(closed)
+    st["ms"] += info["ms"]
+    st["stopped"] += bool(info["stopped"])
+    for key in closed.values():
+        st["closed_by"][key] = st["closed_by"].get(key, 0) + 1
     s.log(kind="portfolio", label=label, goals=[g["name"] for g in goals], closed=closed, ms=info["ms"],
           attempts=info["attempts"], stopped=info["stopped"], retried=info.get("retried", False), heartbeats=heartbeats,
           results={n: {k: [int(v["ok"]), v["ms"], int(v["limit"])] for k, v in r.items()} for n, r in results.items()})
     if closed:
         print(f"[portfolio] closed {closed}", flush=True)
     return closed
+
+
+def summary(s):
+    """Run totals of the portfolio for summary.json: batches, goals tried, goals closed (and by
+    which entry), Lean milliseconds, batches stopped at their wall allowance."""
+    return dict(s.__dict__.get("portfolio_stats") or {"batches": 0, "goals": 0, "closed": 0, "ms": 0, "stopped": 0,
+                                                       "closed_by": {}})

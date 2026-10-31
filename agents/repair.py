@@ -1935,6 +1935,12 @@ def parser():
     return ap
 
 
+def features_summary(s, a):
+    """The summary.json records of the tactic portfolio."""
+    return {"portfolio": {"enabled": a.portfolio == "on", "heartbeats": a.portfolio_heartbeats,
+                          "seconds": a.portfolio_seconds, **portfolio.summary(s)}}
+
+
 def resume_setup(s, a, priors, record):
     """Start a session from prior attempts: their best candidate (re-checked by Lean, unless
     --start names one), their proved declarations that still compile, their open goals and failure
@@ -2008,9 +2014,7 @@ def main():
         s.log(kind="budget_stop", reason=str(e))
         print(f"budget exhausted: {e}", flush=True)
     summary = finish(s, out, arm, {"mode": a.loop, "task_mode": a.mode, "effort": a.effort, "planner": a.planner,
-                                   "library": library_summary(s),
-                                   "portfolio": {"enabled": a.portfolio == "on", "heartbeats": a.portfolio_heartbeats,
-                                                 "seconds": a.portfolio_seconds}})
+                                   "library": library_summary(s), **features_summary(s, a)})
     print(json.dumps(summary))
 
 
