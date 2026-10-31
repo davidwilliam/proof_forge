@@ -379,6 +379,8 @@ def fast_snippet(s, scratch, offset, code):
         _count(s, "fast_clean")
         return "clean", ms
     _count(s, "fast_rejected")
+    # the lines the compile path shows (Session._clean), so both paths give the model the same messages
+    msgs = s._clean("\n".join(msgs)).split("\n") if msgs else []
     states = sorry_states(srv, scratch, offset, code, "snippet line")
     if states:
         msgs.append("Proof state at each `sorry` of the snippet:\n" + states)
