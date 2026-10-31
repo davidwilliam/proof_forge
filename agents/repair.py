@@ -844,7 +844,8 @@ class Session:
             limit = max(1, min(SEARCH_MAX_TOPDOWN if self.topdown else 25, int(limit or 10)))
         except (TypeError, ValueError):
             limit = 10
-        hits = self.lib_index.search(query or "", limit=limit)
+        # Goal-aware ranking: the obligation being proved, when known (set by library_hints).
+        hits = self.lib_index.search(query or "", limit=limit, goal=getattr(self, "lib_goal", None))
         self.log(kind="library_search", query=(query or "")[:500], hits=[e["name"] for e in hits])
         if not hits:
             return "no library declaration matches; try other words or a declaration name"
@@ -871,11 +872,13 @@ class Session:
                     "library's), so the file is unchanged. Errors:\n" + self._clean(r["output_tail"])[-4000:])
         return f"added `import {module}` (version {self.version}); file compiles"
 
-    def library_hints(self, text, limit=8):
-        """The library declarations the index ranks highest for `text`, for an obligation's prompt."""
+    def library_hints(self, text, limit=8, goal=None):
+        """The library declarations the index ranks highest for `text` (and the obligation's
+        statement `goal`, which later searches also rank against), for an obligation's prompt."""
         if not self.lib_index:
             return ""
-        hits = [e for e in self.lib_index.search(text, limit=limit + 6) if e["kind"] != "module"][:limit]
+        self.lib_goal = goal
+        hits = [e for e in self.lib_index.search(text, limit=limit + 6, goal=goal) if e["kind"] != "module"][:limit]
         return fin_lib.render(hits, sig_chars=300) if hits else ""
 
     def run_tests(self):
@@ -1201,7 +1204,7 @@ def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
     stmt = (m.group(0).split(":= by")[0].split(":= sorry")[0] if m else t).strip()
     status = s.check_status()
     defs = ", ".join(f"`{d}`" for d in s.task.definitions)
-    hints = s.library_hints(obligation_query(s, stmt)) if s.library else ""
+    hints = s.library_hints(obligation_query(s, stmt), goal=stmt) if s.library else ""
     if hints:
         s.log(kind="library_hints", theorem=t, hits=re.findall(r"^\[\w+\] (\S+)", hints, re.M))
     shown = compact_view(s, src, keep={t}) if s.topdown else src
