@@ -216,26 +216,55 @@ export const BELL = { base: 566, step: 54, rx0: 30, rxPerRoot: 64, tilt: 0.25 } 
 /** Ring half-width for a level of `n` declarations: the area under the ring grows with the count. */
 export const ringRadius = (n: number) => round(BELL.rx0 + BELL.rxPerRoot * (Math.sqrt(n) - 1));
 
+/** The nodes and edges a bell needs: the proof graph or the graph of another run. */
+export interface GraphLike {
+  nodes: { id: string; depth: number }[];
+  edges: [string, string][];
+}
+
 /**
  * Lens 3 for one guarantee: its cone by depth, one ring per level. Around each ring the
- * declarations keep the order of their angles in the radial lens, so the shape turns out of it.
+ * declarations follow `angle` (for the proof graph, their angles in the radial lens, so the shape
+ * turns out of it); without one, each sits at the mean angle of the declarations above that use it.
  */
-export function bellOf(node: string, g: ProofGraphData = PROOF_GRAPH): Bell {
-  const radial = layoutGraph(g);
-  const angle = new Map(radial.nodes.map((n) => [n.id, Math.atan2(n.y - C, n.x - C)]));
+export function bellOf(node: string, g: GraphLike = PROOF_GRAPH, angle?: Map<string, number>): Bell {
+  if (!angle && g === PROOF_GRAPH) {
+    const radial = layoutGraph(PROOF_GRAPH);
+    angle = new Map(radial.nodes.map((n) => [n.id, Math.atan2(n.y - C, n.x - C)]));
+  }
   const depth = new Map(g.nodes.map((n) => [n.id, n.depth]));
   const top = depth.get(node);
   if (top === undefined) throw new Error(`no node ${node}`);
   const cone = [...dependencyCone(g.edges, node)];
+  const users = new Map<string, string[]>();
+  for (const [a, b] of g.edges) users.set(b, [...(users.get(b) ?? []), a]);
+  const placed = new Map<string, number>();
   const levels: BellLevel[] = [];
   for (let level = 0; level <= top; level++) {
-    const ids = level === 0 ? [node] : cone.filter((id) => top - depth.get(id)! === level).sort((a, b) => angle.get(a)! - angle.get(b)! || a.localeCompare(b));
+    let ids = level === 0 ? [node] : cone.filter((id) => top - depth.get(id)! === level);
+    const key = (id: string, i: number) =>
+      angle?.get(id) ?? meanAngle((users.get(id) ?? []).map((u) => placed.get(u)).filter((x): x is number => x !== undefined), (i * TAU) / ids.length);
+    const keys = new Map(ids.sort().map((id, i) => [id, key(id, i)]));
+    ids = ids.sort((a, b) => keys.get(a)! - keys.get(b)! || a.localeCompare(b));
     const rx = level === 0 ? 0 : ringRadius(ids.length);
-    const first = ids.length ? angle.get(ids[0]!)! : 0;
+    const first = ids.length ? keys.get(ids[0]!)! : 0;
     // A small turn per level (the golden angle) keeps declarations of neighbouring rings from lining up.
-    levels.push({ level, y: BELL.base - (top - level) * BELL.step, rx, ry: round(rx * BELL.tilt), ids, phase: round(first + level * 2.39996) });
+    const phase = round(first + level * 2.39996);
+    ids.forEach((id, i) => placed.set(id, phase + (i * TAU) / ids.length));
+    levels.push({ level, y: BELL.base - (top - level) * BELL.step, rx, ry: round(rx * BELL.tilt), ids, phase });
   }
   return { node, levels };
+}
+
+/** Circular mean of angles; `fallback` when there are none or they cancel out. */
+function meanAngle(as: number[], fallback: number) {
+  let x = 0;
+  let y = 0;
+  for (const a of as) {
+    x += Math.cos(a);
+    y += Math.sin(a);
+  }
+  return as.length && Math.hypot(x, y) > 1e-9 ? Math.atan2(y, x) : fallback;
 }
 
 /** The kernels' orbit around a bell: tilted, through the middle of its height. */
