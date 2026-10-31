@@ -813,10 +813,11 @@ class Session:
         if "error:" in r["output_tail"]:
             return None, self._clean(r["output_tail"])
         (self.ws / "Deps.lean").write_text(DEPS_PROBE)
-        out = self.ws / ".deps.txt"
-        out.unlink(missing_ok=True)
-        p = judge.in_container(self.ws, "lake env lean Deps.lean > .deps.txt 2>&1; tail -c 1500 .deps.txt", timeout=600)
+        name = judge.output_name("deps")
+        out = self.ws / name
+        p = judge.in_container(self.ws, f"lake env lean Deps.lean > {name} 2>&1; tail -c 1500 {name}", timeout=600)
         text = out.read_text(errors="replace") if out.exists() else ""
+        out.unlink(missing_ok=True)
         if "PFDEPS " not in text:
             return None, "dependency probe failed: " + (p["output_tail"] or text)[-1500:]
         raw = {}

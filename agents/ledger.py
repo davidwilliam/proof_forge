@@ -428,14 +428,16 @@ def lean_messages(s, text, name="Carry"):
     message, not a tail): [(line, severity, text)]; None when the run stopped at its time limit."""
     import judge
     (s.ws / f"{name}.lean").write_text(text)
-    out = s.ws / f".{name.lower()}.json"
-    out.unlink(missing_ok=True)
+    oname = judge.output_name(name.lower(), ".json")
+    out = s.ws / oname
     r = judge.in_container(s.ws, f"lake build {s.task.lib} >/dev/null 2>&1; lake env lean --json {name}.lean > "
-                                 f".{name.lower()}.json 2>&1; tail -c 300 .{name.lower()}.json", timeout=600)
+                                 f"{oname} 2>&1; tail -c 300 {oname}", timeout=600)
+    text = out.read_text(errors="replace") if out.exists() else ""
+    out.unlink(missing_ok=True)
     if judge.TIMEOUT_MARK in r["output_tail"]:
         return None
     msgs = []
-    for raw in (out.read_text(errors="replace") if out.exists() else "").splitlines():
+    for raw in text.splitlines():
         try:
             m = json.loads(raw)
         except ValueError:

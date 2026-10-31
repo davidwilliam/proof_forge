@@ -211,16 +211,17 @@ def run_batch(s, goals, entries=None, heartbeats=HEARTBEATS, seconds=SECONDS, sr
     entries = available(s, src) if entries is None else entries
     text, attempts = batch_text(s, goals, entries, heartbeats, src)
     (s.ws / "Portfolio.lean").write_text(text)
-    out = s.ws / ".portfolio.json"
-    out.unlink(missing_ok=True)
+    name = judge.output_name("portfolio", ".json")
+    out = s.ws / name
     timeout = min(MAX_BATCH_SECONDS, BASE_SECONDS + seconds * len(attempts))
     t0 = time.monotonic()
     r = judge.in_container(s.ws, f"lake build {s.task.lib} >/dev/null 2>&1; "
-                                 "lake env lean --json Portfolio.lean > .portfolio.json 2>&1; tail -c 300 .portfolio.json",
+                                 f"lake env lean --json Portfolio.lean > {name} 2>&1; tail -c 300 {name}",
                            timeout=timeout)
     ms = int((time.monotonic() - t0) * 1000)
     stopped = judge.TIMEOUT_MARK in r["output_tail"]
     output = out.read_text(errors="replace") if out.exists() else ""
+    out.unlink(missing_ok=True)
     parsed = parse(output, attempts, s.ns)
     results = {g["name"]: {} for g in goals}
     for a in attempts:
