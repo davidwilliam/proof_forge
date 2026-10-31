@@ -14,11 +14,14 @@ The caps are hard limits for the work they bound:
     responses stay charged at the worst case;
   - a response completed after the deadline is discarded, and no tool runs after it;
   - every Lean tool run in the agent process is cut off at the deadline (judge.DEADLINE).
+Concurrent callers (parallel variants, agents/variants.py) share one Budget: its `lock` is held
+from the dollar check of an attempt to its reservation, so attempts in flight at the same time
+are each charged their worst case before they are sent and together stay within the cap.
 The candidate on disk at the deadline is the run's result. After the deadline the agent
 only selects the newest compiling version it already produced (repair.finish); judging
 of that candidate by the shared evaluator is outside the budget and identical for all arms.
 """
-import time
+import threading, time
 
 # USD per 1M tokens: (input, cached input, output).
 STANDARD = {
@@ -91,6 +94,7 @@ class Budget:
         self.lost_attempts = 0        # attempts whose response never arrived (worst case kept)
         self.bound_violations = 0     # reported input above the bound (should stay 0)
         self.reserved_open = 0
+        self.lock = threading.RLock()   # held by Session.call from call_limits() through reserve()
 
     def input_bound(self, prompt_bytes, n_messages):
         """Upper bound on input tokens. With a byte-level BPE tokenizer every token covers
@@ -122,34 +126,37 @@ class Budget:
         """Charge an attempt's worst case before it is sent. settle() replaces it with the
         reported usage; an attempt that never settles (lost response, timeout) stays charged
         at its worst case."""
-        worst = {"prompt_tokens": self.input_bound(prompt_bytes, n_messages), "completion_tokens": max_tokens}
-        tok = {"model": model, "worst": worst, "list": list_cost(model, worst), "actual": actual_cost(model, worst)}
-        self.usd_list += tok["list"]
-        self.usd_actual += tok["actual"]
-        self.reserved_open += 1
-        return tok
+        with self.lock:
+            worst = {"prompt_tokens": self.input_bound(prompt_bytes, n_messages), "completion_tokens": max_tokens}
+            tok = {"model": model, "worst": worst, "list": list_cost(model, worst), "actual": actual_cost(model, worst)}
+            self.usd_list += tok["list"]
+            self.usd_actual += tok["actual"]
+            self.reserved_open += 1
+            return tok
 
     def settle(self, tok, usage):
         """Replace a reservation with the reported usage, or keep its worst case when the
         response carries no usage."""
-        self.usd_list -= tok["list"]
-        self.usd_actual -= tok["actual"]
-        self.reserved_open -= 1
-        if not usage or usage.get("http_error") or not (usage.get("prompt_tokens") or usage.get("completion_tokens")):
-            self.unknown_usage += 1
-            usage = tok["worst"]
-        elif usage.get("prompt_tokens", 0) > tok["worst"]["prompt_tokens"]:
-            self.bound_violations += 1   # reported input exceeded the bound; recorded, charged as reported
-        self.charge(tok["model"], usage)
+        with self.lock:
+            self.usd_list -= tok["list"]
+            self.usd_actual -= tok["actual"]
+            self.reserved_open -= 1
+            if not usage or usage.get("http_error") or not (usage.get("prompt_tokens") or usage.get("completion_tokens")):
+                self.unknown_usage += 1
+                usage = tok["worst"]
+            elif usage.get("prompt_tokens", 0) > tok["worst"]["prompt_tokens"]:
+                self.bound_violations += 1   # reported input exceeded the bound; recorded, charged as reported
+            self.charge(tok["model"], usage)
 
     def lost(self, tok):
         """An attempt whose response was not received: its worst case stays charged."""
-        self.reserved_open -= 1
-        self.lost_attempts += 1
-        m = self._model(tok["model"])
-        m["calls"] += 1
-        m["usd_list"] += tok["list"]
-        m["usd_actual"] += tok["actual"]
+        with self.lock:
+            self.reserved_open -= 1
+            self.lost_attempts += 1
+            m = self._model(tok["model"])
+            m["calls"] += 1
+            m["usd_list"] += tok["list"]
+            m["usd_actual"] += tok["actual"]
 
     def remaining_wall(self):
         return None if self.wall_cap is None else self.wall_cap - self.elapsed()
@@ -167,17 +174,18 @@ class Budget:
 
     def charge(self, model, usage):
         """Record one settled call at its reported usage."""
-        usage = usage or {}
-        m = self._model(model)
-        m["calls"] += 1
-        m["prompt"] += usage.get("prompt_tokens", 0)
-        m["cached"] += (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
-        m["completion"] += usage.get("completion_tokens", 0)
-        lc, ac = list_cost(model, usage), actual_cost(model, usage)
-        m["usd_list"] += lc
-        m["usd_actual"] += ac
-        self.usd_list += lc
-        self.usd_actual += ac
+        with self.lock:
+            usage = usage or {}
+            m = self._model(model)
+            m["calls"] += 1
+            m["prompt"] += usage.get("prompt_tokens", 0)
+            m["cached"] += (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+            m["completion"] += usage.get("completion_tokens", 0)
+            lc, ac = list_cost(model, usage), actual_cost(model, usage)
+            m["usd_list"] += lc
+            m["usd_actual"] += ac
+            self.usd_list += lc
+            self.usd_actual += ac
 
     def elapsed(self):
         return time.monotonic() - self.t0
