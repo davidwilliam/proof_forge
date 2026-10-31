@@ -44,6 +44,18 @@ to lib/ProofForgeFin/Harvested/. No model is called; Lean runs in the pinned ima
   kernels      harness/fin_kernels.py restricted to the Harvested modules (`check(modules=...)`):
                all six kernels of `lake comparator --paranoid` and leanchecker.
 
+Unverified runs (`run --unverified --tasks-from SPLIT`, profile `salvage`): the sources are the
+final candidates of runs that were not accepted (harness/mine.py: Passport not VERIFIED, judge not
+ACCEPT, or not accepted in the session), of the tasks the split puts in its mining set, read from
+`--results` (default results/). The passes are the same, so a declaration is kept only when its
+statement elaborates without the task and its proof compiles on its own in a file that imports
+only ProofForgeFin, with no `sorry` (a proof that uses a lemma proved by `sorry`, or `sorry`
+itself, has `sorryAx` among its axioms and is rejected) and with axioms within propext,
+Classical.choice and Quot.sound. The kept lemmas go to lib/ProofForgeFin/Salvaged/ (namespace
+`ProofForgeFin.Salvaged`), deduplicated against the whole library including the harvested
+modules, and go through the same kernel check (`kernels --profile salvage`). Their doc strings
+name the source by its id in results/feedback-library-1/salvage/harvest.json, not by task.
+
 Measurement (no model calls), in `measure`: the open obligations of unresolved runs (`sorry`
 in a final candidate whose judge verdict is not ACCEPT and whose executable passed; a theorem whose
 proof fails to compile counts as one obligation) are replaced by one fixed battery of tactics
@@ -74,6 +86,24 @@ PERMITTED = {"propext", "Classical.choice", "Quot.sound"}
 CPUS = os.environ.get("PF_HARVEST_CPUS", "4")
 MEMORY = os.environ.get("PF_HARVEST_MEMORY", "3g")
 MODULES = ["Arith", "List", "Fin"]   # import order
+PROFILE = "harvest"
+PROFILES = {
+    "harvest": {"OUT": ROOT / "results/harvest-1", "HARVESTED": "ProofForgeFin/Harvested",
+                "NAMESPACE": "ProofForgeFin.Harvested", "TITLE": "Harvested lemmas"},
+    "salvage": {"OUT": ROOT / "results/feedback-library-1/salvage", "HARVESTED": "ProofForgeFin/Salvaged",
+                "NAMESPACE": "ProofForgeFin.Salvaged", "TITLE": "Salvaged lemmas"},
+}
+
+
+def use_profile(name):
+    """Point the module globals at a profile: `harvest` (verified candidates, ProofForgeFin.Harvested)
+    or `salvage` (runs that were not accepted, ProofForgeFin.Salvaged)."""
+    global PROFILE, OUT, HARVESTED, NAMESPACE, HARVEST_IMPORT, WORK
+    p = PROFILES[name]
+    PROFILE, OUT, HARVESTED, NAMESPACE = name, p["OUT"], p["HARVESTED"], p["NAMESPACE"]
+    HARVEST_IMPORT = f"import {NAMESPACE}\n"
+    if name != "harvest" and not os.environ.get("PF_HARVEST_WORK"):
+        WORK = fin_lib.CACHE / name
 
 
 def sha256_bytes(b):
@@ -246,6 +276,31 @@ def sources():
     for i, s in enumerate(out):
         s["id"] = f"s{i:03d}"
         s["harvest"] = s["split"] in LIBRARY_SPLITS
+    return out, skipped
+
+
+def unverified_sources(results, split_path):
+    """The final candidates of runs that were not accepted, of the mining-set tasks of the split
+    (harness/mine.py reads the runs); the held-out ones are listed and not harvested."""
+    import mine
+    split = mine.load_split(split_path)
+    out, skipped = [], []
+    for r in mine.runs(results):
+        if r["outcome"] == "accepted" or not r["final"]:
+            continue
+        try:
+            t = taskmod.load(r["task"])
+        except FileNotFoundError:
+            skipped.append({"file": r["final"], "reason": f"unknown task {r['task']}"})
+            continue
+        ev = next((pathlib.Path(r["dir"]) / n for n in ("passport.json", "eval.json", "summary.json")
+                   if (pathlib.Path(r["dir"]) / n).is_file()), None)
+        out.append({"kind": "unverified", "task": t.id, "split": t.split, "run": r["run"], "file": r["final"],
+                    "file_sha256": sha256_file(r["final"]), "evidence": str(ev) if ev else None,
+                    "verdict": r["evidence"], "set": mine.task_set(t.id, split)})
+    for i, s in enumerate(out):
+        s["id"] = f"s{i:03d}"
+        s["harvest"] = s["set"] == "mining"
     return out, skipped
 
 
@@ -960,6 +1015,19 @@ def topic(stmt):
 
 def provenance_doc(d, srcs, others, support_of=None, reason=None):
     s = srcs[d["src"]]
+    if s["kind"] == "unverified":
+        lines = [f"Salvaged from a run that was not accepted: declaration `{d['name']}` of source `{s['id']}` in "
+                 f"`results/feedback-library-1/salvage/harvest.json` (file sha256 `{s['file_sha256']}`). It compiles "
+                 "on its own without `sorry` and passes the kernel check."]
+        if d["method"] != "as written":
+            lines.append(f"Statement {d['method']}.")
+        if support_of:
+            lines.append(f"Kept as a support lemma of {', '.join(f'`{x}`' for x in support_of)}; on its own it was "
+                         f"not accepted ({reason}).")
+        if others:
+            lines.append(f"The same statement is proved in {len(others)} other source"
+                         f"{'s' if len(others) != 1 else ''}.")
+        return "/-- " + "\n".join(lines) + " -/"
     ev = (f"Passport sha256 `{s['passport_sha256']}`" if s.get("passport_sha256") else
           f"eval.json sha256 `{s['eval_sha256']}` (judge ACCEPT, binary PASS)")
     lines = [f"Harvested from task `{d['task']}`: `{d['name']}` in `{d['file']}` (file sha256 `{s['file_sha256']}`; {ev})."]
@@ -1085,12 +1153,19 @@ MODULE_DOC = {
 
 def module_text(k, lemmas, base_mods):
     imports = [f"import {m}" for m in base_mods] + [f"import {NAMESPACE}.{MODULES[j]}" for j in range(k)]
+    if PROFILE == "salvage":
+        what = ("Lemmas that runs which were not accepted did prove: each compiles on its own, without\n"
+                "`sorry`, in a file that imports only ProofForgeFin, restated without the task where needed,\n"
+                "and kept when no default tactic, library tactic or `exact?` proves it from the library\n"
+                "(the harvested modules included). Each doc string records the source. Generated by\n"
+                "`harness/harvest.py run --unverified`; regenerate rather than edit.\n")
+    else:
+        what = ("Helper lemmas of verified candidates (Passport VERIFIED, or judge ACCEPT with the executable\n"
+                "passing the property cases), restated without the task where needed and kept when no default\n"
+                "tactic, library tactic or `exact?` proves them from the library and the core library. Each\n"
+                "doc string records the source. Generated by `harness/harvest.py`; regenerate rather than edit.\n")
     return ("\n".join(imports) + "\n/-!\n" +
-            f"# Harvested lemmas: {MODULE_DOC[k]}\n\n"
-            "Helper lemmas of verified candidates (Passport VERIFIED, or judge ACCEPT with the executable\n"
-            "passing the property cases), restated without the task where needed and kept when no default\n"
-            "tactic, library tactic or `exact?` proves them from the library and the core library. Each\n"
-            "doc string records the source. Generated by `harness/harvest.py`; regenerate rather than edit.\n"
+            f"# {PROFILES[PROFILE]['TITLE']}: {MODULE_DOC[k]}\n\n" + what +
             "-/\n\n" + f"namespace {NAMESPACE}\n\n" + "\n".join(lemmas) + f"\nend {NAMESPACE}\n")
 
 
@@ -1224,9 +1299,13 @@ def final_check(project, per_mod, p2, log, tag="Final", probe=()):
 
 
 def root_text(mods):
-    return ("\n".join(f"import {NAMESPACE}.{m}" for m in mods) + "\n/-!\n# Harvested lemmas\n\n"
-            "Lemmas harvested from the helper lemmas of verified candidates by `harness/harvest.py`, with\n"
-            "their provenance in each doc string; see `docs/HARVEST.md`.\n\n" +
+    intro = ("Lemmas harvested from the helper lemmas of verified candidates by `harness/harvest.py`, with\n"
+             "their provenance in each doc string; see `docs/HARVEST.md`.\n\n") if PROFILE == "harvest" else (
+             "Lemmas that runs which were not accepted proved without `sorry`, salvaged by\n"
+             "`harness/harvest.py run --unverified`, with their provenance in each doc string; see\n"
+             "`docs/HARVEST.md`.\n\n")
+    return ("\n".join(f"import {NAMESPACE}.{m}" for m in mods) + f"\n/-!\n# {PROFILES[PROFILE]['TITLE']}\n\n" +
+            intro +
             "".join(f"* `{NAMESPACE}.{MODULES[i]}`: {MODULE_DOC[i]}.\n" for i in range(len(MODULES)) if MODULES[i] in mods) +
             "-/\n")
 
@@ -1269,17 +1348,19 @@ def write_modules(per_mod, root=None):
     return mods
 
 
-def run(log=print, write=True):
-    """The whole harvest; returns the record written to results/harvest-1/harvest.json."""
+def run(log=print, write=True, unverified=None):
+    """The whole harvest; returns the record written to OUT/harvest.json. With `unverified`
+    ({"results": dir, "split": split.json}) the sources are the runs that were not accepted
+    (`unverified_sources`) and the profile must be `salvage`."""
     t0 = time.monotonic()
     WORK.mkdir(parents=True, exist_ok=True)
-    srcs, skipped = sources()
+    srcs, skipped = unverified_sources(unverified["results"], unverified["split"]) if unverified else sources()
     harvest_srcs = [s for s in srcs if s["harvest"]]
     by_src = {s["id"]: s for s in srcs}
     base = base_root()
     base_sha = fin_lib.tree_sha256(base)
-    log(f"{len(srcs)} verified sources, {len(harvest_srcs)} harvested ({len(srcs) - len(harvest_srcs)} of the test split "
-        f"held out); base library {base_sha[:16]}")
+    log(f"{len(srcs)} {'unverified' if unverified else 'verified'} sources, {len(harvest_srcs)} harvested "
+        f"({len(srcs) - len(harvest_srcs)} held out); base library {base_sha[:16]}")
     decls = collect(harvest_srcs)
     by_id = {d["id"]: d for d in decls}
     log(f"{len(decls)} helper theorems")
@@ -1301,7 +1382,7 @@ def run(log=print, write=True):
     for d in passed:
         classes0.setdefault(p2[d["id"]]["hash"], []).append(d)
     # Representative: a Passport-backed source first, then the shortest proof.
-    rank = {"passport": 0, "evidence": 1, "eval": 2}
+    rank = {"passport": 0, "evidence": 1, "eval": 2, "unverified": 3}
     for h, ds in classes0.items():
         ds.sort(key=lambda d: (rank[by_src[d["src"]]["kind"]], size(d["prf"])["chars"], d["id"]))
     reps = [ds[0] for ds in classes0.values() if not p2[ds[0]["id"]]["same"]]
@@ -1389,10 +1470,16 @@ def run(log=print, write=True):
     counts = summarize(rec_decls)
     out = {"schema_version": 1, "generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
            "base_library_sha256": base_sha, "library_sha256": fin_lib.tree_sha256() if write else None,
-           "library_splits": list(LIBRARY_SPLITS), "sources": srcs, "skipped_sources": skipped,
+           "library_splits": list(LIBRARY_SPLITS) if not unverified else None,
+           "split": rel(unverified["split"]) if unverified else None, "sources": srcs, "skipped_sources": skipped,
            "counts": counts, "decls": rec_decls, "elapsed_s": round(time.monotonic() - t0, 1)}
     OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / "harvest.json").write_text(json.dumps(out, indent=1, ensure_ascii=False) + "\n")
+    text = json.dumps(out, indent=1, ensure_ascii=False) + "\n"
+    if unverified:
+        # Run directories as the repository names them (results/<run>/...), whichever checkout
+        # they were read from.
+        text = text.replace(str(pathlib.Path(unverified["results"]).resolve()) + "/", "results/")
+    (OUT / "harvest.json").write_text(text)
     log(json.dumps(counts, indent=1))
     return out
 
@@ -1917,8 +2004,14 @@ if __name__ == "__main__":
     sub.add_parser("sources")
     r = sub.add_parser("run")
     r.add_argument("--no-write", action="store_true", help="do not write lib/ProofForgeFin/Harvested")
+    r.add_argument("--unverified", action="store_true",
+                   help="harvest runs that were not accepted (profile salvage, lib/ProofForgeFin/Salvaged)")
+    r.add_argument("--results", default=str(ROOT / "results"), help="run directories (with --unverified)")
+    r.add_argument("--tasks-from", default=str(ROOT / "results/feedback-library-1/split.json"),
+                   help="split whose mining set is harvested (with --unverified)")
     k = sub.add_parser("kernels")
     k.add_argument("--all", action="store_true", help="check every library declaration, not only the harvested ones")
+    k.add_argument("--profile", choices=sorted(PROFILES), default="harvest")
     m = sub.add_parser("measure")
     m.add_argument("--only", nargs="*", help="unresolved candidate ids (default: all)")
     a = ap.parse_args()
@@ -1926,8 +2019,11 @@ if __name__ == "__main__":
         s, sk = sources()
         print(json.dumps({"sources": len(s), "harvested": sum(x["harvest"] for x in s), "skipped": sk}, indent=1))
     elif a.cmd == "run":
-        run(write=not a.no_write)
+        if a.unverified:
+            use_profile("salvage")
+        run(write=not a.no_write, unverified={"results": a.results, "split": a.tasks_from} if a.unverified else None)
     elif a.cmd == "kernels":
+        use_profile(a.profile)
         sys.exit(0 if kernels(full=a.all)["passed"] else 1)
     elif a.cmd == "measure":
         measure(only=a.only)
