@@ -220,6 +220,14 @@ def _module_line(doc, n=170):
     return text[:cut + 1] if cut >= 60 else text[: n - 3] + "..."
 
 
+REDUCTION_NOTE = (
+    "- Reduction theorems: many library theorems have per-step or per-call hypotheses (one operation "
+    "preserves an invariant, one call moves value between potentials by a bounded amount, a call's effect "
+    "matches a specification) and conclude a statement about every sequence of operations or every reachable "
+    "state. To prove a requirement over sequences, apply such a theorem and prove its per-step hypotheses for "
+    "the implementation; requirements that are themselves per-call statements often supply them.")
+
+
 def library_brief(index, tools=True):
     """The prompt section on ProofForgeFin, generated from the library's declaration index."""
     by_kind = {}
@@ -245,6 +253,9 @@ def library_brief(index, tools=True):
         lines.append("- search_library finds library theorems, definitions and tactics by keywords, names or a "
                      "statement and returns each signature and doc string; search before proving a general fact "
                      "about rounding, shares, sequences of operations, ledgers or interest yourself.")
+    lines.append(REDUCTION_NOTE + (" Search for one (search_library with words such as run, sequence, invariant, "
+                                   "potential, bound, step) before proving a statement over sequences by hand."
+                                   if tools else ""))
     lines.append("Modules:")
     lines += [f"- {e['name']}: {_module_line(e.get('doc'))}" for e in mods]
     tactics = sorted({e["name"]: e for e in reversed(by_kind.get("tactic", []))}.values(), key=lambda e: e["name"])
