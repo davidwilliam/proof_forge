@@ -200,6 +200,7 @@ class Session:
         errf.flush()
         p = subprocess.Popen(cmd, cwd=self.ws, env=self.env, stdout=subprocess.PIPE, stderr=errf, text=True,
                              start_new_session=True)
+        self.proc = p
         info = {"part": n, "terminal": None, "run_usage": None, "exit": None, "killed": None}
 
         def reader():
@@ -333,6 +334,13 @@ def main():
 
     sid = str(uuid.uuid4())
     sess = Session(a, task, ws, out, meter, port, env, sid)
+
+    def interrupted(signum, frame):   # stop Muse Code (and through it the MCP server) with the runner
+        if getattr(sess, "proc", None) and sess.proc.poll() is None:
+            Session.kill(sess.proc)
+        sys.exit(128 + signum)
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGINT, interrupted)
     prompt = pathlib.Path(a.prompt_file).read_text() if a.prompt_file else prompt_for(task, a.arm)
     parts, stop, accepted, idle = [], None, False, 0
     for n in range(1, a.max_sessions + 1):
