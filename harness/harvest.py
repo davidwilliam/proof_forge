@@ -64,9 +64,9 @@ proof fails to compile counts as one obligation) are replaced by one fixed batte
 report counts the obligations each closes. The proof size of every source lemma that has a
 harvested counterpart is compared with a one-line proof by that lemma.
 
-Lean runs one container at a time with 4 CPUs, LEAN_NUM_THREADS=4 and 3 GB (PF_HARVEST_CPUS,
-PF_HARVEST_MEMORY), outside the judge's container slots, so measured runs sharing the host keep
-their slots.
+Lean runs one container at a time (PF_HARVEST_SLOTS raises it) with 4 CPUs, LEAN_NUM_THREADS=4
+and 3 GB (PF_HARVEST_CPUS, PF_HARVEST_MEMORY), outside the judge's container slots, so measured
+runs sharing the host keep their slots.
 
 Usage: harvest.py sources | run [--keep-work] | kernels | measure | report
 """
@@ -136,11 +136,35 @@ def _flock(path):
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
+@contextlib.contextmanager
+def _slot():
+    """One of PF_HARVEST_SLOTS (default 1) container slots: the first free lock file, else wait
+    for the first one."""
+    n = max(1, int(os.environ.get("PF_HARVEST_SLOTS", "1")))
+    paths = [fin_lib.CACHE / (".harvest-container.lock" if i == 0 else f".harvest-container-{i}.lock") for i in range(n)]
+    for p in paths[1:] + paths[:1]:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        f = open(p, "w")
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            f.close()
+            continue
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+            f.close()
+        return
+    with _flock(paths[0]):
+        yield
+
+
 def in_container(project, script, timeout=3600):
     """judge.in_container with 4 CPUs, LEAN_NUM_THREADS=4 and one harvest container at a time;
     it takes none of the judge's container slots."""
     script = f"export LEAN_NUM_THREADS=4; {script}"
-    with _flock(fin_lib.CACHE / ".harvest-container.lock"):
+    with _slot():
         if judge.IN_IMAGE:
             return judge.run(["bash", "-lc", f"cd '{project}' && {script}"], timeout=timeout)
         name = f"pf-harvest-{os.getpid()}-{time.monotonic_ns()}"
