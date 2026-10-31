@@ -32,9 +32,9 @@ import judge  # noqa: E402
 SAMPLES = 64          # instances per statement
 GEN_CASES = 40        # oracle cases whose JSON values seed the pools
 GEN_VALUES = 400      # most JSON values passed to the probe
-BASE_SECONDS = 40
-PER_LEMMA_SECONDS = 15
-MAX_SECONDS = 240
+BASE_SECONDS = 60
+PER_LEMMA_SECONDS = 20
+MAX_SECONDS = 300
 
 PROBE = r'''import Solution
 import Lean
@@ -143,10 +143,14 @@ partial def pool (ty : Expr) (js : Array Json) (fuel : Nat) : M (Array Expr) := 
   return res
 where
   go : M (Array Expr) := do
-    if fuel == 0 then return #[]
-    let fromGen ← jsonVals ty js
     let ty ← whnf ty
     let args := ty.getAppArgs
+    -- fuel bounds the nesting of constructors; base types and function codomains use none
+    let base := match ty.getAppFn with
+      | .const ``Nat _ | .const ``Int _ | .const ``Bool _ | .const ``String _ => true
+      | _ => ty.isForall
+    if fuel == 0 && !base then return #[]
+    let fromGen ← jsonVals ty js
     let generic : Array Expr ← match ty.getAppFn with
       | .const ``Nat _ => pure (natPool.map mkNatLit)
       | .const ``Int _ => pure (intPool.map toExpr)
@@ -185,7 +189,7 @@ where
       | .const c lvls => ofInductive c lvls args
       | _ =>
         if ty.isForall && !ty.bindingBody!.hasLooseBVars then do
-          let p ← pool ty.bindingBody! js (fuel - 1)
+          let p ← pool ty.bindingBody! js fuel
           pure ((p.extract 0 6).map fun b => Expr.lam `x ty.bindingDomain! b .default)
         else pure #[]
     return fromGen ++ generic.filter (!fromGen.contains ·)
@@ -325,7 +329,7 @@ def refuteOne (thm : Name) (js : Array Json) (n : Nat) : M String := do
           let some i ← synthInstance? t | return s!"{thm}\tunsupported\tno instance {clean (toString (← ppExpr t))}"
           vals := vals.push i
           continue
-        let p ← pool t js 4
+        let p ← pool t js 5
         if p.isEmpty then return s!"{thm}\tunsupported\tno values of type {clean (toString (← ppExpr t))}"
         vals := vals.push (← pick p k)
       -- then the determined binders: unify the binder's side with the evaluated other side
@@ -344,7 +348,7 @@ def refuteOne (thm : Name) (js : Array Json) (n : Nat) : M String := do
           vals := vals.set! i ((← bounded (reduce v)).getD v)
         else
           -- no value satisfies the hypothesis for these free values: a pool value makes it vacuous
-          let p ← pool t js 4
+          let p ← pool t js 5
           if p.isEmpty then
             vacuous := true
           else
