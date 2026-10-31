@@ -641,7 +641,7 @@ def sorry_goals(parent, cands, log=print):
     return res
 
 
-def measure_reprove(results, which, base, new, log=print, min_chars=100, only=None):
+def measure_reprove(results, which, base, new, log=print, min_chars=100, only=None, per_task=None):
     """Proofs of accepted runs re-proved by the battery: every theorem of an accepted run's final
     candidate other than the required ones, with a proof of at least `min_chars` characters
     other than whitespace, one per distinct statement of a task; its proof is replaced by the
@@ -676,6 +676,13 @@ def measure_reprove(results, which, base, new, log=print, min_chars=100, only=No
                  "file": r["final"], "theorems": pick}
             if only is None or c["id"] in only:
                 cands.append(c)
+    if per_task:
+        # The candidates of each task with the most proofs to re-prove, at most `per_task` of them.
+        by_task = collections.defaultdict(list)
+        for c in cands:
+            by_task[c["task"]].append(c)
+        cands = sorted((c for cs in by_task.values() for c in sorted(cs, key=lambda c: (-len(c["theorems"]), c["id"]))[:per_task]),
+                       key=lambda c: c["id"])
     parent = harvest.WORK / f"reprove-{which}"
     shutil.rmtree(parent, ignore_errors=True)
     parent.mkdir(parents=True)
@@ -784,6 +791,12 @@ def lemma_list(root=None):
             out.append({"module": m, "kind": "tactic", "name": syn.group(1)})
     return out
 
+def relative(text, results):
+    """Run paths as the repository names them (results/<run>/...), whichever checkout they were
+    read from."""
+    return text.replace(str(pathlib.Path(results).resolve()) + "/", "results/")
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -812,6 +825,7 @@ if __name__ == "__main__":
     a5.add_argument("--new", required=True)
     a5.add_argument("--min-chars", type=int, default=100)
     a5.add_argument("--only", nargs="*")
+    a5.add_argument("--per-task", type=int, help="at most this many accepted candidates per task (the ones with most proofs)")
     a5.add_argument("--out", required=True)
     a = ap.parse_args()
     split = load_split()
@@ -837,7 +851,7 @@ if __name__ == "__main__":
                "new_sha256": fin_lib.tree_sha256(a.new) if a.new else None, "battery": TACTICS + ["exact?"],
                "new_battery": TACTICS + NEW_TACTICS + ["exact?"] if a.new else None,
                "summary": summarize_open(cands, tags), "candidates": cands}
-        pathlib.Path(a.out).write_text(json.dumps(rec, indent=1, ensure_ascii=False) + "\n")
+        pathlib.Path(a.out).write_text(relative(json.dumps(rec, indent=1, ensure_ascii=False) + "\n", a.results))
         print(json.dumps(rec["summary"], indent=1))
     elif a.cmd == "kernels":
         harvest.OUT = OUT
@@ -848,9 +862,9 @@ if __name__ == "__main__":
             x["kind"] for x in ls), "declarations": ls}, indent=1, ensure_ascii=False) + "\n")
         print(collections.Counter(x["module"] for x in ls))
     elif a.cmd == "reprove":
-        cands = measure_reprove(a.results, a.set, a.base, a.new, min_chars=a.min_chars, only=a.only)
+        cands = measure_reprove(a.results, a.set, a.base, a.new, min_chars=a.min_chars, only=a.only, per_task=a.per_task)
         rec = {"set": a.set, "base_sha256": fin_lib.tree_sha256(a.base), "new_sha256": fin_lib.tree_sha256(a.new),
                "battery": TACTICS + ["exact?"], "new_battery": TACTICS + NEW_TACTICS + ["exact?"],
-               "min_chars": a.min_chars, "summary": summarize_reprove(cands), "candidates": cands}
-        pathlib.Path(a.out).write_text(json.dumps(rec, indent=1, ensure_ascii=False) + "\n")
+               "min_chars": a.min_chars, "per_task": a.per_task, "summary": summarize_reprove(cands), "candidates": cands}
+        pathlib.Path(a.out).write_text(relative(json.dumps(rec, indent=1, ensure_ascii=False) + "\n", a.results))
         print(json.dumps(rec["summary"], indent=1))
