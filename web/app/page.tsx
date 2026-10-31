@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { CheckFix } from "@/components/CheckFix";
 import { Pipeline } from "@/components/Pipeline";
+import { ProofGraph } from "@/components/ProofGraph";
 import { Status } from "@/components/ui";
 import {
   CETUS_HOTFIX,
@@ -38,6 +39,7 @@ import {
   type RealCodeRow,
 } from "@/lib/flagships";
 import { readRealworld } from "@/lib/generated";
+import { PROOF_GRAPH, layoutGraph } from "@/lib/proofgraph";
 import { EXPECTED_PROJECTS, describeInput, listWords, pendingProjects, type RwProject, type RwVersion } from "@/lib/realworld";
 
 const fmt = (n: number) => n.toLocaleString("en-US");
@@ -75,37 +77,46 @@ const longDay = (iso: string) =>
 export default function Home() {
   const rw = readRealworld();
   return (
-    <main className="page home">
-      <section className="hero" aria-labelledby="home-title">
-        <h1 id="home-title">{HEADLINE}</h1>
-        <p className="hero-sub">{SUMMARY.replace("Lean 4", "Lean 4")}</p>
-        <HeadlineFacts />
-        <div className="hero-grid">
-          <HeroCase f={FEATURED} />
-          <TrustModel />
-        </div>
-        <div className="hero-foot">
-          <div className="hero-facts">
-            <p>
-              Built during the {HACKATHON.event}: everything in the repository, from the judge, the Passport and the counterexample stage to the
-              real-world tasks, the ProofForgeFin library and this site, was created on or after the day of the first commit, {longDay(HACKATHON.firstCommit)};
-              submissions close {longDay(HACKATHON.submissionsDue)} (<a href={githubFile("ORIGIN.md")}>ORIGIN.md</a>).
-            </p>
-            <p>{SCOPE}</p>
+    <main id="main" className="home">
+      <section className="hero-band tone-dark" aria-labelledby="home-title">
+        <div className="hero-band-inner">
+          <div className="hero-top">
+            <div className="hero-copy">
+              <h1 id="home-title">{HEADLINE}</h1>
+              <p className="hero-sub">{SUMMARY.replace("Lean 4", "Lean 4")}</p>
+              <div className="hero-actions">
+                <a className="btn btn-primary" href="#check">
+                  Check a fix now
+                </a>
+                <a className="btn" href={githubFile(CETUS_HOTFIX.passport)}>
+                  Open the hotfix Passport
+                </a>
+                <Link className="btn" href="/results">
+                  Read the results
+                </Link>
+              </div>
+            </div>
+            <HeroGraph />
           </div>
-          <div className="hero-actions">
-            <a className="btn btn-primary" href="#check">
-              Check a fix now
-            </a>
-            <a className="btn" href={githubFile(CETUS_HOTFIX.passport)}>
-              Open the hotfix Passport
-            </a>
-            <Link className="btn" href="/results">
-              Read the results
-            </Link>
-          </div>
+          <HeadlineFacts />
         </div>
       </section>
+
+      <div className="page home-body">
+      <div className="hero-grid">
+        <HeroCase f={FEATURED} />
+        <TrustModel />
+      </div>
+      <div className="hero-foot">
+        <div className="hero-facts">
+          <p>
+            Built during the {HACKATHON.event}: everything in the repository, from the judge, the Passport and the counterexample stage to the
+            real-world tasks, the ProofForgeFin library and this site, was created on or after the day of the first commit, {longDay(HACKATHON.firstCommit)};
+            submissions close {longDay(HACKATHON.submissionsDue)} (<a href={githubFile("ORIGIN.md")}>ORIGIN.md</a>).
+          </p>
+          <p>{SCOPE}</p>
+        </div>
+      </div>
 
       <Comparison />
 
@@ -202,7 +213,33 @@ export default function Home() {
           </p>
         </div>
       </section>
+      </div>
     </main>
+  );
+}
+
+/** The live proof graph of the verified Balancer repair (generated/proof-graph.json), computed on the server. */
+function HeroGraph() {
+  const g = PROOF_GRAPH;
+  const layout = layoutGraph(g);
+  return (
+    <ProofGraph
+      layout={layout}
+      uses={g.edges}
+      readings={{
+        passport: g.passport.sha256,
+        status: g.passport.status,
+        requirements: g.passport.requirements,
+        verified: g.passport.verified,
+        kernels: g.passport.kernels,
+        propertyCases: g.passport.propertyCases,
+        axioms: g.passport.axioms,
+        declarations: g.counts.nodes,
+      }}
+      sourceFile={g.source.file}
+      passportHref={githubFile(g.passport.file)}
+      dataHref={githubFile("web/generated/proof-graph.json")}
+    />
   );
 }
 
