@@ -35,10 +35,14 @@ DIR[,DIR...]` starts from the best prior candidate (re-checked by Lean), carries
 proved declarations that still compile, works the goals they left open first and puts their failure
 notes into the prompts for those goals. summary.json records the run directories in `resumed_from`.
 
+Tactic portfolio (`--portfolio on`, the default; agents/portfolio.py): before the model spends a
+turn on an open goal, a fixed list of Lean tactics is tried on it in one batch, and the first proof
+that closes it is banked like a clean snippet. No dollars; the Lean time counts against the wall cap.
+
 Usage: repair.py [--task T] [--model muse-spark-1.3-contributor] [--planner muse-wonder-1.0|none]
                  [--mode repair|implement] [--loop orchestrated|free|topdown] [--library on|off]
                  [--budget-usd X] [--budget-wall S] [--out DIR] [--start FILE]
-                 [--resume-from DIR[,DIR...]]
+                 [--resume-from DIR[,DIR...]] [--portfolio on|off]
 """
 import argparse, hashlib, json, pathlib, re, shutil, sys, tempfile, time
 
@@ -48,7 +52,7 @@ sys.path.insert(0, str(ROOT / "harness"))
 from meta_client import chat, APIError, DeadlineReached  # noqa: E402
 from budget import Budget, BudgetExceeded, list_cost  # noqa: E402
 import judge, binary_check, fin_lib, task as taskmod  # noqa: E402
-import ledger  # noqa: E402
+import ledger, portfolio  # noqa: E402
 
 FORBIDDEN_TEXT = ("sorry, axiom, opaque, implemented_by, extern, unsafe, export, macro, elab, syntax, "
                   "initialize, #eval, run_cmd, native_decide, set_option")
@@ -385,6 +389,7 @@ class Session:
         self.prior_notes = {}
         self.resume_goals = []
         self.round_offset = 0
+        self.portfolio_seen = set()
         # Declaration boundary: the next top-level item, an `open` command or the namespace end.
         self.boundary = (r"(?:@\[|/--|private |protected |noncomputable |theorem |lemma |def |instance |abbrev "
                          rf"|structure |inductive |open |{re.escape(self.end)})")
@@ -1033,8 +1038,11 @@ def orchestrate(s, a, middle=None):
 def structured(s, a, system, spec):
     """Phases 1 and 2: per-obligation dialogs, then planner-assisted resolution rounds."""
     resume_phase(s, a, system, spec)
-    # Phase 1: one focused dialog per obligation, in the task's listed order.
+    # Phase 1: one focused dialog per obligation, in the task's listed order. The tactic portfolio
+    # first tries every pending required theorem in one batch.
     status = s.check_status()
+    if portfolio.close_goals(s, a, [t for t in s.theorems if status.get(t) != "PROVED"], "pass1"):
+        status = s.check_status()
     for t in s.theorems:
         if status.get(t) == "PROVED" or own_sorry_free(s, t):
             continue
@@ -1117,6 +1125,7 @@ def resolve(s, a, system, spec, name, depth, plan_text=""):
         prove_target(s, a, system, spec, name, a.obligation_turns, f"d{depth}", plan_text)
     if not own_sorry_free(s, name) and depth < a.max_depth and a.planner != "none" and name not in s.refuted:
         lemmas, text = plan(s, a, spec, name, s.plan_count)
+        portfolio.close_goals(s, a, lemmas, f"plan:{name}")
         for l in lemmas:
             resolve(s, a, system, spec, l, depth + 1, text)
         if name not in s.refuted:
@@ -1218,6 +1227,9 @@ def plan(s, a, spec, t, attempt):
 
 
 def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
+    if portfolio.close_goals(s, a, [t], label).get(t):
+        s.log(kind="obligation", label=label, theorem=t, ok=True, by="portfolio")
+        return True
     src = s._source()
     m = re.search(rf"theorem\s+{re.escape(t)}\b[^\n]*(?:\n(?!theorem|lemma|def|end )[^\n]*)*", src)
     stmt = (m.group(0).split(":= by")[0].split(":= sorry")[0] if m else t).strip()
@@ -1713,6 +1725,7 @@ def fill(s, a, system, spec, sk):
                                    "stuck": [h for h in hs if h["name"] not in s.refuted and attempts.get(h["name"])]}
         s.log(kind="fill_order", round=rnd, order=[{"name": h["name"], "users": len(h["users"]), "lib": h["lib"],
                                                      "attempts": attempts.get(h["name"], 0)} for h in todo])
+        portfolio.close_goals(s, a, [h["name"] for h in todo], f"fill{rnd}")
         for h in todo:
             if own_sorry_free(s, h["name"]):
                 continue
@@ -1792,8 +1805,8 @@ def topdown_phases(s, a, system, spec):
 def resume_phase(s, a, system, spec, helpers_only=False):
     """A resumed run works the goals its prior attempts left open first (helpers, then required
     theorems; helpers only in the top-down loop, whose structure phase handles required theorems):
-    one dialog per goal still open, with the prior attempts' failure notes in its prompt
-    (prove_target)."""
+    the tactic portfolio on all of them in one batch, then one dialog per goal still open, with the
+    prior attempts' failure notes in its prompt (prove_target)."""
     goals = [g for g in s.resume_goals if decl_text(s, g) and not own_sorry_free(s, g)
              and not (helpers_only and g in s.theorems)]
     s.resume_goals = [g for g in s.resume_goals if g not in goals]
@@ -1801,6 +1814,7 @@ def resume_phase(s, a, system, spec, helpers_only=False):
         return
     s.log(kind="phase", phase="resume", goals=goals)
     s.targets.update(g for g in goals if g not in s.theorems)
+    portfolio.close_goals(s, a, goals, "resume")
     for g in goals:
         if not own_sorry_free(s, g):
             prove_target(s, a, system, spec, g, a.obligation_turns, "resume")
@@ -1909,6 +1923,12 @@ def parser():
     ap.add_argument("--resume-from", help="comma-separated run directories (or ledger.json files) of prior attempts on "
                                           "the same task and locked spec: start from their best candidate and their "
                                           "proved declarations (re-checked by Lean), open goals first")
+    ap.add_argument("--portfolio", default="on", choices=["on", "off"],
+                    help="on (default): try a fixed list of Lean tactics on an open goal before a model turn")
+    ap.add_argument("--portfolio-heartbeats", type=int, default=portfolio.HEARTBEATS,
+                    help="per-tactic limit of the portfolio, in Lean maxHeartbeats units")
+    ap.add_argument("--portfolio-seconds", type=float, default=portfolio.SECONDS,
+                    help="wall allowance per portfolio attempt; a batch is stopped after 120 s plus this per attempt")
     return ap
 
 
@@ -1974,6 +1994,8 @@ def main():
         elif a.loop == "topdown":
             topdown(s, a)
         else:
+            status = s.check_status()
+            portfolio.close_goals(s, a, [t for t, v in status.items() if v != "PROVED"], "free")
             dialog(s, a.model, a.effort, system_prompt(s),
                    "Begin. The current candidate is candidate/Solution.lean."
                    + (f"\n\nPrevious attempts on this task ended as follows; do not repeat what failed:\n"
@@ -1983,7 +2005,9 @@ def main():
         s.log(kind="budget_stop", reason=str(e))
         print(f"budget exhausted: {e}", flush=True)
     summary = finish(s, out, arm, {"mode": a.loop, "task_mode": a.mode, "effort": a.effort, "planner": a.planner,
-                                   "library": library_summary(s)})
+                                   "library": library_summary(s),
+                                   "portfolio": {"enabled": a.portfolio == "on", "heartbeats": a.portfolio_heartbeats,
+                                                 "seconds": a.portfolio_seconds}})
     print(json.dumps(summary))
 
 
