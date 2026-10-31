@@ -123,6 +123,17 @@ def test_output_allowance_is_lowered_to_fit_the_cap():
     m.stop()
 
 
+def test_output_allowance_is_at_most_32000():
+    up = Upstream()
+    m = meter.Meter(tempfile.mkdtemp(), usd_cap=10, wall_cap=600, upstream=up.url)
+    port = m.start()
+    post(port, request(max_out=128000))
+    post(port, request(max_out=4000))
+    assert [x["body"]["max_output_tokens"] for x in up.seen] == [32000, 4000]
+    assert m.in_flight() == 0
+    m.stop()
+
+
 def test_refuses_when_the_cap_cannot_fit_and_sets_stop():
     up = Upstream()
     m = meter.Meter(tempfile.mkdtemp(), usd_cap=0.001, wall_cap=600, upstream=up.url)
@@ -132,6 +143,24 @@ def test_refuses_when_the_cap_cannot_fit_and_sets_stop():
     assert m.stopped == "usd" and not up.seen
     status, _ = post(port, request())
     assert status == 400
+    m.stop()
+
+
+def test_call_waits_for_calls_in_flight_before_refusing():
+    """Near the cap, a call that fits only after another call settles waits instead of stopping the run."""
+    import time as _time
+    up = Upstream()
+    usd = budget.list_cost(MODEL, {"prompt_tokens": 2600, "completion_tokens": 20000}) * 1.03
+    m = meter.Meter(tempfile.mkdtemp(), usd_cap=usd, wall_cap=600, upstream=up.url)
+    first = m.admit(request(max_out=20000), 200)         # an open reservation holding most of the cap
+    out = {}
+    t = threading.Thread(target=lambda: out.update(r=m.admit(request(max_out=20000), 200)))
+    t.start()
+    _time.sleep(1.0)
+    assert t.is_alive() and not m.stopped               # waiting, not refused
+    m.settle(first[0], {"prompt_tokens": 100, "completion_tokens": 10}, {"role": "main"})
+    t.join(5)
+    assert "r" in out and not m.stopped, (out, m.stopped)
     m.stop()
 
 

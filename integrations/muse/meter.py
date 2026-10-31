@@ -8,15 +8,19 @@ unchanged except for one field, streams the response back, and reads the usage o
 its `response.completed` event.
 
 Budget rule (the same as agents/budget.py for the A0, A1 and A2 arms):
+  - `max_output_tokens` is at most 32,000 per call (Muse Code asks for 128,000), the allowance
+    the A0, A1 and A2 agents get;
   - before a request is forwarded, its worst case (every byte of the request body counted as an
     uncached input token at list price, plus `max_output_tokens` of output) is reserved;
-    `max_output_tokens` is lowered so that the worst case fits the dollars left, and a request
-    whose worst case cannot fit with at least 1,024 output tokens is refused;
+    `max_output_tokens` is lowered so that the worst case fits the dollars left; a request whose
+    worst case does not fit with at least 1,024 output tokens waits while other calls are in flight
+    (their settlement frees their reservations) and is refused when none is;
   - a call is settled to its reported usage when its `response.completed` event arrives; a call
     whose response ends without usage, fails or is cut off stays charged at its worst case;
   - every model id is priced at the standard-tier list price (Contributor-tier calls included),
     and the amount charged at the tier actually used is tracked separately.
-When a request is refused, `stopped` is set; the runner then ends the Muse Code process.
+When a request is refused, `stopped` is set; the runner lets the calls already in flight settle
+and then ends the Muse Code process.
 
 The proxy never logs request headers (the API key travels in `Authorization`) or message
 contents. `calls.jsonl` records, per call: time, model, request size, requested and granted
@@ -31,6 +35,7 @@ from budget import Budget, BudgetExceeded, list_cost, actual_cost  # noqa: E402
 
 UPSTREAM = "https://api.meta.ai/v1"
 MIN_OUTPUT = 1024
+MAX_OUTPUT = 32000   # per call, as for the A0, A1 and A2 agents (agents/repair.py Session.call)
 FORWARD_HEADERS = {"authorization", "content-type", "accept", "user-agent", "openai-beta", "idempotency-key"}
 HOP = {"connection", "keep-alive", "transfer-encoding", "content-length", "content-encoding", "proxy-connection"}
 
@@ -59,12 +64,14 @@ def caller_role(body):
 class Meter:
     """Proxy state: the budget, the call log and the stop flag. Thread-safe."""
 
-    def __init__(self, out_dir, usd_cap=None, wall_cap=None, upstream=UPSTREAM, model_override=None):
+    def __init__(self, out_dir, usd_cap=None, wall_cap=None, upstream=UPSTREAM, model_override=None,
+                 max_output=MAX_OUTPUT):
         self.out = pathlib.Path(out_dir)
         self.out.mkdir(parents=True, exist_ok=True)
         self.budget = Budget(usd_cap, wall_cap)
         self.upstream = urllib.parse.urlsplit(upstream.rstrip("/"))
         self.model_override = model_override
+        self.max_output = max_output
         self.lock = threading.Lock()
         self.stopped = None
         self.calls = 0
@@ -77,17 +84,25 @@ class Meter:
         BudgetExceeded when the request cannot fit."""
         model = body.get("model") or ""
         n_items = len(body.get("input") or []) + 1
-        want = int(body.get("max_output_tokens") or 128000)
-        with self.lock:
-            if self.stopped:
-                raise BudgetExceeded(self.stopped)
-            try:
-                mt, _ = self.budget.call_limits(model, nbytes, n_items, want, 3600, min_tokens=MIN_OUTPUT)
-            except BudgetExceeded as e:
-                self.stopped = str(e)
-                raise
-            tok = self.budget.reserve(model, nbytes, n_items, mt)
-        return tok, mt
+        want = min(int(body.get("max_output_tokens") or self.max_output), self.max_output)
+        while True:
+            with self.lock:
+                if self.stopped:
+                    raise BudgetExceeded(self.stopped)
+                try:
+                    mt, _ = self.budget.call_limits(model, nbytes, n_items, want, 3600, min_tokens=MIN_OUTPUT)
+                except BudgetExceeded as e:
+                    # A call that does not fit beside the worst cases of calls still in flight waits
+                    # for them to settle; the run stops only when it does not fit with none open.
+                    if str(e) == "usd" and self.budget.reserved_open > 0:
+                        self.budget.stop = None
+                    else:
+                        self.stopped = str(e)
+                        raise
+                else:
+                    tok = self.budget.reserve(model, nbytes, n_items, mt)
+                    return tok, mt
+            time.sleep(0.5)
 
     def settle(self, tok, usage, rec):
         with self.lock:
@@ -110,6 +125,10 @@ class Meter:
                        run_usd_list=round(self.budget.usd_list, 4))
             with (self.out / "calls.jsonl").open("a") as f:
                 f.write(json.dumps(rec) + "\n")
+
+    def in_flight(self):
+        with self.lock:
+            return self.budget.reserved_open
 
     def summary(self):
         with self.lock:
