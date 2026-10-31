@@ -58,7 +58,7 @@ library: `results/library-live-1`, Passport `b654d456`.
 - **Orchestrated loop (A2-1, A2-2):** it works through the requirements in listed order and spends the budget on the per-call requirements before it reaches the three sequence bounds.
 - **A2-topdown-1:** Lean accepted the skeleton on the first try, and it proved 6 of its 15 helpers. A pruning step removed the one-step helpers, because nothing used them yet while the run-level helpers were still `sorry`. Fixed in 492a8ae.
 - **A2-topdown-2:** a short first attempt for every helper (`--probe-turns 5`) with planner decomposition after it sent 45% of the dollars to Muse Wonder and closed no helper. That change was dropped. Its commit, 17e31c1, is kept under the tag `topdown-fill-probe`.
-- **A2-topdown-3:** it proved 7 helpers below the bounds and stopped at the same two one-step lemmas, `td0_exec_inv` and `td0_exec_potentialTo_le`.
+- **A2-topdown-3:** it proved 7 helpers below the bounds. Lean's record of the final file (web/generated/shapes, docs/SHAPES.md) shows 11 lemmas left `sorry` inside the guarantees' shapes: `td0_exec_inv` under all three sequence bounds, `td0_exec_potentialTo_le` under ACCOUNT-BOUNDED and NO-BACKDATED-REWARDS, four more under REWARDS-BOUNDED and NO-BACKDATED-REWARDS, and one under each per-call guarantee.
 
 Some final files keep exploration artifacts: `#check` lines and throwaway lemmas, for example
 `fooTest123` in A2-1. They do not affect the status of any requirement.
