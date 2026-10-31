@@ -9,6 +9,7 @@ This describes the system as built. Each section names the code that implements 
 | Task | `formal/`, `tasks/<id>/`, `harness/task.py`, `harness/lock.py` | one locked Lean project: protected spec, challenge, executable wrapper, oracle |
 | Judge | `harness/judge.py` | decides proof acceptance from exit codes only |
 | Library | `lib/`, `harness/fin_lib.py`, `harness/FinIndex.lean` | ProofForgeFin: vendored into judged projects, bound into Passports, indexed for the repair agent |
+| Proof harvesting | `harness/harvest.py` | helper lemmas of verified candidates into `ProofForgeFin.Harvested`, with provenance; `docs/HARVEST.md` |
 | Binary check | `harness/binary_check.py` | rebuilds the executable and runs requirement-derived property tests |
 | Counterexample stage | `harness/counterexample.py`, `counterexamples/` | turns a refuted requirement's witness into a refutation checked by the kernel |
 | Passport | `harness/passport.py`, `bin/proofforge` | assembles statuses, hashes and provenance; reproduces a Passport |
