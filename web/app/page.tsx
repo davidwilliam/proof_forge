@@ -42,7 +42,7 @@ import {
 import { readRealworld } from "@/lib/generated";
 import { PROOF_GRAPH, layoutGraph } from "@/lib/proofgraph";
 import { GRAPH_TASK, bellOf, guarantees, layoutLayers } from "@/lib/lenses";
-import { holeView } from "@/lib/hole";
+import { holeRun } from "@/lib/hole";
 import { EXPECTED_PROJECTS, describeInput, listWords, pendingProjects, type RwProject, type RwVersion } from "@/lib/realworld";
 
 const fmt = (n: number) => n.toLocaleString("en-US");
@@ -217,7 +217,7 @@ function HeroGraph() {
       layers={layoutLayers(g)}
       guarantees={gs}
       bells={gs.map((x) => bellOf(x.node, g))}
-      hole={holeView()}
+      hole={holeRun()}
       initial={gs.findIndex((x) => x.size === Math.max(...gs.map((y) => y.size)))}
       uses={g.edges}
       readings={{

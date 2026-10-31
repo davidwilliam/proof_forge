@@ -36,6 +36,12 @@ export const README_STATEMENTS: Record<string, string> = {
 };
 
 /**
+ * A quoted statement for display: its first letter capitalized, the rest verbatim. A statement that
+ * continues the row above it ("and at least ...") keeps its lower case after an ellipsis.
+ */
+export const displayQuote = (s: string) => (s.startsWith("and ") ? `\u2026${s}` : s.charAt(0).toUpperCase() + s.slice(1));
+
+/**
  * A short plain name from a locked requirement ID: its words in lower case without "REQ", and
  * without "given in" or "given out" before a verb that already says which kind of swap it is
  * (only a given-in swap pays out, only a given-out swap is charged).

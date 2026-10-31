@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import type { GraphLayout, PlacedNode } from "@/lib/proofgraph";
-import { bellPoint, type Bell, type Guarantee, type LayersLayout } from "@/lib/lenses";
-import type { HoleView } from "@/lib/hole";
+import { bellPoint, displayQuote, type Bell, type Guarantee, type LayersLayout } from "@/lib/lenses";
+import type { HoleRun } from "@/lib/hole";
 import { LensEngine, type LensIndex } from "@/components/lens-engine";
 
 export interface Readings {
@@ -32,8 +32,8 @@ export interface HeroLensesProps {
   actions: ReactNode;
   /** Index of the guarantee shown first. */
   initial: number;
-  /** "A guarantee with a hole": one guarantee of a run that did not verify. */
-  hole: HoleView;
+  /** "A guarantee with a hole": the guarantees of a run that did not verify. */
+  hole: HoleRun;
 }
 
 const LENSES = ["The whole proof", "The layers", "One guarantee"] as const;
@@ -62,13 +62,16 @@ function radialPath(a: { x: number; y: number }, b: { x: number; y: number }, c:
   return `M${a.x} ${a.y}Q${qx.toFixed(1)} ${qy.toFixed(1)} ${b.x} ${b.y}`;
 }
 
-const quoteOf = (s: string) => (s.startsWith("and ") ? `\u2026${s}` : s);
+/** A quoted statement: first letter capitalized, the rest verbatim, `code` spans set as code. */
+function Quote({ text: t }: { text: string }) {
+  const parts = displayQuote(t).split("`");
+  return <>{parts.map((x, i) => (i % 2 ? <code key={i}>{x}</code> : x))}</>;
+}
 const words = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
 const count = (n: number) => words[n] ?? String(n);
 
 /** A node of the run with a hole: the hole is a dark gap, the declarations that use it red. */
-function HoleMark({ n }: { n: HoleView["nodes"][number] }) {
-  if (n.role === "top") return null;
+function HoleMark({ n }: { n: HoleRun["nodes"][number] }) {
   if (n.role === "hole")
     return (
       <>
@@ -92,6 +95,7 @@ export function HeroLenses(props: HeroLensesProps) {
   const [g, setG] = useState(props.initial);
   const [active, setActive] = useState<string | null>(null);
   const [holeOn, setHoleOn] = useState(false);
+  const [hg, setHg] = useState(hole.initial);
 
   // Dependency cones for hover.
   const usedBy = useMemo(() => {
@@ -128,12 +132,12 @@ export function HeroLenses(props: HeroLensesProps) {
   const inView = useRef(true);
   const holeOnRef = useRef(false);
   const holeIndex = useMemo(() => new Map(hole.nodes.map((n, i) => [n.id, i])), [hole]);
-  // Where each node of the run with a hole sits on its bell before it turns.
+  // Where each node of the run with a hole sits before it turns: on the first bell, or at its axis.
   const holeStart = useMemo(() => {
     const at = new Map<string, { x: number; y: number }>();
-    for (const l of hole.bell.levels) l.ids.forEach((id, i) => at.set(id, bellPoint(l, i, 0.35)));
-    return hole.nodes.map((n) => at.get(n.id)!);
-  }, [hole]);
+    for (const l of hole.bells[hole.initial]!.levels) l.ids.forEach((id, i) => at.set(id, bellPoint(l, i, 0.35)));
+    return hole.nodes.map((n) => at.get(n.id) ?? { x: c, y: 320 });
+  }, [hole, c]);
 
   useEffect(() => {
     const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -171,12 +175,12 @@ export function HeroLenses(props: HeroLensesProps) {
         kernelsRadial: [],
         rings: [],
         orbitRadius: 0,
-        bells: [hole.bell],
+        bells: hole.bells,
       },
       { nodes: holeNodeEls.current, edges: holeEdgeEls.current, kernels: [], spokes: [], rings: holeRingEls.current, orbit: null, core: holeCoreEl.current },
       reduced,
     );
-    h.set(2, 0, true);
+    h.set(2, hole.initial, true);
     h.setVisible(false);
     holeEngine.current = h;
     const io = new IntersectionObserver(([x]) => {
@@ -194,6 +198,7 @@ export function HeroLenses(props: HeroLensesProps) {
     };
   }, [nodes, edges, kernels, rings, orbit, layers, bells, index, hole, holeIndex, holeStart]);
 
+  useEffect(() => holeEngine.current?.set(2, hg), [hg]);
   useEffect(() => {
     holeOnRef.current = holeOn;
     engine.current?.setVisible(inView.current && !holeOn);
@@ -323,14 +328,17 @@ export function HeroLenses(props: HeroLensesProps) {
     setHoleOn(false);
     setG(i);
   };
-  const barKeys = (e: KeyboardEvent<HTMLButtonElement>) => {
-    const n = guarantees.length;
+  const barKeys = (n: number, at: number, select: (i: number) => void, prefix: string) => (e: KeyboardEvent<HTMLButtonElement>) => {
     const k = e.key;
-    const to = k === "ArrowRight" || k === "ArrowDown" ? (g + 1) % n : k === "ArrowLeft" || k === "ArrowUp" ? (g + n - 1) % n : k === "Home" ? 0 : k === "End" ? n - 1 : -1;
+    const to = k === "ArrowRight" || k === "ArrowDown" ? (at + 1) % n : k === "ArrowLeft" || k === "ArrowUp" ? (at + n - 1) % n : k === "Home" ? 0 : k === "End" ? n - 1 : -1;
     if (to < 0) return;
     e.preventDefault();
-    pick(to);
-    document.getElementById(`hl-bar-${to}`)?.focus();
+    select(to);
+    document.getElementById(`${prefix}-${to}`)?.focus();
+  };
+  const pickHole = (i: number) => {
+    stopTour();
+    setHg(i);
   };
 
   // Readout of the radial lens's check.
@@ -349,13 +357,15 @@ export function HeroLenses(props: HeroLensesProps) {
   );
   const shown = active ? nodes[index.get(active)!] : undefined;
   const maxSize = Math.max(...guarantees.map((x) => x.size));
+  const holeMax = Math.max(...hole.guarantees.map((x) => x.size));
   const cur = guarantees[g]!;
+  const hcur = hole.guarantees[hg]!;
 
   const label = [
     `Dependency graph of the verified Balancer V2 repair: ${readings.requirements} requirement theorems in the centre, the lemmas and definitions they use around them, checked by ${readings.kernels.length} kernels on the outer orbit.`,
     `The same graph in layers: the ${readings.requirements} requirement theorems on top, the lemmas in the middle, the definitions and types at the bottom, the ${readings.kernels.length} kernels on an orbit.`,
     holeOn
-      ? `The declarations ${hole.guarantee.id} of the ${hole.task.name} run ${hole.run.dir.split("/").pop()} rests on, stacked by depth: ${hole.guarantee.size} declarations on ${hole.guarantee.levels} levels, with ${count(hole.holes.length)} lemmas left unproved (${hole.holes.map((x) => x.id).join(", ")}); the guarantee does not hold.`
+      ? `The declarations ${hcur.id} of the ${hole.task.name} run ${hole.run.name} rests on, stacked by depth: ${hcur.size} declarations on ${hcur.levels} levels, ${hcur.holes.length ? `with ${count(hcur.holes.length)} left as sorry (${hcur.holes.map((x) => x.id).join(", ")}); the guarantee does not hold.` : "all proved."}`
       : `The declarations ${cur.id} rests on, stacked by depth: ${cur.size} declarations on ${cur.levels} levels, from the top ${cur.widths.join(", ")}.`,
   ][lens];
 
@@ -385,7 +395,9 @@ export function HeroLenses(props: HeroLensesProps) {
               {guarantees.map((x, i) => (
                 <div key={x.id} className="hl-layer hl-guarantee" data-on={(!holeOn && i === g) || undefined} aria-hidden={holeOn || i !== g}>
                   <blockquote className="hl-quote">
-                    <p>&ldquo;{quoteOf(x.statement)}&rdquo;</p>
+                    <p>
+                      &ldquo;<Quote text={x.statement} />&rdquo;
+                    </p>
                   </blockquote>
                   <p className="hl-cite">
                     <code>{x.id}</code>, locked in the {text.task} task (from its README).
@@ -416,34 +428,51 @@ export function HeroLenses(props: HeroLensesProps) {
                   </dl>
                 </div>
               ))}
-              <div className="hl-layer hl-guarantee hl-holetext" data-on={holeOn || undefined} aria-hidden={!holeOn}>
-                <blockquote className="hl-quote">
-                  <p>&ldquo;{quoteOf(hole.guarantee.quote)}&rdquo;</p>
-                </blockquote>
-                <p className="hl-cite">
-                  <code>{hole.guarantee.id}</code>, locked in the {hole.task.name} task (from its README). In run {hole.run.dir.split("/").pop()},
-                  Muse left {count(hole.holes.length)} lemmas of its proof as <code>sorry</code>
-                  {hole.openInEveryRun.open ? `; it is open in all ${count(hole.openInEveryRun.runs)} ${hole.task.name} runs measured` : ""}.
-                </p>
-                <dl className="hl-readings">
-                  <div>
-                    <dt>Declarations</dt>
-                    <dd>{hole.guarantee.size}</dd>
+              {hole.guarantees.map((x, i) => {
+                const lemmas = x.holes.every((h) => h.kind === "lemma");
+                const n = x.holes.length;
+                return (
+                  <div key={x.id} className="hl-layer hl-guarantee hl-holetext" data-on={(holeOn && i === hg) || undefined} aria-hidden={!holeOn || i !== hg}>
+                    <blockquote className={`hl-quote${x.quote.length > 160 ? " hl-quote-long" : ""}`}>
+                      <p>
+                        &ldquo;<Quote text={x.quote} />&rdquo;
+                      </p>
+                    </blockquote>
+                    <p className="hl-cite">
+                      <code>{x.id}</code>, locked in the {hole.task.name} task (
+                      {x.quoteFrom.kind === "readme" ? "from its README" : "the doc comment in its locked specification"}). In run {hole.run.name},{" "}
+                      {n
+                        ? `Muse left ${count(n)} ${lemmas ? (n === 1 ? "lemma" : "lemmas") : n === 1 ? "declaration" : "declarations"} of its proof as`
+                        : "Muse proved every declaration of its shape"}
+                      {n ? (
+                        <>
+                          {" "}
+                          <code>sorry</code>
+                        </>
+                      ) : null}
+                      {x.openInEveryRun ? `; it is open in all ${count(hole.runsMeasured)} ${hole.task.name} runs measured` : ""}.
+                    </p>
+                    <dl className="hl-readings">
+                      <div>
+                        <dt>Declarations</dt>
+                        <dd>{x.size}</dd>
+                      </div>
+                      <div>
+                        <dt>Levels</dt>
+                        <dd>{x.levels}</dd>
+                      </div>
+                      <div>
+                        <dt>Holes</dt>
+                        <dd className={n ? "hl-bad" : undefined}>{n}</dd>
+                      </div>
+                      <div>
+                        <dt>Passport</dt>
+                        <dd className="hl-none">none</dd>
+                      </div>
+                    </dl>
                   </div>
-                  <div>
-                    <dt>Levels</dt>
-                    <dd>{hole.guarantee.levels}</dd>
-                  </div>
-                  <div>
-                    <dt>Holes</dt>
-                    <dd className="hl-bad">{hole.holes.length}</dd>
-                  </div>
-                  <div>
-                    <dt>Passport</dt>
-                    <dd className="hl-none">none</dd>
-                  </div>
-                </dl>
-              </div>
+                );
+              })}
             </div>
             <button
               type="button"
@@ -658,7 +687,7 @@ export function HeroLenses(props: HeroLensesProps) {
                     </g>
                   ))}
                 </g>
-                <g ref={holeCoreEl} transform={`translate(${c} ${hole.bell.levels[0]!.y})`}>
+                <g ref={holeCoreEl} transform={`translate(${c} ${hole.bells[hole.initial]!.levels[0]!.y})`}>
                   <rect className="hl-crown-empty" x={-15} y={-15} width={30} height={30} rx={2} />
                 </g>
               </g>
@@ -709,22 +738,48 @@ export function HeroLenses(props: HeroLensesProps) {
                 </p>
               </div>
             </div>
-            <div className="hl-layer hl-bars" data-on={lens === 2 || undefined} data-dim={holeOn || undefined} role="radiogroup" aria-label="Guarantee of the verified repair" aria-hidden={lens !== 2}>
+            <div className="hl-layer hl-bars" data-on={(lens === 2 && !holeOn) || undefined} role="radiogroup" aria-label="Guarantee of the verified Balancer V2 repair" aria-hidden={lens !== 2 || holeOn}>
               {guarantees.map((x, i) => (
                 <button
                   key={x.id}
                   id={`hl-bar-${i}`}
                   type="button"
                   role="radio"
-                  aria-checked={!holeOn && i === g}
-                  aria-label={`${x.short}, ${x.id}: ${x.size} declarations`}
-                  tabIndex={lens === 2 && (holeOn ? i === 0 : i === g) ? 0 : -1}
+                  aria-checked={i === g}
+                  aria-label={`${x.short}, ${x.id}: ${x.size} declarations, proved`}
+                  tabIndex={lens === 2 && !holeOn && i === g ? 0 : -1}
                   onClick={() => pick(i)}
-                  onKeyDown={barKeys}
+                  onKeyDown={barKeys(guarantees.length, g, pick, "hl-bar")}
                 >
                   <span className="hl-bar-n">{x.size}</span>
                   <span className="hl-bar-track">
                     <span className="hl-bar" style={{ height: `${((x.size / maxSize) * 100).toFixed(1)}%` }} />
+                  </span>
+                  <span className="hl-bar-name">
+                    {x.lines.map((line, j) => (
+                      <span key={j}>{line}</span>
+                    ))}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="hl-layer hl-bars hl-bars-hole" data-on={(lens === 2 && holeOn) || undefined} role="radiogroup" aria-label={`Guarantee of the ${hole.task.name} run ${hole.run.name}`} aria-hidden={lens !== 2 || !holeOn}>
+              {hole.guarantees.map((x, i) => (
+                <button
+                  key={x.id}
+                  id={`hl-hbar-${i}`}
+                  type="button"
+                  role="radio"
+                  data-state={x.complete ? "complete" : "open"}
+                  aria-checked={i === hg}
+                  aria-label={`${x.short}, ${x.id}: ${x.size} declarations, ${x.complete ? "proved" : `hangs from ${x.holes.length} ${x.holes.length === 1 ? "hole" : "holes"}`}`}
+                  tabIndex={lens === 2 && holeOn && i === hg ? 0 : -1}
+                  onClick={() => pickHole(i)}
+                  onKeyDown={barKeys(hole.guarantees.length, hg, pickHole, "hl-hbar")}
+                >
+                  <span className="hl-bar-n">{x.size}</span>
+                  <span className="hl-bar-track">
+                    <span className="hl-bar" style={{ height: `${((x.size / holeMax) * 100).toFixed(1)}%` }} />
                   </span>
                   <span className="hl-bar-name">
                     {x.lines.map((line, j) => (
