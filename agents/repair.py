@@ -36,6 +36,13 @@ import judge, binary_check, fin_lib, task as taskmod  # noqa: E402
 FORBIDDEN_TEXT = ("sorry, axiom, opaque, implemented_by, extern, unsafe, export, macro, elab, syntax, "
                   "initialize, #eval, run_cmd, native_decide, set_option")
 
+# What may precede a declaration keyword on its first line: `open X in` (a snippet's `open`
+# lines are banked that way, see Session._snippet_opens), attributes and modifiers.
+DECL_PREFIX = (r"(?:open\s[^\n]*?\bin\s+)?(?:@\[[^\]]*\]\s*)?"
+               r"(?:private\s+|protected\s+|noncomputable\s+)*")
+DECL_KINDS = r"(?:theorem|lemma|def|instance|abbrev|structure|inductive)"
+OPEN_IN = re.compile(r"^open\s[^\n]*?\bin\b")
+
 
 def task_brief(task, mode="repair"):
     """Task description and rules shared by every arm. In implement mode the issue report is
@@ -269,7 +276,7 @@ def tools_for(task, library=False):
          "parameters": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]}}},
         {"type": "function", "function": {"name": "replace_declaration", "description": f"Replace one top-level declaration (def, theorem, lemma, instance) in candidate/Solution.lean, identified by its name, with the given full text. If no declaration has that name, the text is inserted before `end {task.ns}`.",
          "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "text": {"type": "string"}}, "required": ["name", "text"]}}},
-        {"type": "function", "function": {"name": "try_snippet", "description": f"Compile the given Lean code appended inside `namespace {task.ns}` after the current candidate, without modifying the file. Returns errors and unsolved goals in the snippet.",
+        {"type": "function", "function": {"name": "try_snippet", "description": f"Compile the given Lean code appended inside `namespace {task.ns}` after the current candidate, without modifying the file. Returns errors and unsolved goals in the snippet." + (" `import ProofForgeFin...` lines in the snippet are moved to the file header (and added to candidate/Solution.lean when the snippet compiles); `open` lines apply to the snippet's later declarations." if library else ""),
          "parameters": {"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]}}},
         {"type": "function", "function": {"name": "check", "description": "Compile candidate/Solution.lean. Returns Lean errors with goal states, remaining sorries and rule violations. If it compiles cleanly, runs the official judge and returns ACCEPTED or the rejection reason.",
          "parameters": {"type": "object", "properties": {}}}},
@@ -304,8 +311,9 @@ class Session:
         self.accepted = False
         self.last_good = None  # source of the newest version known to compile
         self.events = []
-        # Declaration boundary: the next top-level item or the namespace end.
-        self.boundary = rf"(?:@\[|/--|private |protected |theorem |lemma |def |instance |abbrev |{re.escape(self.end)})"
+        # Declaration boundary: the next top-level item, an `open` command or the namespace end.
+        self.boundary = (r"(?:@\[|/--|private |protected |noncomputable |theorem |lemma |def |instance |abbrev "
+                         rf"|structure |inductive |open |{re.escape(self.end)})")
 
     def call(self, model, messages, purpose, tools=None, max_tokens=32000, timeout=600, attempts=5, **extra):
         """One model call inside the budget. Every attempt is reserved at its worst case
@@ -367,8 +375,7 @@ class Session:
         self._save(content, "write_solution")
         return f"written (version {self.version}, {len(content)} bytes)"
 
-    DECL = re.compile(r"^(?:@\[[^\]]*\]\s*)?(?:private\s+|protected\s+|noncomputable\s+)*"
-                      r"(?:theorem|lemma|def|instance|abbrev)\s+([^\s:({\[]+)", re.M)
+    DECL = re.compile(rf"^{DECL_PREFIX}{DECL_KINDS}\s+([^\s:({{\[]+)", re.M)
 
     def _source(self):
         return (self.ws / "candidate/Solution.lean").read_text()
@@ -377,7 +384,7 @@ class Session:
         """Keep the required theorems at the end of the file, after every helper."""
         chunks = []
         for t in self.theorems:
-            m = re.search(rf"^theorem\s+{re.escape(t)}\b", text, re.M)
+            m = re.search(rf"^{DECL_PREFIX}theorem\s+{re.escape(t)}(?![\w.'])", text, re.M)
             if not m:
                 continue
             rest = text[m.end():]
@@ -411,13 +418,16 @@ class Session:
         if hit:
             k = hit[0]
             a = starts[k][0]
-            while a > 0 and (lines[a - 1].startswith("@[") or lines[a - 1].rstrip().endswith("-/")):
+            while a > 0 and (lines[a - 1].startswith("@[") or lines[a - 1].rstrip().endswith("-/")
+                             or OPEN_IN.match(lines[a - 1])):
                 if lines[a - 1].rstrip().endswith("-/"):
                     while a > 0 and not lines[a - 1].lstrip().startswith("/-"):
                         a -= 1
                 a -= 1
             b = starts[k + 1][0] if k + 1 < len(starts) else (ends_at[-1] if ends_at else len(lines))
-            while b - 1 > a and (lines[b - 1].startswith("@[") or lines[b - 1].strip() == ""):
+            # `open` commands between declarations are not part of the one replaced.
+            while b - 1 > a and (lines[b - 1].startswith("@[") or lines[b - 1].strip() == ""
+                                 or lines[b - 1].startswith("open ")):
                 b -= 1
             return "\n".join(lines[:a] + body + [""] + lines[b:]), "replaced"
         e = ends_at[-1] if ends_at else len(lines)
@@ -449,13 +459,73 @@ class Session:
                 and "linter" not in l and "Hint:" not in l and "deprecated" not in l]
         return "\n".join(keep)
 
-    def try_snippet(self, code):
+    def _snippet_imports(self, code, src):
+        """Import lines of a snippet: (code with them blanked, ProofForgeFin modules to hoist into
+        the header, refusal or None). Imports already in the candidate are dropped; a module that
+        is not a ProofForgeFin module (or any import when the library is off) is refused. Blanking
+        keeps the snippet's line numbers."""
+        lines, hoist, refused = code.split("\n"), [], []
+        for i, l in enumerate(lines):
+            m = re.match(r"^\s*import\s+(\S+)\s*$", l)
+            if not m:
+                continue
+            lines[i] = ""
+            mod = m.group(1)
+            if re.search(rf"^\s*import\s+{re.escape(mod)}\s*$", src, re.M) or mod in hoist:
+                continue
+            if self.library and fin_lib.IMPORT_RE.match(mod) and fin_lib.module_file(mod).is_file():
+                hoist.append(mod)
+            else:
+                refused.append(mod)
+        if not refused:
+            return "\n".join(lines), hoist, None
+        allowed = ("only ProofForgeFin modules can be imported from a snippet (they are moved to the file header)"
+                   if self.library else "the library is not available in this run, so a snippet cannot import modules")
+        return code, [], (f"error: not compiled: `import {'`, `import '.join(refused)}` refused; {allowed}. "
+                          "The candidate's own imports are already in scope; remove the line and resend the snippet.")
+
+    def _snippet_opens(self, code):
+        """Top-level `open X` lines of a snippet apply to its later declarations: each line is
+        blanked and every later declaration gets `open X in` on its first line (attribute lines
+        joined to it, a doc comment above it made a plain comment, since `open ... in` must come
+        first). The snippet compiles as written and its declarations bank with the same scope.
+        Line numbers are kept."""
+        lines, active = code.split("\n"), []
+        for i, l in enumerate(lines):
+            if l.startswith("open ") and not OPEN_IN.match(l):
+                active.append(l[len("open "):].split("--")[0].strip())
+                lines[i] = ""
+                continue
+            if not active or not self.DECL.match(l) or OPEN_IN.match(l):
+                continue
+            j, attrs = i, []
+            while j > 0 and lines[j - 1].startswith("@["):
+                j -= 1
+                attrs.insert(0, lines[j].strip())
+                lines[j] = ""
+            if j > 0 and lines[j - 1].rstrip().endswith("-/"):
+                k = j - 1
+                while k > 0 and not lines[k].lstrip().startswith("/-"):
+                    k -= 1
+                lines[k] = lines[k].replace("/--", "/-", 1)
+            lines[i] = f"open {' '.join(active)} in " + " ".join(attrs + [l])
+        return "\n".join(lines)
+
+    def _scratch(self, code, hoist=()):
+        """Compile `code` after the current candidate (declarations it redefines removed from
+        the context, modules in `hoist` added to the header). Returns (clean, messages located
+        in the code renumbered from 1, elapsed ms)."""
         src = self._source()
         # Declarations redefined by the snippet are removed from the context first.
         for m in self.DECL.finditer(code):
-            if re.search(rf"^(?:@\[[^\]]*\]\s*)?(?:private\s+)?(?:theorem|lemma|def|instance|abbrev)\s+{re.escape(m.group(1).split('.')[-1])}\b", src, re.M):
+            if re.search(rf"^{DECL_PREFIX}{DECL_KINDS}\s+{re.escape(m.group(1).split('.')[-1])}(?![\w.'])", src, re.M):
                 src, _ = self._replace_in(src, m.group(1), "")
         body = src.rsplit(self.end, 1)[0] if self.end in src else src
+        if hoist:
+            bl = body.split("\n")
+            last = max([i for i, l in enumerate(bl) if re.match(r"^\s*import\s+\S+", l)], default=-1)
+            bl[last + 1:last + 1] = [f"import {m}" for m in hoist]
+            body = "\n".join(bl)
         offset = body.count("\n") + 1
         scratch = body + "\n" + code + f"\n\n{self.end}\n"
         (self.ws / "Scratch.lean").write_text(scratch)
@@ -473,22 +543,79 @@ class Session:
             if cur:
                 msgs.append(l)
         clean = not any(re.search(r": (error|warning)", m) for m in msgs)
-        self.log(kind="snippet", version=self.version, ok=clean, ms=r["elapsed_ms"])
+        if judge.TIMEOUT_MARK in r["output_tail"]:   # stopped at the time limit: nothing is established
+            clean = False
+            msgs = msgs or [judge.TIMEOUT_MARK]
+        return clean, msgs, r["elapsed_ms"]
+
+    def try_snippet(self, code):
+        src = self._source()
+        code, hoist, refusal = self._snippet_imports(code, src)
+        if refusal:
+            self.log(kind="snippet_import", version=self.version, refused=True, result=refusal[:300])
+            return refusal
+        code = self._snippet_opens(code)
+        clean, msgs, ms = self._scratch(code, hoist)
+        self.log(kind="snippet", version=self.version, ok=clean, ms=ms, **({"hoisted": hoist} if hoist else {}))
         if not clean:
             return "\n".join(msgs)[-6000:]
+        note = ""
+        for mod in hoist:   # the candidate gets the imports the snippet compiled with
+            res = self.add_import(mod)
+            self.log(kind="snippet_import", version=self.version, module=mod, added=res.startswith("added"))
+            if not res.startswith("added"):
+                return ("snippet compiles, but " + res.split("\n")[0] + " so nothing was banked. Errors:\n"
+                        + "\n".join(res.split("\n")[1:])[-3000:])
+            note += f"; added `import {mod}` to candidate/Solution.lean"
         banked = self.bank(code)
-        return "snippet compiles with no errors or warnings" + (
+        return "snippet compiles with no errors or warnings" + note + (
             f"; banked into candidate/Solution.lean: {', '.join(banked)} (version {self.version})" if banked else "")
+
+    def _chunks(self, code):
+        """Top-level declarations of `code` as (name, text), each with the attribute and doc
+        comment lines directly above it."""
+        lines = code.split("\n")
+        starts = [i for i, l in enumerate(lines) if self.DECL.match(l)]
+        out = []
+        for k, a in enumerate(starts):
+            while a > 0 and (lines[a - 1].startswith("@[") or lines[a - 1].lstrip().startswith("/--")):
+                a -= 1
+            b = starts[k + 1] if k + 1 < len(starts) else len(lines)
+            while b > 0 and b - 1 > a and (lines[b - 1].startswith("@[") or lines[b - 1].lstrip().startswith("/--")):
+                b -= 1
+            out.append((self.DECL.match(lines[starts[k]]).group(1).split(".")[-1], "\n".join(lines[a:b]).strip("\n")))
+        return out
 
     def bank(self, code):
         """Install declarations from a clean snippet: new names are appended, and a required
-        theorem that is currently `sorry` is replaced by the proved version."""
+        theorem that is currently `sorry` is replaced by the proved version. When the snippet has
+        several new declarations they are first installed together with one compile; if that
+        does not compile they are installed one at a time as before."""
+        src = self._source()
+        existing = {m.group(1).split(".")[-1] for m in self.DECL.finditer(src)}
+        new = [(n, c) for n, c in self._chunks(code) if "sorry" not in c and n not in existing]
+        if len(new) > 1 and len({n for n, _ in new}) == len(new):
+            before, text = src, src
+            for n, c in new:
+                text, _ = self._replace_in(text, n, c)
+            self._save(text, f"banked {len(new)} declarations")
+            if "error:" in self.compile(2000)["output_tail"]:
+                self._save(before, f"revert banked {len(new)} declarations")
+            else:
+                done = [n for n, _ in new]
+                rest = self._bank_each(code, skip=set(done))
+                return done + rest
+        return self._bank_each(code)
+
+    def _bank_each(self, code, skip=()):
         lines = code.split("\n")
         starts = [i for i, l in enumerate(lines) if self.DECL.match(l)]
         src = self._source()
         existing = {m.group(1).split(".")[-1]: m.start() for m in self.DECL.finditer(src)}
         banked = []
         for k, a in enumerate(starts):
+            if self.DECL.match(lines[starts[k]]).group(1).split(".")[-1] in skip:
+                continue
             while a > 0 and (lines[a - 1].startswith("@[") or lines[a - 1].lstrip().startswith("/--")):
                 a -= 1
             b = starts[k + 1] if k + 1 < len(starts) else len(lines)
@@ -504,16 +631,29 @@ class Session:
             elif name in self.theorems or name in self.targets:
                 decl = re.search(rf"theorem\s+{re.escape(name)}\b.*?(?=\n{self.boundary})", self._source(), re.S)
                 if decl and "sorry" in decl.group(0):
-                    # Move the proved theorem to the end so it follows the helpers it uses;
-                    # kept only if the whole file still compiles.
+                    # The proved theorem goes to the end, after the helpers it uses, or stays in
+                    # place when it uses nothing declared after it (declarations after it may use
+                    # it); the other placement is tried if the first does not compile. Kept only
+                    # if the whole file compiles.
                     before = self._source()
                     removed, _ = self._replace_in(before, name, "")
                     moved, _ = self._replace_in(removed, name, chunk)
-                    self._save(moved, f"banked {name}")
-                    if "error:" in self.compile(2000)["output_tail"]:
-                        self._save(before, f"revert banked {name}")
+                    inplace, _ = self._replace_in(before, name, chunk)
+                    at = next((m.start() for m in self.DECL.finditer(before) if m.group(1).split(".")[-1] == name), 0)
+                    later = {m.group(1).split(".")[-1] for m in self.DECL.finditer(before) if m.start() > at} - {name}
+                    uses_later = any(re.search(rf"(?<![\w.']){re.escape(n)}(?![\w'])", chunk) for n in later)
+                    order = [moved, inplace] if uses_later else [inplace, moved]
+                    if self._normalize(order[0]) == self._normalize(order[1]):
+                        order = order[:1]
+                    for cand in order:
+                        self._save(cand, f"banked {name}")
+                        out = self.compile(2000)["output_tail"]
+                        if "error:" not in out:
+                            banked.append(name)
+                            break
+                        self.log(kind="bank_failed", name=name, version=self.version, output=self._clean(out)[-1500:])
                     else:
-                        banked.append(name)
+                        self._save(before, f"revert banked {name}")
             src = self._source()
             existing = {m.group(1).split(".")[-1]: m.start() for m in self.DECL.finditer(src)}
         return banked
@@ -764,9 +904,9 @@ def structured(s, a, system, spec):
     s.check()
 
 
-def decl_text(s, name):
-    m = re.search(rf"^(?:@\[[^\]]*\]\s*)?(?:private\s+)?(?:theorem|lemma|def)\s+{re.escape(name)}(?=[\s:({{\[]).*?"
-                  rf"(?=^{s.boundary})", s._source(), re.S | re.M)
+def decl_text(s, name, src=None):
+    m = re.search(rf"^{DECL_PREFIX}{DECL_KINDS}\s+{re.escape(name)}(?=[\s:({{\[]).*?"
+                  rf"(?=^{s.boundary})", s._source() if src is None else src, re.S | re.M)
     return m.group(0) if m else ""
 
 
@@ -805,21 +945,32 @@ def resolve(s, a, system, spec, name, depth, plan_text=""):
 
 
 def prune(s):
-    """Delete helper declarations that still use sorry and are referenced by nothing else."""
+    """Delete helper declarations that still use sorry and are referenced by nothing else.
+    A declaration with a dotted name (`Foo.bar`) is kept, since dot notation (`h.bar`) uses it
+    without naming it, and so is one whose text cannot be located. The deletions are kept only
+    if the file still compiles."""
+    before = s._source()
+    removed = []
     changed = True
     while changed:
         changed = False
         src = s._source()
         for m in list(s.DECL.finditer(src)):
-            n = m.group(1).split(".")[-1]
-            if n in s.theorems or own_sorry_free(s, n):
+            if "." in m.group(1):
                 continue
-            others = src.replace(decl_text(s, n), "")
+            n = m.group(1)
+            text = decl_text(s, n)
+            if n in s.theorems or not text or "sorry" not in text:
+                continue
+            others = src.replace(text, "")
             if not re.search(rf"(?<![\w.]){re.escape(n)}(?![\w?!'])", others):
                 new, _ = s._replace_in(src, n, "")
                 s._save(new, f"prune {n}")
+                removed.append(n)
                 changed = True
                 break
+    if removed and "error:" in s.compile(2000)["output_tail"]:
+        s._save(before, f"revert prune {', '.join(removed)}")
 
 
 PLANNER_SYSTEM = """You are a Lean 4 proof architect (Lean v4.35.0 core library only, no Mathlib).
