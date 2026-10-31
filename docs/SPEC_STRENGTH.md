@@ -43,6 +43,8 @@ Generation is deterministic. `--max-mutants N` keeps N mutants chosen round robi
 
 For every requirement the report lists the mutants whose executable violates it and the mutants refuted for it by a kernel-checked theorem. A kernel-checked refutation of `R` for some implementation proves that `R` is not trivially true (it is not a theorem about every implementation). `not_trivially_true` is `kernel-checked`, `tested` (violated on the executable, no kernel-checked refutation) or `not shown` (no mutant violates it; the requirement may still be strong, but this run gives no evidence of it). The conjunction of the requirements is satisfiable: the task's references are accepted by the judge with every requirement proved (`satisfiability` in the report, from `validation.json`), and the stripped reference passes the property tests in the baseline.
 
+The oracle charges each violation to one requirement, so a requirement can be broken by a killed mutant without appearing in its test results (an unauthorized transfer is charged to `REQ-INVALID-NOOP`, not to `REQ-AUTHORIZATION`). The vacuity probe (`harness/spec_vacuity.py REPORT`, or `eval/spec_strength.py --vacuity-probe`) handles this for a task with an adapter: for each requirement without a kernel-checked refutation in the report, it instantiates that requirement on the recorded failing cases of the killed mutants (requirements' own violators first) and checks each generated refutation with the same kernel checks, until one is accepted or 60 attempts are checked. A refutation that does not apply to the case fails to build in a second or two. The probe writes `vacuity-probe.json` next to the report, bound to it by `report_sha256` and hashed itself (`probe_sha256`); the report is not changed.
+
 ## Report
 
 `report.json` holds the task and its locked manifest hash (and whether the manifest still matches the files), the reference file and hashes, the settings, the generator version (`tool_sha256`), the counterexample adapter and its hash, the judge image and platform, the baseline, and one record per mutant: operator, declaration, line and column, description, unified diff against the stripped reference, source hash, build result, executable hash, test results per requirement, status, the first differing case for survivors, and every counterexample attempt with its Lean source, kernels, axioms and hashes. `summary` and `vacuity` are derived from the mutant records. `report_sha256` is the SHA-256 of the canonical JSON (sorted keys) of every other field, as for Passports. `report.md` renders the same content.
@@ -51,7 +53,7 @@ For every requirement the report lists the mutants whose executable violates it 
 
 ## Passport field
 
-The gate does not change existing Passports or their hashes. A new Passport may carry an optional field `spec_strength`, produced by `passport_record(report)`:
+The gate does not change existing Passports or their hashes. A new Passport may carry an optional field `spec_strength`, produced by `passport_record(report)`; for `rw-cetus-shlw` (results/spec-strength-1):
 
 ```json
 "spec_strength": {
@@ -59,9 +61,9 @@ The gate does not change existing Passports or their hashes. A new Passport may 
   "locked_manifest_sha256": "...",
   "reference_sha256": "...",
   "tool_sha256": "...",
-  "mutants": {"generated": 25, "selected": 25, "compiled": 24, "equivalent": 1, "killed": 22,
-              "killed_kernel": 22, "survived": 1},
-  "kill_ratio": "22 of 23",
+  "mutants": {"generated": 25, "selected": 25, "compiled": 17, "equivalent": 0, "killed": 16,
+              "killed_kernel": 16, "survived": 1},
+  "kill_ratio": "16 of 17",
   "requirements_not_shown_nontrivial": []
 }
 ```
@@ -75,7 +77,9 @@ Each task runs its containers one at a time: one build container for all mutants
 ## Limits
 
 - The mutants are single-site changes of one reference. They measure the specification against plausible local mistakes, not against every wrong program; a high kill ratio does not prove the specification complete.
-- Equivalence is not proved. A mutant is called equivalent only when its executable is byte-identical to the reference's; survivors with no observed difference are reported as possibly equivalent.
+- Equivalence is not proved. A mutant is called equivalent only when its executable is byte-identical to the reference's; survivors with no observed difference are reported as possibly equivalent. In the published run the byte-identity test never fired: every source change changed the executable, including swaps of the arguments of a commutative function.
+- Survivors with no observed difference include mutants that change behaviour only on states the oracle's generator never produces (for example an unhealthy account in a lending task whose generator only replays operations from the genesis state). The requirements quantify over every state and would reject some of them; settling those needs a refutation on a hand-built state, which the adapters, written for the generator's cases, do not express.
+- Writing the mutant file on the host immediately before starting a container occasionally let Lean read a stale copy through the Docker Desktop bind mount (8 of about 800 counterexample checks in the published run); such an attempt is recorded as a failed refutation with a parse error in the mutant. The vacuity probe retries it once.
 - A survivor whose behaviour differs is not proved to satisfy the specification: it passed the oracle (which mirrors `Spec.lean` independently) on 12,002 generated cases and the kernel probe on one case. Each one is a lead that a person reads against `Spec.lean`; `results/spec-strength-1/README.md` gives that reading for the published run.
 - Kernel-checked counterexamples exist only for tasks with an adapter; for the other tasks kills rest on the property tests of the executable.
 - The compiled wrapper (`app/Main.lean`) is TESTED_ONLY here as in the judge; a mutant that changes behaviour the wrapper does not serialize is invisible to the property tests (and is then probed in the kernel only if some output differs).
