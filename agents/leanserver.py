@@ -184,6 +184,20 @@ class LeanServer:
                     raise ServerError(f"{method}: {m['error'].get('message', m['error'])}")
                 return m.get("result")
 
+    def _drain(self, seconds):
+        """Process the server's messages that arrive within `seconds` (no request pending)."""
+        try:
+            m = self.q.get(timeout=seconds)
+        except queue.Empty:
+            return
+        if m is None:
+            return
+        if "method" in m and "id" in m:
+            self._write({"jsonrpc": "2.0", "id": m["id"], "result": None})
+        elif m.get("method") == "textDocument/publishDiagnostics" and m["params"].get("uri") == self.uri():
+            self.diags = m["params"].get("diagnostics") or []
+            self.diags_version = m["params"].get("version")
+
     def close(self):
         p, self.proc = self.proc, None
         self.text = None
@@ -233,6 +247,9 @@ class LeanServer:
             self.text = text
             self.request("textDocument/waitForDiagnostics", {"uri": self.uri(), "version": self.version},
                          self._limit(timeout))
+            end = time.monotonic() + 2
+            while self.diags_version is not None and self.diags_version < self.version and time.monotonic() < end:
+                self._drain(0.2)   # the publication of this version's diagnostics, if it is still in transit
         self.stats["syncs"] += 1
         self.stats["sync_ms"] += int((time.monotonic() - t0) * 1000)
         return list(self.diags)
