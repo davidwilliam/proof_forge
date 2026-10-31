@@ -8,8 +8,10 @@ const sans = Geist({ subsets: ["latin"], variable: "--font-sans", display: "swap
 const mono = Geist_Mono({ subsets: ["latin"], variable: "--font-mono", display: "swap" });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://proofforge.dev"),
   title: "ProofForge",
-  description: "Meta coding agents repair components and ship machine-checked Lean evidence that the repair meets locked requirements.",
+  description:
+    "ProofForge checks financial code against locked Lean 4 specifications: kernel-checked counterexamples for code that breaks them, proofs checked by six kernels for fixes, and hash-bound Passports anyone can re-run.",
 };
 
 // Applies the saved theme before first paint to avoid a flash of the wrong theme.
