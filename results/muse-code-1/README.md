@@ -269,6 +269,8 @@ Before the measured runs, smoke runs checked the plumbing.
   vendored library had worked.
 
 Candidate snapshots (`candidate_v*.lean`) are not tracked (see `.gitignore`). Transcripts are
-verbatim except that machine paths are replaced by `<workspace>`, `<proofforge>` and `~`, and the
-normalization of `eval/normalize.py` is applied (see `results/README.md`). `final.lean` and
+verbatim except for three changes. Machine paths are replaced by `<workspace>`, `<proofforge>` and
+`~`. The normalization of `eval/normalize.py` is applied (see `results/README.md`). The listings of
+the host's `/tmp` in `demo-balancer-2` and `smoke/ring-alone` are replaced by `[listing of /tmp on the
+host redacted]`. `final.lean` and
 `passport.json` are unchanged, so every Passport hash still matches.
