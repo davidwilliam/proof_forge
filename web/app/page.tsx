@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { CheckFix } from "@/components/CheckFix";
 import { Pipeline } from "@/components/Pipeline";
-import { ProofGraph } from "@/components/ProofGraph";
+import { HeroLenses } from "@/components/HeroLenses";
 import { Status } from "@/components/ui";
 import {
   CETUS_HOTFIX,
@@ -41,6 +41,7 @@ import {
 } from "@/lib/flagships";
 import { readRealworld } from "@/lib/generated";
 import { PROOF_GRAPH, layoutGraph } from "@/lib/proofgraph";
+import { GRAPH_TASK, bellOf, guarantees, layoutLayers } from "@/lib/lenses";
 import { EXPECTED_PROJECTS, describeInput, listWords, pendingProjects, type RwProject, type RwVersion } from "@/lib/realworld";
 
 const fmt = (n: number) => n.toLocaleString("en-US");
@@ -81,25 +82,7 @@ export default function Home() {
     <main id="main" className="home">
       <section className="hero-band tone-dark" aria-labelledby="home-title">
         <div className="hero-band-inner">
-          <div className="hero-top">
-            <div className="hero-copy">
-              <h1 id="home-title">{HEADLINE}</h1>
-              <p className="hero-sub">{SUMMARY.replace("Lean 4", "Lean 4")}</p>
-              <div className="hero-actions">
-                <a className="btn btn-primary" href="#check">
-                  Check a fix now
-                </a>
-                <a className="btn" href={githubFile(CETUS_HOTFIX.passport)}>
-                  Open the hotfix Passport
-                </a>
-                <Link className="btn" href="/results">
-                  Read the results
-                </Link>
-              </div>
-            </div>
-            <HeroFigures />
-            <HeroGraph />
-          </div>
+          <HeroGraph />
           <HeadlineFacts />
           <GraphCaption />
         </div>
@@ -221,13 +204,19 @@ export default function Home() {
   );
 }
 
-/** The live proof graph of the verified Balancer repair (generated/proof-graph.json), computed on the server. */
+/** The hero: the headline beside the proof graph of the verified Balancer repair (generated/proof-graph.json)
+ * in three lenses, all computed on the server: the whole proof, its layers, and one guarantee. */
 function HeroGraph() {
   const g = PROOF_GRAPH;
-  const layout = layoutGraph(g);
+  const gs = guarantees(g);
+  const counts = g.counts;
   return (
-    <ProofGraph
-      layout={layout}
+    <HeroLenses
+      radial={layoutGraph(g)}
+      layers={layoutLayers(g)}
+      guarantees={gs}
+      bells={gs.map((x) => bellOf(x.node, g))}
+      initial={gs.findIndex((x) => x.size === Math.max(...gs.map((y) => y.size)))}
       uses={g.edges}
       readings={{
         passport: g.passport.sha256,
@@ -237,9 +226,31 @@ function HeroGraph() {
         kernels: g.passport.kernels,
         propertyCases: g.passport.propertyCases,
         axioms: g.passport.axioms,
-        declarations: g.counts.nodes,
+        declarations: counts.nodes,
       }}
       passportHref={githubFile(g.passport.file)}
+      text={{
+        headline: HEADLINE,
+        summary: SUMMARY,
+        layersTitle: "Muse writes the fix. Lean proves it for every input.",
+        layersText: `The ${counts.requirements} requirements on top are theorems over every input, the ${counts.lemmas} lemmas in the middle are the steps Muse proved to reach them, and the ${counts.definitions + counts.types} definitions and types at the bottom are the repaired code and the locked specification.`,
+        guaranteeTitle: "The shape of a guarantee.",
+        task: GRAPH_TASK.name,
+      }}
+      figures={<HeroFigures key="figures" />}
+      actions={
+        <div key="actions" className="hero-actions">
+          <a className="btn btn-primary" href="#check">
+            Check a fix now
+          </a>
+          <a className="btn" href={githubFile(CETUS_HOTFIX.passport)}>
+            Open the hotfix Passport
+          </a>
+          <Link className="btn" href="/results">
+            Read the results
+          </Link>
+        </div>
+      }
     />
   );
 }
@@ -250,8 +261,9 @@ function GraphCaption() {
   return (
     <p id="pg-caption" className="pg-caption">
       The graph: the verified Muse repair of Balancer V2 (Passport {g.passport.sha256.slice(0, 8)}), its {g.passport.requirements} requirement
-      theorems around the conclusion and the {g.counts.nodes - g.passport.requirements} lemmas, definitions and types they use, extracted from
-      the Lean kernel&apos;s record of what each declaration uses. Kernels: {g.passport.kernels.join(", ")}.{" "}
+      theorems and the {g.counts.nodes - g.passport.requirements} lemmas, definitions and types they use, extracted from the Lean kernel&apos;s
+      record of what each declaration uses. One guarantee shows the declarations a requirement theorem uses, directly or through others, one
+      ring per level of dependency depth, each ring as wide as the number of declarations on it. Kernels: {g.passport.kernels.join(", ")}.{" "}
       <a href={githubFile("web/generated/proof-graph.json")}>Graph data</a>
     </p>
   );
