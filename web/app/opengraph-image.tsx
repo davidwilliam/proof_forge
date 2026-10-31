@@ -1,5 +1,5 @@
 import { ImageResponse } from "next/og";
-import { CETUS_HOTFIX, COUNTEREXAMPLES } from "@/lib/contribution";
+import { CETUS_HOTFIX } from "@/lib/contribution";
 import { E2 } from "@/lib/evidence";
 import { FEATURED, HEADLINE } from "@/lib/flagships";
 
@@ -31,11 +31,11 @@ export default function OpenGraphImage() {
           </svg>
           ProofForge
         </div>
-        <div style={{ display: "flex", fontSize: 64, lineHeight: 1.08, letterSpacing: -1.5, marginTop: 26, maxWidth: 1080 }}>
+        <div style={{ display: "flex", fontSize: 58, lineHeight: 1.2, letterSpacing: -1, marginTop: 24, width: 1080 }}>
           {HEADLINE.replace(/\.$/, "")}
         </div>
-        <div style={{ display: "flex", fontSize: 28, color: muted, marginTop: 24 }}>
-          {`${FEATURED.incident}, ${FEATURED.loss.amount} ${FEATURED.loss.short}: one locked specification, four versions of the code`}
+        <div style={{ display: "flex", fontSize: 26, color: muted, marginTop: 20 }}>
+          {`${FEATURED.incident}, ${FEATURED.loss.amount} ${FEATURED.loss.short}: one specification, four versions of the code`}
         </div>
         <div style={{ display: "flex", gap: 14, marginTop: 20 }}>
           {versions.map((v) => (
@@ -56,12 +56,12 @@ export default function OpenGraphImage() {
             </div>
           ))}
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 26, color: ink, marginTop: 30 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 25, color: ink, marginTop: 28 }}>
           <div style={{ display: "flex" }}>
-            {`Hotfix counterexample: checkedShlw(2^192) = (0, false), a Lean theorem accepted by ${CETUS_HOTFIX.kernels} kernels.`}
+            {`Hotfix counterexample: checkedShlw(2^192) = (0, false), checked by ${CETUS_HOTFIX.kernels} kernels.`}
           </div>
           <div style={{ display: "flex", color: muted }}>
-            {`Seeded bad repairs accepted: ordinary checking ${ordinary.badAccepted} of ${E2.bad}, ProofForge ${pf.badAccepted}. ${COUNTEREXAMPLES.kernelChecked} of ${COUNTEREXAMPLES.refuted} refutations kernel-checked.`}
+            {`Seeded bad repairs accepted: by ordinary checking ${ordinary.badAccepted} of ${E2.bad}, by ProofForge ${pf.badAccepted} of ${E2.bad}.`}
           </div>
         </div>
       </div>
