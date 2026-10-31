@@ -287,6 +287,36 @@ def test_resume_from_another_spec_stops_before_any_work():
         shutil.rmtree(d_bad, ignore_errors=True)
 
 
+def test_resume_paths_reach_the_server_absolute():
+    """The MCP server runs in the workspace, so the runner hands it resolved run directories."""
+    d_good, _ = fb.prior_ledger()
+    from unittest.mock import patch
+    seen = {}
+
+    class Stop(Exception):
+        pass
+
+    def settings(*args):
+        seen["resume"] = args[-1]
+        raise Stop()
+    out = pathlib.Path(tempfile.mkdtemp(prefix="pf-muse-resume-paths-"))
+    try:
+        rel = os.path.relpath(d_good)
+        with patch.object(sys, "argv", ["muse_code.py", "--task", BUCKET.id, "--arm", "proofforge-full",
+                                        "--resume-from", rel, "--out", str(out)]), \
+                patch.object(muse_code, "make_workspace", return_value=out), \
+                patch.object(muse_code, "settings_for", side_effect=settings):
+            try:
+                muse_code.main()
+            except Stop:
+                pass
+        assert seen["resume"] == [str(d_good.resolve())], seen
+        assert pm.Server(out, BUCKET.id, "full", resume_from=[rel]).resume_from == [str(d_good.resolve())]
+    finally:
+        shutil.rmtree(d_good, ignore_errors=True)
+        shutil.rmtree(out, ignore_errors=True)
+
+
 # With Lean
 
 def lsp_containers(pid):

@@ -120,7 +120,7 @@ class Server:
         self.log_path = pathlib.Path(log) if log else None
         self.record_dir = pathlib.Path(record_dir) if record_dir else None
         self.recorded = set()
-        self.resume_from = [str(x) for x in resume_from if x]
+        self.resume_from = [str(pathlib.Path(x).resolve()) for x in resume_from if x]   # relative to the server's cwd
         self._session = None
         self._prior = None
         self.lock = threading.RLock()   # tool calls, and the idle shutdown of the persistent Lean server

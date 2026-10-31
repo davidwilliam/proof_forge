@@ -508,7 +508,8 @@ def main():
             print(f"[resume] {r['path']}: " + ("used" if r["used"] else f"refused ({r['refused']})"), flush=True)
         if not priors:
             ap.error("--resume-from: no usable prior run: " + "; ".join(f"{r['path']}: {r['refused']}" for r in prior_record))
-    resume_dirs = [r["path"] for r in prior_record if r["used"]]
+    # Absolute: the MCP server runs in the workspace, where a path relative to this checkout means nothing.
+    resume_dirs = [str(pathlib.Path(r["path"]).resolve()) for r in prior_record if r["used"]]
     out = pathlib.Path(a.out or ROOT / "runs" / f"muse-{time.strftime('%Y%m%d-%H%M%S')}-{task.id}-{a.arm}").resolve()
     out.mkdir(parents=True, exist_ok=True)
     real_home = pathlib.Path.home()
@@ -535,7 +536,7 @@ def main():
                                                     "--session-id <run session>"],
               "mcp_profile": PROFILE[a.arm], "library_vendored": with_proofforge(a.arm),
               "library_source_tree_sha256": fin_lib.tree_sha256() if with_proofforge(a.arm) else None,
-              "resumed_from": [str(pathlib.Path(x).resolve()) for x in resume_dirs],
+              "resumed_from": resume_dirs,
               "git_commit": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=ROOT).stdout.strip(),
               "started": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
     (out / "config.json").write_text(json.dumps(config, indent=2) + "\n")
