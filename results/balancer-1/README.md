@@ -57,6 +57,7 @@ each VERIFIED Passport was reproduced with `bin/proofforge verify <passport> --c
 | `implement-2/final.lean` | VERIFIED, 8 of 8, six kernels, 2,001 binary cases | `65d5a81fef2352eb67a72f032ade091fd051b30ebf44c310b1d0c6dcb1b84d3d` |
 | `reference/SolutionA.lean` (`passports/reference.json`) | VERIFIED | `1ce4b1668c0861c51fb6e3e5ff6c9a0c18f85bb1f8ce39a3fcc42924aa9b0b76` |
 | the port, `attacks/balancer_port.lean` (`passports/port.json`) | REFUTED: REQ-GIVEN-OUT-CHARGES-AT-LEAST, REQ-SWAP-KEEPS-VALUE and REQ-BATCH-KEEPS-VALUE by binary witnesses, the rest UNRESOLVED (proofs `sorry`) | `d65bd405a13bfd4feaef838e4cc60dea2560bc47ff78cad8dfda591aaf26cb71` |
+| the plus-one hotfix, `attacks/plus_one.lean` (`plus-one/passport.json`) | REFUTED: REQ-GIVEN-OUT-SUCCEEDS and REQ-GIVEN-OUT-CHARGES-AT-MOST, each by a refutation checked by six kernels (`plus-one/cex/`), the rest UNRESOLVED (proofs `sorry`); reproduced (`plus-one/verify.txt`) | `8cf3ba86f71e644d47407a11931d3ceead4b5ca5239f9a34279e5a546b98cf53` |
 
 ## Deployed contracts
 
