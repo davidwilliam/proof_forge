@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { getJson } from "@/lib/api";
 import { aggregateE2, e2ArmLabels, isE1, isE2, pairText, type E1Summary, type E2Data, type Rate } from "@/lib/results";
-import { formatUsd, prettyJson, shortHash } from "@/lib/format";
-import { Code, ErrorBox, Status } from "@/components/ui";
+import { formatUsd, prettyJson } from "@/lib/format";
+import { E2Cases } from "@/components/E2Cases";
+import { Code, ErrorBox } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Results, ProofForge" };
@@ -20,6 +21,8 @@ const SUPERSEDED: Record<string, string> = {
 const E1_SETS: Record<string, string> = {
   "e1-test-1": "The 30 frozen test tasks (ledgers, permissions, queues), never used in development. $3 at list prices and 60 minutes per run.",
   "e1-dev-2": "The 23 development tasks, used to set the test-run caps. $3 at list prices and 45 minutes per run.",
+  "e1-test-open-1": "The 30 frozen test tasks with Muse Spark Open, Meta's open-weight model (meta-models/muse-spark-open-1026 on Baseten Model APIs), arms A0 and A1. $3 at list prices and 60 minutes per run.",
+  "e1-test-glimmer-1": "Incomplete: the 30 frozen test tasks with Muse Glimmer 30B self-hosted on one Modal H100, arms A0 and A1, stopped when the GPU host paused the workspace after 31 of 60 runs were scored. Three A1 runs counted here were ended by that outage (results/e1-test-glimmer-1/README.md). Dollars are at a GPU-cost price.",
 };
 const isTest = (key: string) => key.includes("-test-");
 
@@ -233,50 +236,7 @@ function E2Section({ name, d }: { name: string; d: E2Data }) {
           </tbody>
         </table>
       </div>
-      <details style={{ marginTop: 12 }}>
-        <summary>All cases</summary>
-        <div className="table-scroll">
-          <table className="small">
-            <thead>
-              <tr>
-                <th>Task</th>
-                <th>Case</th>
-                <th>Label</th>
-                <th>Ordinary</th>
-                <th>Rebuild and tests</th>
-                <th>ProofForge</th>
-                <th>ProofForge reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.rows.map((r, i) => (
-                <tr key={i}>
-                  <td className="mono">{r.task}</td>
-                  <td>
-                    <span className="mono">{r.case}</span>
-                    {r.note ? <div className="muted">{r.note}</div> : null}
-                    {r.sha256 ? <div className="muted hash">{shortHash(r.sha256)}</div> : null}
-                  </td>
-                  <td>{r.label}</td>
-                  <td>
-                    <Status value={r.ordinary.accepted === (r.label === "good") ? "PASS" : "REFUTED"}>
-                      {r.ordinary.accepted ? "accept" : "reject"}
-                    </Status>
-                  </td>
-                  <td>{r.proofforge.binary === undefined ? "not recorded" : r.proofforge.binary === "PASS" ? "accept" : "reject"}</td>
-                  <td>
-                    <Status value={r.proofforge.accepted === (r.label === "good") ? "PASS" : "REFUTED"}>
-                      {r.proofforge.accepted ? "accept" : "reject"}
-                    </Status>
-                  </td>
-                  <td className="mono">{r.proofforge.reason || "none"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <p className="small muted">Green marks a correct decision; red marks a wrong one (a bad case accepted or a good case rejected).</p>
-      </details>
+      <E2Cases name={name} count={d.rows.length} />
     </section>
   );
 }
