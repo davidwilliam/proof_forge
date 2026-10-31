@@ -347,13 +347,14 @@ def test_full_tools_over_stdio():
         call(10, "search_library", query="sum over a list after one update", goal="hard_capacity", limit=3),
         call(11, "prior_attempts"),
         call(12, "lean_build"),
+        call(13, "goal_at", name="req_valid_succeeds"),
     ]
     t0 = time.monotonic()
     res, pid, err = rpc(msgs, "--workspace", str(ws), "--profile", "full", "--log", str(log), "--record-dir", str(rec),
                         "--resume-from", f"{d_bad},{d_prior}")
     took = time.monotonic() - t0
     try:
-        assert set(res) == set(range(13)), (sorted(res), err[-3000:])
+        assert set(res) == set(range(14)), (sorted(res), err[-3000:])
         out, e = text(res, 1)
         assert not e and "h : n < m" in out and "⊢ n + 1 ≤ m" in out and "line 3" in out, out
         out, _ = text(res, 2)
@@ -383,6 +384,8 @@ def test_full_tools_over_stdio():
         assert "td0_step_of_adm" in carried and "td0_broken" not in carried and "gt_step" in carried
         out, _ = text(res, 12)
         assert "exit code 0" in out, out
+        out, _ = text(res, 13)                                  # a term-mode `:= sorry` (the locked form)
+        assert "not inside a tactic proof" in out and "`:= by sorry`" in out, out
         # Nothing changed the agent's file or its tracked workspace; the compiled version was recorded.
         assert (ws / "candidate/Solution.lean").read_text() == start.read_text()
         assert subprocess.run(["git", "-C", str(ws), "status", "--porcelain"], capture_output=True, text=True).stdout == ""
@@ -394,7 +397,7 @@ def test_full_tools_over_stdio():
         assert by["refute_statement6"]["refute"]["status"] == "false" and by["refute_statement8"]["refute"] == \
             {"name": "hard_capacity", "status": "false"}
         assert lsp_containers(pid) == [], "the persistent Lean server outlived the MCP server"
-        print(f"   12 tool calls in {took:.0f} s")
+        print(f"   {len(msgs)} tool calls in {took:.0f} s")
     finally:
         for d in (ws, d_prior, d_bad, rec, start.parent):
             shutil.rmtree(d, ignore_errors=True)

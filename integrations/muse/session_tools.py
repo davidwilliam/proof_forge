@@ -138,7 +138,11 @@ def theorem_text(s, name, src=None):
 
 def goal_at(s, name, line=None):
     s.shadow()
-    return leanserver.goal_at(s, name, line)
+    out = leanserver.goal_at(s, name, line)
+    if "(not inside a tactic proof)" in out:
+        out += ("\n\nA term-mode `:= sorry` has no proof state: write the proof as `:= by` followed by tactics (or "
+                "`:= by sorry`) to see the goal.")
+    return out
 
 
 def check_snippet_fast(s, code):
