@@ -404,6 +404,9 @@ def test_resume_base_is_the_best_compiling_prior_final_file():
         assert [c["compiles"] for c in base["candidates"]] == [False, True, True], base["candidates"]
         assert (ws / "candidate/Solution.lean").read_text() == fb.CLEAN
         assert subprocess.run(["git", "-C", str(ws), "status", "--porcelain"], capture_output=True, text=True).stdout == ""
+        # A start equal to the file already in the workspace is committed as well (an empty commit).
+        again = muse_code.resume_base(server, BUCKET, ws, priors)
+        assert again["run_dir"] == base["run_dir"] and (ws / "candidate/Solution.lean").read_text() == fb.CLEAN
         # When none compiles, the first prior final file is the start, as it is.
         priors, _ = ledger.load_many([str(d_broken)], BUCKET)
         base = muse_code.resume_base(server, BUCKET, ws, priors)

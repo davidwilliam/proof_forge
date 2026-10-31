@@ -393,7 +393,7 @@ def resume_base(server, task, ws, priors):
     rec, text = best
     (ws / "candidate/Solution.lean").write_text(text)
     git = ["git", "-c", "user.name=proofforge-runner", "-c", "user.email=runner@proofforge.invalid", "-c", "commit.gpgsign=false"]
-    subprocess.run(git + ["-C", str(ws), "commit", "-q", "-am", "resume: final file of a previous attempt"], check=True)
+    subprocess.run(git + ["-C", str(ws), "commit", "-q", "--allow-empty", "-am", "resume: final file of a previous attempt"], check=True)
     return {**rec, "candidates": tried}
 
 
