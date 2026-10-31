@@ -6,14 +6,19 @@ import { Status } from "@/components/ui";
 import {
   CETUS_HOTFIX,
   COMPARISON,
+  COST_PER_VERIFIED,
   COUNTEREXAMPLES,
   HACKATHON,
   LIBRARY,
+  LIBRARY_COMPOUND,
   LIBRARY_RUN,
   OPEN_WEIGHTS,
   PLANNER,
   RUN_CAPS,
   SCOPE,
+  SPEC_STRENGTH,
+  aloneRuns,
+  plannerRuns,
   type ComparisonRow,
   type Runs,
 } from "@/lib/contribution";
@@ -74,6 +79,7 @@ export default function Home() {
       <section className="hero" aria-labelledby="home-title">
         <h1 id="home-title">{HEADLINE}</h1>
         <p className="hero-sub">{SUMMARY.replace("Lean 4", "Lean 4")}</p>
+        <HeadlineFacts />
         <div className="hero-grid">
           <HeroCase f={FEATURED} />
           <TrustModel />
@@ -200,6 +206,86 @@ export default function Home() {
   );
 }
 
+/** Short incident names for running text: "Euler Finance" becomes "Euler". */
+const shortIncident = (name: string) => name.replace(/ (Finance|V2|Proposal 62)$/, "");
+
+/** The four strongest measured facts, each with its evidence, directly under the hero sentence. */
+function HeadlineFacts() {
+  const refutedFailures = COMPARISON.filter((r) => r.refutations.some((x) => x.kernelChecked > 0));
+  const refuted = COMPARISON.reduce((n, r) => n + r.refutations.reduce((m, x) => m + x.refuted, 0), 0);
+  const checked = COMPARISON.reduce((n, r) => n + r.refutations.reduce((m, x) => m + x.kernelChecked, 0), 0);
+  const e2 = (key: string) => E2.arms.find((a) => a.key === key)!;
+  const balancer = COST_PER_VERIFIED.find((c) => c.key === "balancer")!;
+  const ss = SPEC_STRENGTH;
+  return (
+    <ul className="headline-facts" aria-label="Measured results">
+      <li className="card fact">
+        <p className="fact-figure">
+          {refutedFailures.length} of {COMPARISON.length}
+        </p>
+        <p className="fact-text">
+          Real failures refuted with counterexamples the Lean kernel checks: {listWords(COMPARISON.map((r) => shortIncident(r.incident)))},{" "}
+          {count(FLAGSHIPS.length)} of them with {lossTotalPhrase()} in reported losses combined.
+        </p>
+        <p className="fact-note">
+          {checked} of the {refuted} refuted requirements have a kernel-checked counterexample. The loss figures measure different things;
+          see the notes under <a href="#compare">the comparison</a>.
+        </p>
+        <p className="fact-source">
+          <a href={githubFile("results/counterexamples-1/README.md")}>results/counterexamples-1</a>
+        </p>
+      </li>
+      <li className="card fact">
+        <p className="fact-figure">
+          {e2("proofforge").badAccepted} of {E2.bad}
+        </p>
+        <p className="fact-text">
+          Seeded bad repairs accepted by ProofForge, against {e2("ordinary").badAccepted} accepted by ordinary checking (build, theorem names,
+          axiom audit), with {e2("proofforge").goodRejected} of {E2.good} correct repairs rejected.
+        </p>
+        <p className="fact-note">The bad repairs were written by the build team, so the counts describe this suite.</p>
+        <p className="fact-source">
+          <a href={githubFile(E2.source.replace("e2.json", "e2.md"))}>results/e2-all-1</a>
+        </p>
+      </li>
+      <li className="card fact">
+        <p className="fact-figure">
+          ${balancer.planner.usdPerVerified.toFixed(2)} <span className="fact-figure-alt">vs ${balancer.alone.usdPerVerified.toFixed(2)}</span>
+        </p>
+        <p className="fact-text">
+          List price per verified {shortIncident(balancer.incident)} proof for Muse Spark with ProofForge and the Muse Wonder planner (
+          {balancer.planner.verified} of {balancer.planner.runs} runs verified), against ${balancer.alone.usdPerVerified.toFixed(2)} for Muse
+          Spark alone ({balancer.alone.verified} of {balancer.alone.runs}), at the same caps of ${RUN_CAPS.usdList} and{" "}
+          {RUN_CAPS.seconds / 3600} hours per run.
+        </p>
+        <p className="fact-note">
+          The difference in verification rate is not statistically significant at these sample sizes (one-sided Fisher exact p ={" "}
+          {balancer.fisherOneSidedP.toFixed(2)}); the difference in cost is the stronger result.
+        </p>
+        <p className="fact-source">
+          <a href={githubFile("results/library-1/README.md")}>results/library-1</a>
+        </p>
+      </li>
+      <li className="card fact">
+        <p className="fact-figure">
+          {fmt(ss.rejected)} of {fmt(ss.compiled)}
+        </p>
+        <p className="fact-text">
+          Compiling mutants of the reference code, each with one change, rejected by the {ss.specifications} locked specifications,{" "}
+          {fmt(ss.kernelChecked)} of them with counterexamples the Lean kernel checks.
+        </p>
+        <p className="fact-note">
+          Of the {ss.compiled - ss.rejected} that pass, {ss.survivedDiffers} behave differently from the reference and are reported as
+          specification gaps.
+        </p>
+        <p className="fact-source">
+          <a href={githubFile(ss.doc)}>{ss.doc}</a>
+        </p>
+      </li>
+    </ul>
+  );
+}
+
 function PassportLink({ p, label }: { p: PassportRef; label?: string }) {
   return (
     <a className="passport-link" href={githubFile(p.path)}>
@@ -275,6 +361,13 @@ function TrustModel() {
         <strong>{e2("ordinary").badAccepted}</strong>. ProofForge accepted <strong>{e2("proofforge").badAccepted}</strong>, and rejected{" "}
         {e2("proofforge").goodRejected} of {E2.good} correct ones. The bad cases were written by the build team.
       </p>
+      <p className="trust-spec">
+        The specifications are measured too: changed at one site each, the reference solutions give {fmt(SPEC_STRENGTH.compiled)}{" "}
+        compiling variants, and the {SPEC_STRENGTH.specifications} locked specifications reject {fmt(SPEC_STRENGTH.rejected)} of them,{" "}
+        {fmt(SPEC_STRENGTH.kernelChecked)} with kernel-checked counterexamples. The {SPEC_STRENGTH.survivedDiffers} that pass while behaving
+        differently are listed as specification gaps (<a href={githubFile(SPEC_STRENGTH.doc)}>SPEC_STRENGTH.md</a>,{" "}
+        <a href={githubFile(`${SPEC_STRENGTH.source}/README.md`)}>results</a>).
+      </p>
     </div>
   );
 }
@@ -284,6 +377,10 @@ const armName: Record<Runs["arm"], string> = { A0: "alone", A1: "harness", A2: "
 
 function Comparison() {
   const failures = FLAGSHIPS.length;
+  const compound = COMPARISON.find((r) => r.key === "compound")!;
+  const compoundLibrary = (compound.library?.withLibrary.runs.length ?? 0) + (compound.library?.topdown?.runs.length ?? 0);
+  // Tasks where every run of every arm was accepted.
+  const easy = COMPARISON.filter((r) => [r.alone, ...r.harness].every((x) => x.accepted === x.runs.length) && !r.library);
   return (
     <section className="home-section" id="compare" aria-labelledby="home-compare">
       <h2 id="home-compare">Muse alone and Muse with ProofForge, on the real failures</h2>
@@ -291,7 +388,9 @@ function Comparison() {
         Every run is Muse Spark 1.3, capped at ${RUN_CAPS.usdList} at list prices and {RUN_CAPS.seconds / 3600} hours, and judged by ProofForge
         against the same locked specification. Muse alone replies with whole files and sees only Lean&apos;s errors and the axiom audit. With the
         ProofForge harness it fixes behavior against the property tests first, then proves one obligation at a time with snippet checks; the
-        second harness arm adds Muse Wonder 1.0 as lemma planner.
+        second harness arm adds Muse Wonder 1.0 as lemma planner. On Compound, Knight and Balancer the counts include{" "}
+        <a href={githubFile(`${LIBRARY_RUN.source}/README.md`)}>{LIBRARY_RUN.source}</a>, where the planner arm also imports the ProofForgeFin
+        library.
       </p>
       <div className="ledger-wrap">
         <table className="ledger compare">
@@ -313,11 +412,33 @@ function Comparison() {
       </div>
       <div className="compare-notes">
         <p>
-          On these six tasks the harness did not complete more tasks than Muse alone: Muse alone was accepted in both runs on Cetus, Euler and
-          Hundred and in one of two on Balancer and Knight. The figures that need ProofForge are the specification every run proves, the
-          counterexamples that refute the vulnerable code, and the check that makes an acceptance mean every requirement holds for every input.
-          No run, with or without the harness, has proved Compound; both Muse-alone Compound runs ended early when one model call reached its
-          600 s timeout, a defect that treated it as the run&apos;s wall-clock stop.
+          On {listWords(easy.map((r) => shortIncident(r.incident)))} both arms succeed: Muse alone and the harness were accepted in every run. On{" "}
+          {listWords(COST_PER_VERIFIED.map((c) => shortIncident(c.incident)))} the arm with the Muse Wonder planner succeeds more often and at a
+          lower list price per verified run, counting every run at the same caps:{" "}
+          {COST_PER_VERIFIED.map(
+            (c) =>
+              `${shortIncident(c.incident)} ${c.planner.verified} of ${c.planner.runs} runs verified at $${c.planner.usdPerVerified.toFixed(2)} per verified run, against ${c.alone.verified} of ${c.alone.runs} at $${c.alone.usdPerVerified.toFixed(2)} for Muse alone`,
+          ).join("; ")}
+          . At these sample sizes neither difference in rate is statistically significant
+          (one-sided Fisher exact p = {COST_PER_VERIFIED.map((c) => `${c.fisherOneSidedP.toFixed(2)} on ${shortIncident(c.incident)}`).join(", ")}); the
+          difference in cost is the stronger result.
+        </p>
+        <p>
+          On Compound nothing succeeds: no run of any method has proved all {compound.requirements} of its requirements. Muse alone verified{" "}
+          {accepted(aloneRuns(compound))} runs,{" "}
+          {compound.harness
+            .filter((h) => h.arm !== "A2")
+            .map((h) => `the harness ${accepted(h)}`)
+            .join(", ")}
+          , the harness with the planner {accepted(plannerRuns(compound)!)} ({compoundLibrary} of them with the library) and implementation from
+          the specification {accepted(compound.implement)}. The specification is provable: the build team&apos;s proof that uses the library is VERIFIED on the deployed judge (
+          <a href={githubFile(LIBRARY.compoundLivePassportFile)}>Passport {LIBRARY.compoundLivePassport.slice(0, 8)}</a>). The two Muse-alone
+          Compound runs in baseline-flagships-1 ended early, when one model call reached its 600 s timeout, a defect that treated it as the
+          run&apos;s wall-clock stop; the {count(compound.library!.alone!.runs.length)} in library-1 ran the full {RUN_CAPS.seconds / 3600} hours.
+        </p>
+        <p>
+          The figures that need ProofForge in every row are the specification each run proves, the counterexamples that refute the vulnerable
+          code, and the check that makes an acceptance mean every requirement holds for every input.
         </p>
         <p>
           The {count(failures)} failures with quoted losses total {lossTotalPhrase()}. The figures measure different things: the amounts taken
@@ -325,8 +446,9 @@ function Comparison() {
           and Knight Capital&apos;s realized trading loss, which was not an exploit and is reconstructed from the SEC order.
         </p>
         <p className="muted">
-          Pending: <code>{LIBRARY_RUN.source}</code>, {LIBRARY_RUN.what} on Compound, Knight and Balancer, is running. Its column appears here
-          when its results are committed. Runs: <a href={githubFile("results/baseline-flagships-1/README.md")}>baseline-flagships-1</a>,{" "}
+          Runs: <a href={githubFile("results/baseline-flagships-1/README.md")}>baseline-flagships-1</a>,{" "}
+          <a href={githubFile(`${LIBRARY_RUN.source}/README.md`)}>library-1</a>,{" "}
+          <a href={githubFile("results/library-live-1/README.md")}>library-live-1</a>,{" "}
           <a href={githubFile("results/counterexamples-1/README.md")}>counterexamples-1</a> and each task&apos;s results README.
         </p>
       </div>
@@ -337,6 +459,10 @@ function Comparison() {
 function CompareRow({ row, f }: { row: ComparisonRow; f: Flagship | null }) {
   const refuted = row.refutations.reduce((n, r) => n + r.refuted, 0);
   const checked = row.refutations.reduce((n, r) => n + r.kernelChecked, 0);
+  const alone = aloneRuns(row);
+  const planner = plannerRuns(row);
+  const arms = [...row.harness.filter((h) => h.arm !== "A2"), ...(planner ? [planner] : [])];
+  const withLibrary = row.library ? row.library.withLibrary.runs.length + (row.library.topdown?.runs.length ?? 0) : 0;
   return (
     <tr>
       <td className="ledger-incident">
@@ -351,16 +477,17 @@ function CompareRow({ row, f }: { row: ComparisonRow; f: Flagship | null }) {
         )}
         <span className="ledger-sub">{f ? `${capital(f.loss.amount)} ${f.loss.short}` : "COMP rewards credited but never emitted"}</span>
       </td>
-      <td className="compare-cell" data-label="Muse alone, accepted" data-zero={row.alone.accepted === 0 || undefined}>
-        <strong>{accepted(row.alone)}</strong>
-        <span className="ledger-sub">runs</span>
+      <td className="compare-cell" data-label="Muse alone, accepted" data-zero={alone.accepted === 0 || undefined}>
+        <strong>{accepted(alone)}</strong>
+        <span className="ledger-sub">runs{row.library?.alone ? `, ${row.library.alone.runs.length} of them in library-1` : ""}</span>
       </td>
       <td className="compare-cell" data-label="With the ProofForge harness, accepted">
-        {row.harness.map((h) => (
+        {arms.map((h) => (
           <span key={h.arm} className="compare-arm" data-zero={h.accepted === 0 || undefined}>
             <strong>{accepted(h)}</strong> {armName[h.arm]}
           </span>
         ))}
+        {withLibrary ? <span className="ledger-sub">{withLibrary} of the planner runs with the library</span> : null}
       </td>
       <td className="compare-cell" data-label="Vulnerable code, kernel-checked counterexamples">
         <Status value="REFUTED" />
@@ -379,6 +506,8 @@ function CompareRow({ row, f }: { row: ComparisonRow; f: Flagship | null }) {
 
 function Lift() {
   const [open, glimmer] = OPEN_WEIGHTS;
+  const compoundLib = COMPARISON.find((r) => r.key === "compound")!.library!;
+  const compoundLibraryRuns = compoundLib.withLibrary.runs.length + (compoundLib.topdown?.runs.length ?? 0);
   const pct = (x: number) => `${x >= 0 ? "+" : ""}${Math.round(x * 100)}`;
   return (
     <section className="home-section" id="lift" aria-labelledby="home-lift">
@@ -443,9 +572,17 @@ function Lift() {
               </li>
             ))}
           </ul>
+          <p className="small">
+            With the ProofForgeFin library ({LIBRARY_RUN.source}), the planner arm verified{" "}
+            {COMPARISON.filter((r) => r.library && r.library.withLibrary.accepted > 0)
+              .map((r) => `${shortIncident(r.incident)} in ${r.library!.withLibrary.accepted} of ${r.library!.withLibrary.runs.length}`)
+              .join(" and ")}{" "}
+            further runs, and Compound in none of {compoundLibraryRuns}.
+          </p>
           <p className="small muted">
             Muse alone was also accepted on Knight in one of two runs. <a href={githubFile("results/compound-1/README.md")}>Compound runs</a>,{" "}
-            <a href={githubFile("results/knight-1/README.md")}>Knight runs</a>
+            <a href={githubFile("results/knight-1/README.md")}>Knight runs</a>,{" "}
+            <a href={githubFile(`${LIBRARY_RUN.source}/README.md`)}>library-1</a>
           </p>
         </article>
       </div>
@@ -454,6 +591,11 @@ function Lift() {
 }
 
 function Library() {
+  const compound = COMPARISON.find((r) => r.key === "compound")!.library!;
+  const libRuns = compound.withLibrary.runs.length + (compound.topdown?.runs.length ?? 0);
+  const verifiedEvery = COMPARISON.filter((r) => r.library && r.library.withLibrary.accepted === r.library.withLibrary.runs.length).map((r) =>
+    shortIncident(r.incident),
+  );
   return (
     <section className="home-section" id="library" aria-labelledby="home-library">
       <h2 id="home-library">ProofForgeFin, the proved library behind the judge</h2>
@@ -471,8 +613,12 @@ function Library() {
           <Link className="hash" href={`/passport/${LIBRARY.compoundLivePassport}`}>
             {LIBRARY.compoundLivePassport.slice(0, 16)}
           </Link>
-          ). The build team wrote it from the reference solution (<a href={githubFile(LIBRARY.compoundFixture)}>compound_lib.lean</a>); no Muse
-          run has proved Compound yet, and <code>{LIBRARY_RUN.source}</code> measures whether the library changes that.
+          , <a href={githubFile(LIBRARY.compoundLivePassportFile)}>committed</a>). The build team wrote it from the reference solution (
+          <a href={githubFile(LIBRARY.compoundFixture)}>compound_lib.lean</a>). No Muse run has proved Compound yet: in{" "}
+          <a href={githubFile(`${LIBRARY_RUN.source}/README.md`)}>{LIBRARY_RUN.source}</a>, {count(libRuns)} runs of Muse with ProofForge, the planner and
+          the library proved at most {LIBRARY_COMPOUND.bestProved} of the eight requirements and{" "}
+          {LIBRARY_COMPOUND.runsProvingABound === 0 ? "none" : LIBRARY_COMPOUND.runsProvingABound} of the three sequence bounds. With the
+          library, the planner arm verified {listWords(verifiedEvery)} in every run.
         </p>
         <p className="small muted" style={{ margin: 0 }}>
           <a href={githubFile("lib/README.md")}>lib/README.md</a> lists every module, the axiom audit and the kernel check.
