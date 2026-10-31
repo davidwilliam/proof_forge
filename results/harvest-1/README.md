@@ -3,7 +3,7 @@
 Helper lemmas of verified candidates harvested into `lib/ProofForgeFin/Harvested/` by
 `harness/harvest.py` (method in `docs/HARVEST.md`), and the effect measured without model calls.
 Files: `harvest.json` (every source and every helper theorem with its class, verdict and reason),
-`kernels.json` (the harvested modules through the judge's kernels and the axiom audit),
+`kernels.json` (the harvested modules through the judge's kernels and the axiom audit), `kernels-full.json` (the whole library and the demonstrations),
 `measure.json` (both measurements, per lemma and per obligation).
 
 ## Sources
@@ -68,6 +68,10 @@ Task-specific lemmas are not written anywhere (see `docs/HARVEST.md`).
 * Axiom audit of the whole library and the demonstrations: 9,844 constants, 3,108 theorems,
   0 violations; axioms used: `propext`, `Classical.choice`, `Quot.sound`.
 * The library builds without warnings; the library scan passes for `ProofForgeFin.Harvested`.
+* Full kernel check after the harvest (`kernels-full.json`): all 9,775 safe constants of the
+  library and the demonstrations pass the six kernels in one Comparator run, and `leanchecker`
+  accepts all 77 modules that declare constants; the 57 `_unsafe_rec` constants pass Lean default,
+  Lean paranoid and lean4lean (nanoda, con-leche and con-ron decline unsafe code by design).
 
 ## Library version
 
