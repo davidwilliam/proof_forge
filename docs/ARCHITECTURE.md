@@ -89,7 +89,7 @@ E1 (`eval/e1.py`) runs every arm once per task under identical caps and scores e
 
 ## PR gate
 
-`.github/workflows/proofforge.yml` checks out the base branch as the trusted checker and the pull request head as data, builds the pinned image, runs `bin/proofforge check` on the PR's candidate from the trusted checkout, reproduces an accepted Passport with `bin/proofforge verify`, comments the result on the PR, uploads the Passport with the trusted checker revision, and fails unless the result is VERIFIED.
+`.github/workflows/proofforge.yml` runs for pull requests from the owner, members and collaborators, and for any other pull request once a maintainer adds the `proofforge-check` label. It checks out the base branch as the trusted checker and the pull request head as data, builds the pinned image, runs `bin/proofforge check` on the PR's candidate from the trusted checkout, reproduces an accepted Passport with `bin/proofforge verify`, comments the result on the PR, uploads the Passport with the trusted checker revision, and fails unless the result is VERIFIED.
 
 ## API and deployment
 
