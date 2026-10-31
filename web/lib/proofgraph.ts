@@ -161,7 +161,7 @@ export function layoutGraph(g: ProofGraphData = PROOF_GRAPH, size = 640): GraphL
   }
 
   // The check reaches a declaration once everything it uses is checked: by depth, then around the ring.
-  const step = 0.34;
+  const step = 0.28;
   const at = (n: GraphNode) => 0.3 + n.depth * step + (angle.get(n.id)! / TAU) * step * 0.85;
   const placed: PlacedNode[] = g.nodes.map((n) => {
     const r = n.kind === "requirement" ? reqRing : ringOf(n.depth);
@@ -173,7 +173,7 @@ export function layoutGraph(g: ProofGraphData = PROOF_GRAPH, size = 640): GraphL
   const edges = transitiveReduction(g.edges).map(([from, to]) => ({ from, to, at: atOf.get(from)! }));
   const kernels = g.passport.kernels.map((name, i) => {
     const a = -Math.PI / 2 + (i * TAU) / g.passport.kernels.length + TAU / 12;
-    return { name, angle: round((a * 180) / Math.PI), x: round(c + orbit * Math.cos(a)), y: round(c + orbit * Math.sin(a)), at: round(done + 0.9 + i * 0.22) };
+    return { name, angle: round((a * 180) / Math.PI), x: round(c + orbit * Math.cos(a)), y: round(c + orbit * Math.sin(a)), at: round(done + 0.7 + i * 0.17) };
   });
   return { size, center: c, rings: rings.map(round), orbit: round(orbit), nodes: placed, edges, kernels, done: round(done) };
 }
