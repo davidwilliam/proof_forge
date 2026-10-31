@@ -54,15 +54,18 @@ export function ProofGraph({ layout, uses, readings, passportHref }: ProofGraphP
 
   // Hover: the declaration and everything it uses.
   const [active, setActive] = useState<string | null>(null);
-  const cone = useMemo(() => {
-    if (!active) return null;
+  const usedBy = useMemo(() => {
     const out = new Map<string, string[]>();
     for (const [a, b] of uses) out.set(a, [...(out.get(a) ?? []), b]);
-    const seen = new Set<string>([active]);
-    const stack = [active];
-    while (stack.length) for (const m of out.get(stack.pop()!) ?? []) if (!seen.has(m)) (seen.add(m), stack.push(m));
+    return out;
+  }, [uses]);
+  const coneOf = (id: string) => {
+    const seen = new Set<string>([id]);
+    const stack = [id];
+    while (stack.length) for (const m of usedBy.get(stack.pop()!) ?? []) if (!seen.has(m)) (seen.add(m), stack.push(m));
     return seen;
-  }, [active, uses]);
+  };
+  const cone = useMemo(() => (active ? coneOf(active) : null), [active, usedBy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The readout follows the check: which declaration it reaches, how many requirements and kernels are done.
   // Server render and reduced motion show the end state; state changes only when the readout does.
@@ -117,9 +120,19 @@ export function ProofGraph({ layout, uses, readings, passportHref }: ProofGraphP
   const current = running ? [...order].reverse().find((n) => n.at <= clock) : undefined;
   const verified = !running;
 
+  const describe = (n: (typeof nodes)[number], coneSize: number) =>
+    `${n.id}: ${n.requirement ?? KIND_LABEL[n.kind]}, ${n.origin === "candidate" ? "the repair" : "the locked specification"}, ${fileName(n.file)}${n.lines ? ` lines ${n.lines[0]} to ${n.lines[1]}` : ""}; uses ${coneSize - 1} declarations`;
+  // The readout reserves the height of its longest text (monospace, so the most characters), so hovering never moves the page.
+  const longest = useMemo(() => {
+    const texts = nodes.map((n) => describe(n, coneOf(n.id).size));
+    texts.push(...kernels.map((k) => `kernel check: ${k.name}`), ...nodes.map((n) => `checking ${n.id}`));
+    texts.push(`${fmt(readings.declarations)} declarations, ${fmt(uses.length)} uses, all checked`);
+    return texts.reduce((a, b) => (b.length > a.length ? b : a), "");
+  }, [nodes, kernels, readings, uses, usedBy]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const shown = active ? byId.get(active) : undefined;
   const status = shown
-    ? `${shown.id}: ${shown.requirement ?? KIND_LABEL[shown.kind]}, ${shown.origin === "candidate" ? "the repair" : "the locked specification"}, ${fileName(shown.file)}${shown.lines ? ` lines ${shown.lines[0]} to ${shown.lines[1]}` : ""}${cone ? `; uses ${cone.size - 1} declarations` : ""}`
+    ? describe(shown, cone ? cone.size : 1)
     : running
       ? clock! > done
         ? `kernel check: ${kernels.filter((k) => k.at <= clock!).map((k) => k.name).pop() ?? "starting"}`
@@ -252,7 +265,10 @@ export function ProofGraph({ layout, uses, readings, passportHref }: ProofGraphP
           </div>
         </dl>
         <p className="pg-status pg-mono" aria-live="off">
-          {status}
+          <span className="pg-status-reserve" aria-hidden="true">
+            {longest}
+          </span>
+          <span>{status}</span>
         </p>
       </div>
     </figure>
