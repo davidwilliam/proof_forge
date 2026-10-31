@@ -29,18 +29,26 @@ only when Lean confirms that no required theorem uses `sorry` except through hel
 phase (the open helpers, found from the compiled candidate's dependency graph, become the
 obligations, shared helpers first); see topdown() and docs/ARCHITECTURE.md.
 
+Attempt ledger: every run writes ledger.json (agents/ledger.py) into its run directory: the
+declarations it proved, its skeletons and failure notes for the goals left open. `--resume-from
+DIR[,DIR...]` starts from the best prior candidate (re-checked by Lean), carries the prior attempts'
+proved declarations that still compile, works the goals they left open first and puts their failure
+notes into the prompts for those goals. summary.json records the run directories in `resumed_from`.
+
 Usage: repair.py [--task T] [--model muse-spark-1.3-contributor] [--planner muse-wonder-1.0|none]
                  [--mode repair|implement] [--loop orchestrated|free|topdown] [--library on|off]
                  [--budget-usd X] [--budget-wall S] [--out DIR] [--start FILE]
+                 [--resume-from DIR[,DIR...]]
 """
-import argparse, json, pathlib, re, shutil, sys, tempfile, time
+import argparse, hashlib, json, pathlib, re, shutil, sys, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "agents"))
 sys.path.insert(0, str(ROOT / "harness"))
 from meta_client import chat, APIError, DeadlineReached  # noqa: E402
-from budget import Budget, BudgetExceeded  # noqa: E402
+from budget import Budget, BudgetExceeded, list_cost  # noqa: E402
 import judge, binary_check, fin_lib, task as taskmod  # noqa: E402
+import ledger  # noqa: E402
 
 FORBIDDEN_TEXT = ("sorry, axiom, opaque, implemented_by, extern, unsafe, export, macro, elab, syntax, "
                   "initialize, #eval, run_cmd, native_decide, set_option")
@@ -332,6 +340,9 @@ def tools_for(task, library=False, topdown=False, compact=False):
 class Session:
     # Class defaults, so that a session built without __init__ (tests) behaves as in the other loops.
     topdown = False
+    prior_notes = {}
+    resume_goals = ()
+    round_offset = 0
 
     def __init__(self, task, model, start, out, budget=None, mode="repair", library=False):
         self.task, self.model, self.out, self.mode = task, model, out, mode
@@ -366,6 +377,14 @@ class Session:
         self.extra_tools = set()
         self.skeleton_ctx = None
         self.topdown = False   # compact candidate views, read_file by declaration, checked decompositions
+        # Attempt ledger (agents/ledger.py): every source that compiled, keyed by hash; accepted
+        # skeletons; failure notes of resumed prior attempts per goal; their open goals; the offsets
+        # that keep new skeleton and planner names apart from carried ones.
+        self.compiled = {}
+        self.skeletons = []
+        self.prior_notes = {}
+        self.resume_goals = []
+        self.round_offset = 0
         # Declaration boundary: the next top-level item, an `open` command or the namespace end.
         self.boundary = (r"(?:@\[|/--|private |protected |noncomputable |theorem |lemma |def |instance |abbrev "
                          rf"|structure |inductive |open |{re.escape(self.end)})")
@@ -500,6 +519,7 @@ class Session:
         r = judge.in_container(self.ws, f"lake build Solution 2>&1 | tail -c {tail}", timeout=600)
         if "error:" not in r["output_tail"]:
             self.last_good = src
+            self.__dict__.setdefault("compiled", {})[hashlib.sha256(src.encode()).hexdigest()] = (self.version, src)
         return r
 
     def replace_declaration(self, name, text):
@@ -1012,6 +1032,7 @@ def orchestrate(s, a, middle=None):
 
 def structured(s, a, system, spec):
     """Phases 1 and 2: per-obligation dialogs, then planner-assisted resolution rounds."""
+    resume_phase(s, a, system, spec)
     # Phase 1: one focused dialog per obligation, in the task's listed order.
     status = s.check_status()
     for t in s.theorems:
@@ -1158,7 +1179,7 @@ def plan(s, a, spec, t, attempt):
     extra = {} if a.planner_effort == "default" else {"reasoning_effort": a.planner_effort}
     for tries in range(3):
         try:
-            r, _ = s.call(a.planner, [{"role": "system", "content": PLANNER_SYSTEM}, {"role": "user", "content": user}],
+            r, u = s.call(a.planner, [{"role": "system", "content": PLANNER_SYSTEM}, {"role": "user", "content": user}],
                           f"plan:{s.task.id}:{t}:{attempt}", timeout=900, **extra)
         except APIError as e:
             s.log(kind="api_error", status=e.status, body=e.body[:300])
@@ -1189,7 +1210,8 @@ def plan(s, a, spec, t, attempt):
         s.plan_count += 1
         prose = text[: m.start()].strip()[-3000:]
         (s.out / f"plan_{t}_{attempt}.md").write_text(text)
-        s.log(kind="plan", theorem=t, attempt=attempt, lemmas=names, model=a.planner, prose=prose[:3000], code=code[:6000])
+        s.log(kind="plan", theorem=t, attempt=attempt, lemmas=names, model=a.planner, prose=prose[:3000], code=code[:6000],
+              usd_list=round(list_cost(a.planner, u or {}), 4))
         print(f"[plan {t}] {names}", flush=True)
         return names, prose
     return [], ""
@@ -1217,7 +1239,8 @@ def prove_target(s, a, system, spec, t, budget, label, plan_text=""):
             + (" If you find that the statement is false, prove its negation with refute_helper; the skeleton "
                "is then revised without it." if "refute_helper" in s.extra_tools and t not in s.theorems else "")
             + (f"\n\nEarlier attempts at this target ended like this (the file may have changed since):\n"
-               f"{notes_text(s, t)}" if s.extra_tools and s.notes.get(t) else ""))
+               f"{notes_text(s, t)}" if s.extra_tools and s.notes.get(t) else "")
+            + (f"\n\n{prior}" if (prior := ledger.prompt_notes(s.prior_notes, t)) else ""))
     def own_proof_done():
         """The target's own proof is sorry-free and the file compiles (dependencies may be pending),
         or the target was refuted."""
@@ -1516,6 +1539,8 @@ def accept_skeleton(s, code, ctx):
     rec = {"round": rnd, "source": ctx["source"], "prose": ctx.get("prose", ""), "derived": info["derived"],
            "helpers": [h["name"] for h in hs], "version": s.version}
     ctx["accepted"] = rec
+    s.__dict__.setdefault("skeletons", []).append({"round": rnd, "code": code, "helpers": rec["helpers"],
+                                                    "derived": rec["derived"], "prose": rec["prose"][:3000]})
     (s.out / f"skeleton_{rnd}.lean").write_text(code)
     s.log(kind="skeleton", round=rnd, source=ctx["source"], attempt=ctx["tries"] + 1, accepted=True,
           derived=info["derived"], hoisted=info["hoisted"], proved=an["proved"],
@@ -1736,9 +1761,11 @@ def topdown_phases(s, a, system, spec):
         if all(v == "PROVED" for v in status.values()):
             s.check()
             return
+        resumed = resumed_skeleton(s) if s.resume_goals else None
+        resume_phase(s, a, system, spec, helpers_only=True)
         feedback = ""
         for k in range(a.restructures + 1):
-            sk = structure(s, a, system, spec, k, feedback)
+            sk = resumed if (k == 0 and resumed) else structure(s, a, system, spec, k + s.round_offset, feedback)
             if sk is None:
                 s.log(kind="phase", phase="structure", round=k, ok=False)
                 if k == 0:
@@ -1760,6 +1787,43 @@ def topdown_phases(s, a, system, spec):
     finally:
         s.extra_tools = set()
         s.topdown = False
+
+
+def resume_phase(s, a, system, spec, helpers_only=False):
+    """A resumed run works the goals its prior attempts left open first (helpers, then required
+    theorems; helpers only in the top-down loop, whose structure phase handles required theorems):
+    one dialog per goal still open, with the prior attempts' failure notes in its prompt
+    (prove_target)."""
+    goals = [g for g in s.resume_goals if decl_text(s, g) and not own_sorry_free(s, g)
+             and not (helpers_only and g in s.theorems)]
+    s.resume_goals = [g for g in s.resume_goals if g not in goals]
+    if not goals:
+        return
+    s.log(kind="phase", phase="resume", goals=goals)
+    s.targets.update(g for g in goals if g not in s.theorems)
+    for g in goals:
+        if not own_sorry_free(s, g):
+            prove_target(s, a, system, spec, g, a.obligation_turns, "resume")
+
+
+def resumed_skeleton(s):
+    """The skeleton a resumed candidate already has: when Lean's dependency graph shows every
+    unproved required theorem derived from open helper theorems (no direct `sorry`, nothing
+    missing), the fill phase starts on those helpers without a new structure phase."""
+    graph, _ = s.dep_graph()
+    if graph is None:
+        return None
+    an = analyze(s, graph)
+    hs = open_helpers(s, an)
+    if an["direct"] or an["missing"] or not hs:
+        return None
+    s.targets.update(h["name"] for h in hs)
+    prose = "\n\n".join(sk.get("prose", "") for sk in getattr(s, "resumed_skeletons", []) if sk.get("prose"))
+    rec = {"round": max(0, s.round_offset - 1), "source": "resumed", "prose": prose[-3000:], "derived": [],
+           "helpers": [h["name"] for h in hs], "version": s.version}
+    s.log(kind="skeleton", round=rec["round"], source="resumed", attempt=0, accepted=True, derived=[],
+          hoisted=[], proved=an["proved"], helpers={h["name"]: h["users"] for h in hs}, notes=[], code="")
+    return rec
 
 
 def topdown(s, a):
@@ -1792,7 +1856,16 @@ def finish(s, out, arm, extra):
     summary = {"task": s.task.id, "arm": arm, "model": s.model, **extra, "final_snapshot": snapshot,
                "accepted_in_session": s.accepted,
                "versions": s.version, "budget": s.budget.summary(), "final_status": s.check_status()}
+    rec = getattr(s, "resume_record", None)
+    if rec:   # only a resumed run has these fields
+        summary["resumed_from"] = [r["run_dir"] for r in rec["ledgers"] if r["used"]]
+        summary["resume"] = rec
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
+    try:
+        led = ledger.write(s, out, arm, summary)
+        print(f"ledger: {len(led['proved'])} proved declarations, {len(led['open_goals'])} open goals", flush=True)
+    except Exception as e:   # the summary and final candidate stand without it
+        print(f"ledger not written: {e!r}", flush=True)
     shutil.rmtree(s.ws, ignore_errors=True)
     return summary
 
@@ -1833,7 +1906,43 @@ def parser():
     ap.add_argument("--library", default="on", choices=["on", "off"],
                     help="on (default): ProofForgeFin in the workspace, its index in the prompt, search_library and "
                          "add_import; off: the harness without the library")
+    ap.add_argument("--resume-from", help="comma-separated run directories (or ledger.json files) of prior attempts on "
+                                          "the same task and locked spec: start from their best candidate and their "
+                                          "proved declarations (re-checked by Lean), open goals first")
     return ap
+
+
+def resume_setup(s, a, priors, record):
+    """Start a session from prior attempts: their best candidate (re-checked by Lean, unless
+    --start names one), their proved declarations that still compile, their open goals and failure
+    notes, and new-name offsets. Recorded in summary.json as `resume`."""
+    rec = {"ledgers": record, "base": None, "carried": [], "dropped": [], "goals": []}
+    s.resume_record = rec
+    s.log(kind="resume", ledgers=record)
+    if not a.start:
+        base = ledger.best_base(s, priors)
+        rec["base"] = base and {k: v for k, v in base.items() if k != "text"}
+    rec["carried"], dropped = ledger.carry(s, priors)
+    rec["dropped"] = dropped[:200]
+    s.prior_notes = ledger.notes_by_goal(priors)
+    s.resume_goals = ledger.resume_goals(s, priors)
+    s.round_offset, s.plan_count = ledger.round_offset(priors)
+    s.resumed_skeletons = [sk for led in priors for sk in led.get("skeletons", [])]
+    rec["goals"] = list(s.resume_goals)
+    print(f"[resume] base {rec['base'] and rec['base']['run_dir']}, carried {len(rec['carried'])}, "
+          f"dropped {len(dropped)}, open goals {rec['goals']}", flush=True)
+
+
+def load_priors(ap, a, task):
+    """The usable ledgers of --resume-from, or exit when none is usable."""
+    if not a.resume_from:
+        return [], []
+    priors, record = ledger.load_many([x.strip() for x in a.resume_from.split(",")], task)
+    for r in record:
+        print(f"[resume] {r['path']}: " + ("used" if r["used"] else f"refused ({r['refused']})"), flush=True)
+    if not priors:
+        ap.error("--resume-from: no usable prior attempt: " + "; ".join(f"{r['path']}: {r['refused']}" for r in record))
+    return priors, record
 
 
 def main():
@@ -1844,6 +1953,7 @@ def main():
     if a.mode == "implement" and a.start:
         ap.error("--start cannot be combined with --mode implement (the start is generated)")
     task = taskmod.load(a.task)
+    priors, record = load_priors(ap, a, task)
     arm = "A1" if a.planner == "none" else "A2"
     kind = "implement" if a.mode == "implement" else "repair"
     out = pathlib.Path(a.out) if a.out else \
@@ -1857,13 +1967,17 @@ def main():
                 library=a.library == "on")
     s.log(kind="start", arm=arm, **vars(a))
     try:
+        if priors:
+            resume_setup(s, a, priors, record)
         if a.loop == "orchestrated":
             orchestrate(s, a)
         elif a.loop == "topdown":
             topdown(s, a)
         else:
             dialog(s, a.model, a.effort, system_prompt(s),
-                   "Begin. The current candidate is candidate/Solution.lean.",
+                   "Begin. The current candidate is candidate/Solution.lean."
+                   + (f"\n\nPrevious attempts on this task ended as follows; do not repeat what failed:\n"
+                      f"{ledger.summary_text(priors)}" if priors else ""),
                    {t["function"]["name"] for t in tools_for(task, s.library)}, a.max_turns, lambda: s.accepted, "free")
     except BudgetExceeded as e:
         s.log(kind="budget_stop", reason=str(e))
