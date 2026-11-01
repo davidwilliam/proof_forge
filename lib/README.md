@@ -12,9 +12,9 @@ list of operations with an induction, sums over account lists. The library state
 once, for every scale, state type and operation type, so a specification can name a library
 definition and a proof can cite a library theorem.
 
-The library has 1,724 theorems and 446 definitions in 70 files under fourteen top-level modules
+The library has 1,750 theorems and 447 definitions in 71 files under fifteen top-level modules
 (`Rounding`, `FixedPoint`, `Word`, `Shares`, `Seq`, `Ledger`, `Trading`, `Machine`, `Evm`, `Money`,
-`DeFi`, `Tactic`, `Sums`, `Accrual`) and the two generated ones (`Harvested`, `Salvaged`; source
+`DeFi`, `Tactic`, `Sums`, `Accrual`, `Sqrt`) and the two generated ones (`Harvested`, `Salvaged`; source
 declarations counted with comments excluded, as `web/tests/contribution.test.ts` recounts them),
 plus demonstrations (329 theorems in 32 files)
 that re-prove lemmas of task reference solutions with it and exercise the modules. Every definition, structure
@@ -242,6 +242,30 @@ library and is definitionally equal to a ProofForgeFin definition (a specificati
 `sumOver`, `upd`, ceiling division or fixed-point product) by the library's, so that the library
 lemmas apply by name and `exact?` finds them; `lib_defs?` reports the replacements
 (`lib/docs/Tactic.md`).
+
+### `ProofForgeFin.Sqrt`: the integer square root and the Newton step
+
+Added for the experiment `results/hard-task-1` (listed in its preregistration as library work
+done for it); general facts about Lean core's `Nat.sqrt` and one step of Newton's method on
+natural numbers, `newton a x = (x + a / x) / 2`, with `s = Nat.sqrt a`:
+
+* The root from its bounds: `sqrt_eq_of_bounds`, `eq_sqrt_iff`, `le_sqrt_of_mul_self_le`,
+  `sqrt_lt_of_lt_mul_self`, `sqrt_le_sqrt`, `sqrt_mul_self`, `sqrt_pos`, `two_pow_le_sqrt`,
+  `sqrt_lt_two_pow`; `four_mul_le_sq` (AM-GM).
+* One step: `sqrt_le_newton` (from any positive iterate the step never goes below the root),
+  `two_mul_newton_mul_le`, the error relation `newton_err_above` and `newton_err_below`
+  (`2 * x * (newton a x - s) ≤ d * d + 2 * s` for the distance `d` of `x` from `s`), quadratic
+  convergence `newton_sub_sqrt_le_sq_div`, the halving bound `newton_sub_sqrt_le_half`,
+  `newton_lt_self` (strict decrease above the root), `eq_sqrt_of_newton_eq_self` (the only fixed
+  point).
+* The end of an iteration: `newton_le_sqrt_add_one`, `newton_eq_or_succ`, `newton_of_mem` (from
+  the root or the root plus one the iterates stay there and alternate when `a + 1` is a square),
+  and the final corrections `min_div_eq_sqrt` (`min x (a / x)`), `sub_ite_eq_sqrt`
+  (`x - 1` when `a / x < x`) and `min_newton_eq_sqrt` (the smaller of two successive iterates).
+
+No statement names a step count, an initial estimate or a machine word. Its 71 constants pass the
+six kernels and `leanchecker` (`harness/fin_kernels.py --modules ProofForgeFin.Sqrt`,
+`results/hard-task-1/kernels-sqrt.json`).
 
 ### `ProofForgeFin.Salvaged`: lemmas runs that were not accepted did prove
 
@@ -477,6 +501,7 @@ the three bounds that depend on them (`account_bounded`, `no_backdated`, `bounds
 not be checked; every other declaration passed all six kernels. Now all 10,128 safe constants of
 the library and the demonstrations (5,982 theorems, counting compiler-generated ones) pass all
 six kernels in one Comparator run, and `leanchecker` accepts all 87 modules that declare
-constants (`results/feedback-library-1/kernels-full.json`). The 60 `_unsafe_rec` constants (Lean's compiled form of recursive definitions, which no
+constants (`results/feedback-library-1/kernels-full.json`); `ProofForgeFin.Sqrt`, added after that
+run, was checked on its own with the same tool (`results/hard-task-1/kernels-sqrt.json`). The 60 `_unsafe_rec` constants (Lean's compiled form of recursive definitions, which no
 proof mentions) pass Lean's kernels and lean4lean; nanoda, con-leche and con-ron decline `unsafe`
 code by design.
