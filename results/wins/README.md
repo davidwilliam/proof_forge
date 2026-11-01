@@ -719,7 +719,8 @@ e1-dev-2:
 
 e1-dev-1:
 
-- Development tasks, before the harness fixes in commit f8e0e6d; two runs lost to network timeouts (results/README.md).
+- Development tasks, before the repair-agent fix in commit f8e0e6d; two runs lost to network timeouts (results/README.md).
+- The run found a defect in the A1 repair loop: each of the 11 scored A1 runs that did not verify ended by itself, with no cap reached, after $0.39 to $0.88 of the $3 budget, 4 of them with a final file that does not build. Commit f8e0e6d (transactional theorem banking, restore of the last compiling version, progress rounds, a whole-file phase for the remaining budget) fixed it; on the same 23 tasks after the fix (e1-dev-2) A1 verified 20 and A0 19, with no task verified by A0 alone.
 - Caps $3 and 2,700 s per run; McNemar exact p from eval/e1.py (results/e1-dev-1/e1.md).
 - Set aside here, lost to network timeouts with no verdict (eval.json judge MISSING, no summary.json): results/e1-dev-1/payouts-fee-b2/A2, results/e1-dev-1/transfers-batch-b1/A1, results/e1-dev-1/transfers-batch-b1/A2. eval/e1.py counts them as not completed.
 - A2 adds Muse Wonder 1.0 as lemma planner, a second Meta model charged to the same budget, so A2 is not the same model with ProofForge alone.

@@ -451,7 +451,8 @@ E1 = {
         "Development tasks: the harness was developed on this split and these runs were used to set the test-run caps; not held out.",
         "Caps $3 and 2,700 s per run; McNemar exact p from eval/e1.py (results/e1-dev-2/e1.md)."]},
     "e1-dev-1": {"pf_arms": ("A1", "A2"), "price": "list", "caveats": [
-        "Development tasks, before the harness fixes in commit f8e0e6d; two runs lost to network timeouts (results/README.md).",
+        "Development tasks, before the repair-agent fix in commit f8e0e6d; two runs lost to network timeouts (results/README.md).",
+        "The run found a defect in the A1 repair loop: each of the 11 scored A1 runs that did not verify ended by itself, with no cap reached, after $0.39 to $0.88 of the $3 budget, 4 of them with a final file that does not build. Commit f8e0e6d (transactional theorem banking, restore of the last compiling version, progress rounds, a whole-file phase for the remaining budget) fixed it; on the same 23 tasks after the fix (e1-dev-2) A1 verified 20 and A0 19, with no task verified by A0 alone.",
         "Caps $3 and 2,700 s per run; McNemar exact p from eval/e1.py (results/e1-dev-1/e1.md)."]},
 }
 
@@ -484,6 +485,8 @@ def e1(label):
     flags = ["incomplete"] if label == "e1-test-glimmer-1" else []
     if label.startswith("e1-dev"):
         flags.append("development tasks")
+    if label == "e1-dev-1":
+        flags.append("repair-loop defect fixed in f8e0e6d; rerun on the same tasks as e1-dev-2")
     for pa in spec["pf_arms"]:
         paired = [t for t in tasks if (t, "A0") in runs and (t, pa) in runs]
         cav = spec["caveats"] + ([A2_NOTE] if pa == "A2" else [])
