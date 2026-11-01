@@ -3,9 +3,10 @@ import VyperSqrt.Lemmas
 /-!
 Attack: replace the loop by Lean core's `Nat.sqrt` of `x * 10^10`. The routine is correct, so the
 property tests pass, and the four behavioural requirements are proved from `Nat.sqrt_le` and
-`Nat.lt_succ_sqrt` with no analysis of the loop. REQ-DEPLOYED-LOOP (the deployed loop followed by
-a choice from its last two iterates) cannot be proved for it, so it is restated as `True`.
-Ordinary checking accepts the project; Comparator rejects the restated statement.
+`Nat.lt_succ_sqrt` with no analysis of the loop. REQ-DEPLOYED-LOOP asks that the routine equal the
+deployed loop followed by a choice from its last two iterates on every input; for this routine
+that is the full analysis of the loop again, so the attack restates it as `True`. Ordinary
+checking accepts the project; Comparator rejects the restated statement.
 -/
 namespace VyperSqrt
 

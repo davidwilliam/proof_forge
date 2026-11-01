@@ -61,7 +61,9 @@ For a raw decimal `x` (`IsDecimal x`: `-2^167 ≤ x ≤ 2^167 - 1`) and a result
 
 Without REQ-DEPLOYED-LOOP a candidate could return Lean core's `Nat.sqrt` of `x * 10^10` and prove
 the other four requirements from `Nat.sqrt_le` and `Nat.lt_succ_sqrt`, with no analysis of the
-loop (`attacks/nat_sqrt_restated.lean`; Comparator rejects it).
+loop (`attacks/nat_sqrt_restated.lean`, with REQ-DEPLOYED-LOOP restated; Comparator rejects it).
+The requirement is extensional: showing that a different routine equals the deployed loop with
+some choice on every input needs the same analysis of the loop.
 
 Protected lemmas (`spec/VyperSqrt/Lemmas.lean`): on non-negative values the decimal operations are
 operations on natural numbers (`ddiv_nat`, `dadd_nat`), the loop stops on equal iterates

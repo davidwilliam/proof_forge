@@ -53,7 +53,11 @@ is `none`.
 REQ-NEWTON-BUDGET keeps the deployed algorithm and its gas budget. Without it, a candidate could
 replace the routine by Lean core's `Nat.sqrt`, whose bounds `Nat.sqrt_le` and `Nat.lt_succ_sqrt`
 are in the core library, and prove the other seven requirements without any error analysis
-(`attacks/nat_sqrt_restated.lean` does exactly that; Comparator rejects it).
+(`attacks/nat_sqrt_restated.lean` does exactly that, with REQ-NEWTON-BUDGET restated; Comparator
+rejects it). The requirement is extensional: any routine equal to the deployed algorithm on every
+input meets it, and showing that equality for a different routine needs the same error analysis.
+Mutants that change the code but not its values (for example the arguments of `min` swapped) meet
+it, which is why the spec-strength gate reports them as possibly equivalent.
 
 Protected lemmas (`spec/OzSqrt/Lemmas.lean`, readable by every candidate): `toNat_log2` (the
 port of `log2` is `Nat.log2`), `toNat_newtonStep` (a Newton line is `(r + a / r) / 2` when it

@@ -3,9 +3,10 @@ import OzSqrt.Lemmas
 /-!
 Attack: replace the deployed algorithm by Lean core's `Nat.sqrt`. The routine is correct, so the
 property tests pass, and the seven correctness requirements are proved from `Nat.sqrt_le` and
-`Nat.lt_succ_sqrt` with no error analysis. REQ-NEWTON-BUDGET (the deployed algorithm within
-seven Newton steps) cannot be proved for it, so it is restated as `True`. Ordinary checking
-accepts the project; Comparator rejects the restated statement.
+`Nat.lt_succ_sqrt` with no error analysis. REQ-NEWTON-BUDGET asks that the routine equal the
+deployed algorithm (at most seven Newton steps) on every input; for this routine that is the full
+error analysis again, so the attack restates it as `True`. Ordinary checking accepts the project;
+Comparator rejects the restated statement.
 -/
 namespace OzSqrt
 
