@@ -59,7 +59,7 @@ candidate file, which the judge copies into a fresh project of locked files.
 abridged) for the run record. `--record-dir DIR` keeps a copy of every candidate version that Lean
 compiled without errors in a tool call (lean_build, check_candidate), for the run's attempt ledger.
 """
-import argparse, hashlib, json, os, pathlib, re, shutil, signal, subprocess, sys, threading, time, traceback
+import argparse, hashlib, inspect, json, os, pathlib, re, shutil, signal, subprocess, sys, threading, time, traceback
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "harness"))
@@ -685,13 +685,21 @@ class Server:
         return out
 
     def call(self, name, args):
+        """Run tool `name`. Arguments the tool does not take (a model once passed
+        `max_output_tokens` to lean_build) are ignored, and the result ends with a note naming them."""
         allowed = {t["name"] for t in self.tools()}
         if name not in allowed:
             raise ValueError(f"unknown tool {name!r}")
         fn = getattr(self, name)
+        params = inspect.signature(fn).parameters
+        given = {k: v for k, v in (args or {}).items() if v is not None}
+        unknown = [k for k in given if k not in params]
         self.extra = None
         with self.lock:
-            return fn(**{k: v for k, v in (args or {}).items() if v is not None})
+            out = fn(**{k: v for k, v in given.items() if k in params})
+        if unknown:
+            out += f"\n(ignored argument{'s' if len(unknown) > 1 else ''} that {name} does not take: {', '.join(unknown)})"
+        return out
 
     def handle(self, msg):
         """One JSON-RPC message; returns the response object, or None for a notification."""
