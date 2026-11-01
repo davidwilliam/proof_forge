@@ -273,7 +273,9 @@ CONTINUE_END = "\nContinue from the current candidate/Solution.lean until the fi
 
 def first_errors(lean, limit=3, lines=30, chars=4000):
     """Lean's first `limit` errors, each cut to `lines` lines: the message with its position, which
-    the last characters of a long output (the end of one goal state) can leave out."""
+    the last characters of a long output (the end of one goal state) can leave out. Rendered hint
+    diffs are dropped (proofforge_mcp.drop_hint_diffs)."""
+    lean = proofforge_mcp.drop_hint_diffs(lean)
     blocks = [b for sev, b in proofforge_mcp.lean_blocks(lean)
               if sev == "error" and not re.match(r"^error: build failed", b[0])]
     if not blocks:

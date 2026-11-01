@@ -97,10 +97,28 @@ def lean_blocks(text):
     return [b for b in blocks if b[1]]
 
 
+HINT_DIFF = re.compile("[\u0332\u0335\u0336]")   # combining underline and strikethrough marks
+
+
+def drop_hint_diffs(text):
+    """Lean's output without the rendered diffs of its `Hint:` suggestions (a deprecated name
+    struck through and its replacement underlined, one character at a time), whose `Hint:` and
+    `deprecated` lines clean_lean already drops, so that they would trail the message before
+    them; blank lines left in a row become one."""
+    out = []
+    for line in text.splitlines():
+        if HINT_DIFF.search(line) or (not line.strip() and out and not out[-1].strip()):
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
 def compact_build(text, src):
     """Lean's output for the candidate with every error whole, every other warning on its first
     line, and the `declaration uses sorry` warnings as one line naming the declarations (Lean
-    repeats them on every build). Unindented lines after a warning (Lake's summary) are kept."""
+    repeats them on every build). Unindented lines after a warning (Lake's summary) are kept.
+    Rendered hint diffs are dropped (drop_hint_diffs)."""
+    text = drop_hint_diffs(text)
     src_lines = src.splitlines()
     out, sorry = [], []
     for sev, lines in lean_blocks(text):
