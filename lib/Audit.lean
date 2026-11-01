@@ -86,6 +86,13 @@ elab "#audit_axioms" : command => do
 #print axioms ProofForgeFin.Ledger.sum_map_modify_modify
 #print axioms ProofForgeFin.Ledger.sum_equalSplit
 #print axioms ProofForgeFin.Ledger.mem_equalSplit_bounds
+#print axioms ProofForgeFin.Accumulator.covered_catchUp
+#print axioms ProofForgeFin.Accumulator.pot_accrue_settle_le
+#print axioms ProofForgeFin.Accumulator.acct_accrue_le
+#print axioms ProofForgeFin.Accumulator.Moves.bound
+#print axioms ProofForgeFin.Accumulator.run_bound
+#print axioms ProofForgeFin.Accumulator.amount_le_of_scaled
+#print axioms ProofForgeFin.Accumulator.div_sum_map_lt
 #print axioms ProofForgeFinDemo.ShareVault.req_share_value
 #print axioms ProofForgeFinDemo.BatchTransfer.sum_applyLegs
 #print axioms ProofForgeFinDemo.Compound.run_pot

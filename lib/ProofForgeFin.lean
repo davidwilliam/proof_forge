@@ -16,6 +16,7 @@ import ProofForgeFin.Sqrt
 import ProofForgeFin.SqrtIter
 import ProofForgeFin.NatSqrt
 import ProofForgeFin.WordBridge
+import ProofForgeFin.Accumulator
 import ProofForgeFin.Harvested
 import ProofForgeFin.Salvaged
 /-!
@@ -47,4 +48,8 @@ no dependency beyond the Lean core library.
 * `ProofForgeFin.WordBridge`: `BitVec w` to `Nat` and back at any width: exactness of `+`, `*`,
   `-`, `<<<` without overflow (as equivalences), `/`, `>>>` and comparisons, shifts by a word,
   sizes of sums and products below `2^w`, and iterations on words as iterations on values.
+* `ProofForgeFin.Accumulator`: index-based reward accumulators over sequences of actions: index
+  updates covered by the emission they index, potentials over the accounts across an update and a
+  settlement, chains of primitive moves inside one action, the induction over a run given by its
+  defining equations, from a scaled potential to an amount, and sums of amounts rounded down.
 -/
