@@ -145,13 +145,52 @@ def goal_at(s, name, line=None):
     return out
 
 
+def library_modules(s, code, src):
+    """The ProofForgeFin modules a snippet needs that the candidate does not import (directly or
+    through a library module it imports): those declaring a name the snippet uses, fully qualified
+    or under a namespace the snippet or the candidate opens, and, for a namespace the snippet opens
+    that no such module provides, the module of that name (or the first one declaring in it)."""
+    if not s.library or s.lib_index is None:
+        return []
+    if getattr(s, "_lib_names", None) is None:
+        s._lib_names = {e["name"]: e["module"] for e in s.lib_index.entries if e.get("module")}
+    names = s._lib_names
+    have = set(fin_lib.closure([m for m in fin_lib.imports_of(src) if fin_lib.IMPORT_RE.match(m)]))
+    text = fin_lib.strip_comments(code)
+    opened = re.findall(r"\bopen\s+(.+?)(?:\s+in\b|$)", text, re.M)
+    spaces = [ns for line in opened + re.findall(r"^open\s+(.+?)(?:\s+in\b|$)", fin_lib.strip_comments(src), re.M)
+              for ns in line.split() if ns.startswith(fin_lib.LIBRARY)]
+    want = []
+    for tok in dict.fromkeys(re.findall(r"[A-Za-z_][\w'.!?]*", text)):
+        for name in [tok] + [f"{ns}.{tok}" for ns in spaces]:
+            mod = names.get(name)
+            if mod and mod != name:
+                if mod not in have and mod not in want:
+                    want.append(mod)
+                break
+    for ns in dict.fromkeys(ns for line in opened for ns in line.split() if ns.startswith(fin_lib.LIBRARY)):
+        mods = have | set(want)
+        if any(n.startswith(ns + ".") and m in mods for n, m in names.items()):
+            continue
+        mod = ns if names.get(ns) == ns else next((m for n, m in names.items() if n.startswith(ns + ".")), None)
+        if mod and mod not in want:
+            want.append(mod)
+    return want
+
+
 def check_snippet_fast(s, code):
-    """One incremental elaboration of the snippet after the candidate on the persistent server."""
+    """One incremental elaboration of the snippet after the candidate on the persistent server.
+    Library modules the snippet needs and the candidate does not import (library_modules) are
+    imported for the check, and the result says so."""
     s.shadow()
     src = s._source()
     code, hoist, refusal = s._snippet_imports(code or "", src)
     if refusal:
         return refusal
+    auto = [m for m in library_modules(s, code, src) if m not in hoist]
+    hoist = hoist + auto
+    note = ("" if not auto else "\nImported for this check: " + ", ".join(f"`import {m}`" for m in auto)
+            + "; candidate/Solution.lean needs the same import before it uses these names.")
     code = s._snippet_opens(code)
     scratch, offset = s.scratch_text(code, hoist)
     r = leanserver.fast_snippet(s, scratch, offset, code)
@@ -161,9 +200,9 @@ def check_snippet_fast(s, code):
         msgs = [m for m in r[1] if m]
         if msgs == [judge.TIMEOUT_MARK]:
             return "the snippet was stopped at the time limit"
-        return "\n".join(msgs)[-6000:] + f"\n({r[2]} ms on the persistent session; the candidate file is unchanged)"
+        return "\n".join(msgs)[-6000:] + f"\n({r[2]} ms on the persistent session; the candidate file is unchanged)" + note
     return (f"clean: Lean's persistent session finds no errors and no warnings in the snippet ({r[1]} ms). "
-            "Nothing was written; try_snippet or lean_build confirms with a full compile.")
+            "Nothing was written; try_snippet or lean_build confirms with a full compile." + note)
 
 
 # ---------------------------------------------------------------------------------------------

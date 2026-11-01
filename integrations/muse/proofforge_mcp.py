@@ -597,8 +597,10 @@ class Server:
                                                           "persistent Lean session (incremental elaboration, usually "
                                                           "seconds): its errors, and the proof state at each `sorry` of "
                                                           "the snippet. A declaration the snippet redefines replaces the "
-                                                          "file's version. Nothing is written; try_snippet confirms a "
-                                                          "clean snippet with a full compile.",
+                                                          "file's version. ProofForgeFin modules declaring names the "
+                                                          "snippet uses are imported for the check, and the result names "
+                                                          "them. Nothing is written; try_snippet confirms a clean snippet "
+                                                          "with a full compile.",
              "inputSchema": {"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]}},
             {"name": "try_tactics", "description": "Run the tactic portfolio (grind, omega, simp_all, decide, simp_all <;> "
                                                    "omega, the library's generalize_divs and machine_norm when imported, "
