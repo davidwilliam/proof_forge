@@ -12,6 +12,7 @@ import ProofForgeFin.DeFi
 import ProofForgeFin.Tactic
 import ProofForgeFin.Sums
 import ProofForgeFin.Accrual
+import ProofForgeFin.Sqrt
 import ProofForgeFin.Harvested
 import ProofForgeFin.Salvaged
 /-!
@@ -32,4 +33,7 @@ no dependency beyond the Lean core library.
   changes, and sums of rounded-down parts.
 * `ProofForgeFin.Accrual`: a part rounded down plus at most one unit is within one unit; capped
   increments stay within their cap.
+* `ProofForgeFin.Sqrt`: the integer square root `Nat.sqrt` and one Newton step `(x + a / x) / 2`:
+  bounds of the root, the error relation of a step, quadratic and halving convergence, and the
+  end of the iteration.
 -/
