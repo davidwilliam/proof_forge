@@ -67,7 +67,13 @@ Sessions
   `sorry`, or the judge's rejection), the same for both arms, as in A0 (agents/baseline.py).
 
 Result
-  The candidate on disk when the run stops is the run's result (`final.lean`). It is judged
+  The candidate on disk when the run stops is the run's result (`final.lean`), except in
+  `proofforge-full`: there the result is the compiling version of the run with the most required
+  theorems proved by Lean, the latest on a tie, when the file on disk does not compile or proves
+  fewer (a run stopped by a cap is often in the middle of an edit); the file on disk is then kept
+  as `final-on-disk.lean` and summary.json records the choice (`final_choice`). The versions
+  considered are those Lean compiled in a tool call or in the runner's checks; the choice is made
+  after the caps, as the theorem status of the final file is. The result is judged
   outside the budget by `bin/proofforge check` (identical for every arm); a VERIFIED Passport is
   reproduced with `bin/proofforge verify`. summary.json records the tools Muse Code called and how
   often (`tool_calls`: every tool from the transcript, and the ProofForge tools from the MCP log
@@ -106,6 +112,11 @@ ARM_TOOLS = {
 }
 RESUMED_LINE = ("This run resumes a previous attempt: candidate/Solution.lean is the final file of that attempt, "
                 "not the original buggy candidate.")
+# Arms whose result is the best compiling version of the run (most required theorems proved, then
+# latest) rather than the file on disk when the run stops; `alone` and `proofforge` keep the file
+# on disk, as measured in results/muse-code-1 and results/hard-task-1.
+KEEP_BEST = ("proofforge-full",)
+BEST_CANDIDATES = 3     # compiling versions, ranked by their text, that Lean checks for the best one
 
 
 def with_proofforge(arm):
@@ -466,6 +477,53 @@ def compiled_sources(record_dir, extra=()):
     return list(dict.fromkeys(text for _, text in sorted(srcs, key=lambda x: x[0])))
 
 
+def rank_versions(task, versions):
+    """Indices of `versions` (oldest first), best first: by the required theorems each proves in its
+    text (no `sorry` in the theorem or in a candidate declaration it uses, ledger.proved_in), the
+    latest first on a tie."""
+    def proved(text):
+        return sum(1 for n in ledger.proved_in(text, task.ns) if n in task.theorems)
+    return sorted(range(len(versions)), key=lambda i: (proved(versions[i]), i), reverse=True)
+
+
+def best_version(server, task, ws, versions, limit=BEST_CANDIDATES):
+    """The compiling version with the most required theorems proved by Lean (`#print axioms`), the
+    latest on a tie, among the `limit` best of `versions` by their text: (text, theorem status), or
+    None when none of them compiles. The workspace candidate is left as it was. RuntimeError when
+    Lean gives no verdict."""
+    path = ws / "candidate/Solution.lean"
+    current, best = path.read_text(), None
+    try:
+        for i in rank_versions(task, versions)[:limit]:
+            path.write_text(versions[i])
+            ok, status = compiles(server)
+            n = sum(v == "PROVED" for v in status.values())
+            if ok and (best is None or (n, i) > best[:2]):
+                best = (n, i, status)
+    finally:
+        path.write_text(current)
+    return None if best is None else (versions[best[1]], best[2])
+
+
+def choose_final(server, task, ws, out, versions, disk_text, disk_ok, disk_status):
+    """The result of a KEEP_BEST arm: the best compiling version of the run (best_version) when the
+    file on disk does not compile or proves fewer required theorems; the file on disk otherwise, and
+    when Lean gives no verdict. The chosen text becomes the workspace candidate; a replaced file on
+    disk is kept as final-on-disk.lean. Returns (text, compiles, theorem status, record)."""
+    def proved(status):
+        return sorted(t for t, v in status.items() if v == "PROVED")
+    rec = {"from": "file on disk", "on_disk": {"compiles": disk_ok, "proved": len(proved(disk_status))}}
+    try:
+        pick = best_version(server, task, ws, versions)
+    except RuntimeError as e:
+        return disk_text, disk_ok, disk_status, {**rec, "error": str(e)}
+    if pick is None or (disk_ok and len(proved(pick[1])) <= len(proved(disk_status))):
+        return disk_text, disk_ok, disk_status, rec
+    (out / "final-on-disk.lean").write_text(disk_text)
+    (ws / "candidate/Solution.lean").write_text(pick[0])
+    return pick[0], True, pick[1], {**rec, "from": "best compiling version", "proved": proved(pick[1])}
+
+
 def write_ledger(task, out, arm, summary, sources, events, final_text, final_status, last_compiling=None):
     """ledger.json of a Muse Code run (agents/ledger.py's format), from its compiling versions."""
     extra = {"mode": "muse-code", "model": summary.get("model"),
@@ -637,9 +695,12 @@ def main():
     final_text = (ws / "candidate/Solution.lean").read_text()
     try:
         final_ok, status = compiles(server)
+        srcs = compiled_sources(record_dir, runner_compiled + ([(time.time(), final_text)] if final_ok else []))
+        if a.arm in KEEP_BEST and not accepted:
+            final_text, final_ok, status, summary["final_choice"] = choose_final(server, task, ws, out, srcs, final_text,
+                                                                                final_ok, status)
         summary.update(final_theorem_status=status, requirements_proved_in_run=sum(v == "PROVED" for v in status.values()))
         last = None
-        srcs = compiled_sources(record_dir, runner_compiled + ([(time.time(), final_text)] if final_ok else []))
         older = [x for x in srcs if x != final_text]
         if not final_ok and older:
             # The newest version Lean compiled during the run, and its theorem status (outside the budget).
