@@ -419,7 +419,7 @@ def vyper_replication_1(hard_pooled):
                       test={"name": "one-sided Fisher exact", "p": rp(p), "preregistered": True, "alpha": 0.05,
                             "stated_in": "results/vyper-replication-1/PREREGISTRATION.md", "significant_at_0_05": p < 0.05,
                             "secondary": {"name": "one-sided Mann-Whitney U, ProofForge spends fewer list dollars per run", "p": rp(mw)}},
-                      caveats=cav, flags=[] if complete else ["incomplete"], sources=["results/vyper-replication-1/PREREGISTRATION.md"])]
+                      caveats=cav, flags=[] if complete else ["incomplete"], sources=["results/vyper-replication-1/README.md", "results/vyper-replication-1/PREREGISTRATION.md"])]
     hv = [r for r in hard_pooled["alone"] if "rw-vyper-sqrt" in r["dir"]]
     hp = [r for r in hard_pooled["proofforge-full"] if "rw-vyper-sqrt" in r["dir"]]
     al2, pf2 = al + hv, pf + hp
@@ -427,7 +427,7 @@ def vyper_replication_1(hard_pooled):
     out.append(comparison(f"vyper-replication-1/{task}+hard-task-1", "vyper-replication-1", task, SPARK, arm("alone", al2), arm("proofforge-full", pf2),
                           scope="aggregate", test={"name": "one-sided Fisher exact (secondary, includes the motivating hard-task-1 runs)", "p": rp(p2),
                                                    "preregistered": True, "stated_in": "results/vyper-replication-1/PREREGISTRATION.md", "significant_at_0_05": p2 < 0.05},
-                          caveats=cav, flags=["includes the runs that motivated the experiment"], sources=["results/vyper-replication-1/PREREGISTRATION.md"]))
+                          caveats=cav, flags=["includes the runs that motivated the experiment"], sources=["results/vyper-replication-1/README.md", "results/vyper-replication-1/PREREGISTRATION.md"]))
     return out, {"source": "results/vyper-replication-1", "found": True, "complete": complete}
 
 
@@ -691,6 +691,19 @@ def claims(L):
     claim(h, "rw-vyper-sqrt ProofForge list dollars $27.46", 27.46, g("hard-task-1/rw-vyper-sqrt", "proofforge", "list_usd_total"), 0.005)
     claim(h, "rw-vyper-sqrt per verified run $22.94 alone", 22.94, g("hard-task-1/rw-vyper-sqrt", "alone", "list_usd_per_verified"), 0.005)
     claim(h, "rw-vyper-sqrt per verified run $5.49 with ProofForge", 5.49, g("hard-task-1/rw-vyper-sqrt", "proofforge", "list_usd_per_verified"), 0.005)
+    if "vyper-replication-1/rw-vyper-sqrt" in by:
+        vr, vg = "results/vyper-replication-1/README.md", "vyper-replication-1/rw-vyper-sqrt"
+        claim(vr, "alone verified 8 of 10", 8, g(vg, "alone", "verified"))
+        claim(vr, "with ProofForge verified 9 of 10", 9, g(vg, "proofforge", "verified"))
+        claim(vr, "Fisher exact p = 0.50", 0.50, by[vg]["test"]["p"], 0.005)
+        claim(vr, "Mann-Whitney on list dollars per run, exact p = 0.022", 0.022, by[vg]["test"]["secondary"]["p"], 0.0005)
+        claim(vr, "list dollars per verified run $9.00 alone", 9.00, g(vg, "alone", "list_usd_per_verified"), 0.005)
+        claim(vr, "list dollars per verified run $5.69 with ProofForge", 5.69, g(vg, "proofforge", "list_usd_per_verified"), 0.005)
+        claim(vr, "list dollars total $71.99 alone", 71.99, g(vg, "alone", "list_usd_total"), 0.005)
+        claim(vr, "list dollars total $51.22 with ProofForge", 51.22, g(vg, "proofforge", "list_usd_total"), 0.005)
+        claim(vr, "pooled with hard-task-1: 10 of 15 alone", 10, g(vg + "+hard-task-1", "alone", "verified"))
+        claim(vr, "pooled with hard-task-1: 14 of 15 with ProofForge", 14, g(vg + "+hard-task-1", "proofforge", "verified"))
+        claim(vr, "pooled Fisher exact p = 0.084", 0.084, by[vg + "+hard-task-1"]["test"]["p"], 0.0005)
     claim(h, "rw-oz-sqrt alone list dollars $48.53", 48.53, g("hard-task-1/rw-oz-sqrt", "alone", "list_usd_total"), 0.005)
     claim(h, "rw-oz-sqrt ProofForge list dollars $46.06", 46.06, g("hard-task-1/rw-oz-sqrt", "proofforge", "list_usd_total"), 0.005)
     claim(h, "rw-vyper-sqrt runs stopped by the $10 cap: 3 of 5 alone", 3, by["hard-task-1/rw-vyper-sqrt"]["alone"]["cap_stops"]["usd"])
