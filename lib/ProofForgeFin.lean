@@ -17,6 +17,8 @@ import ProofForgeFin.SqrtIter
 import ProofForgeFin.NatSqrt
 import ProofForgeFin.WordBridge
 import ProofForgeFin.Accumulator
+import ProofForgeFin.QuadRoot
+import ProofForgeFin.RoundCompose
 import ProofForgeFin.Harvested
 import ProofForgeFin.Salvaged
 /-!
@@ -52,4 +54,9 @@ no dependency beyond the Lean core library.
   updates covered by the emission they index, potentials over the accounts across an update and a
   settlement, chains of primitive moves inside one action, the induction over a run given by its
   defining equations, from a scaled potential to an amount, and sums of amounts rounded down.
+* `ProofForgeFin.QuadRoot`: the integer smaller root of `a x² - 2 b x + c` computed with an
+  integer square root: the side of the real root it lands on with the root rounded up or down,
+  and its order against any rational point where the quadratic is not positive.
+* `ProofForgeFin.RoundCompose`: two roundings in a row against the exact value, cross-multiplied:
+  two floors, a floor below another floor, and a fraction rounded up of a value rounded down.
 -/

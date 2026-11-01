@@ -332,8 +332,8 @@ export const PLANNER = [
 /** ProofForgeFin (lib/), counted from the sources; lib/README.md states the kernel check. */
 export const LIBRARY = {
   // declarations in lib/ProofForgeFin/**/*.lean, comments excluded (tests/contribution.test.ts recounts)
-  files: 79,
-  theorems: 1932,
+  files: 81,
+  theorems: 1939,
   definitions: 452,
   // lib/ProofForgeFinDemo/**/*.lean
   demoTheorems: 329,

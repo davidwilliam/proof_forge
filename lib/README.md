@@ -12,9 +12,9 @@ list of operations with an induction, sums over account lists. The library state
 once, for every scale, state type and operation type, so a specification can name a library
 definition and a proof can cite a library theorem.
 
-The library has 1,932 theorems and 452 definitions in 79 files under nineteen top-level modules
+The library has 1,939 theorems and 452 definitions in 81 files under twenty-one top-level modules
 (`Rounding`, `FixedPoint`, `Word`, `Shares`, `Seq`, `Ledger`, `Trading`, `Machine`, `Evm`, `Money`,
-`DeFi`, `Tactic`, `Sums`, `Accrual`, `Sqrt`, `SqrtIter`, `NatSqrt`, `WordBridge`, `Accumulator`) and the two generated ones (`Harvested`, `Salvaged`; source
+`DeFi`, `Tactic`, `Sums`, `Accrual`, `Sqrt`, `SqrtIter`, `NatSqrt`, `WordBridge`, `Accumulator`, `QuadRoot`, `RoundCompose`) and the two generated ones (`Harvested`, `Salvaged`; source
 declarations counted with comments excluded, as `web/tests/contribution.test.ts` recounts them),
 plus demonstrations (329 theorems in 32 files)
 that re-prove lemmas of task reference solutions with it and exercise the modules. Every definition, structure
@@ -401,6 +401,33 @@ terms, so it has no counterpart of the reference's 316-line Solidity transcripti
 The module's 116 constants pass the six kernels and `leanchecker`
 (`harness/fin_kernels.py --modules ProofForgeFin.Accumulator`,
 `results/library-accumulator-1/kernels-accumulator.json`).
+
+### `ProofForgeFin.QuadRoot`: integer roots of a quadratic
+
+For `q(x) = a x² - 2 b x + c` with `a > 0`, computed as `(b - s) / a` with `s` an integer square
+root of `b² - a c`, on natural-number inputs:
+
+* `quad_nonneg_of_sqrt_ge`: with `b² - a c ≤ s²` (the root rounded up) and `x * a ≤ b - s`,
+  `2 b x ≤ a x² + c` and `a x ≤ b`: `x` is at or below the real smaller root.
+* `quad_neg_of_sqrt_le`: with `s² ≤ b² - a c` (the root rounded down) and `b - s < a y ≤ b`,
+  `a y² + c < 2 b y`: `y` is strictly between the roots.
+* `factor_neg_of_lt_vertex`, `le_of_quad_nonpos`: an `x` at or below the smaller root is at most
+  every rational point `N / t` (`t > 0`) where the quadratic is not positive,
+  `a N² + c t² ≤ 2 b t N` gives `t * x ≤ N`.
+
+### `ProofForgeFin.RoundCompose`: composed roundings
+
+* `mul_le_of_floor_floor`: two roundings down in a row stay at or below the exact value
+  (`x ≤ q₂`, `q₂ e ≤ q₁ m`, `q₁ d ≤ n` give `x e d ≤ n m`).
+* `le_of_floor_le_floor`: a quotient rounded down below another one is at most its upper bound.
+* `ceil_frac_floor_bounds`: `v / c` rounded down, then the fraction `f / k < 1` of it rounded up, is
+  within one unit of `f v / (k c)`.
+
+Added for `results/hard-task-2`, by the build team knowing the task (`realworld/tasks/rw-kyber-swapstep`):
+the reference proof uses all of them except `quad_neg_of_sqrt_le`. No statement names a swap step,
+a price, a fee or a reach amount. The 36 constants of the two modules pass the six kernels and
+`leanchecker` replays the modules (`harness/fin_kernels.py --modules ProofForgeFin.QuadRoot
+ProofForgeFin.RoundCompose`, `results/hard-task-2/kernels-library.json`).
 
 ### `ProofForgeFin.Salvaged`: lemmas runs that were not accepted did prove
 
