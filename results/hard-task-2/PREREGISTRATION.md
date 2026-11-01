@@ -246,3 +246,31 @@ Differences from the plan above:
 
 The commit of the `proofforge` arm's code is recorded in an Addendum 2 before the first measured
 run, and no run starts before that.
+
+## Addendum 2 (2026-11-01): code frozen for the measured runs
+
+Written before any measured run and before any model call on `rw-kyber-swapstep`.
+
+- Code: the commit that adds this addendum, on `main` after `d076dd8`. Runs execute from a worktree
+  checked out at it; every run's `summary.json` records its `git_commit`.
+- `proofforge` arm: `agents/muse_code.py --arm proofforge-full` at that commit. Besides the state
+  described above, it includes the changes made after `8159985` and before any model call on this
+  task, none of them specific to it: MCP tools ignore arguments they do not take, with a note
+  (both arms, `a3b9b23`); a session cut at the model's output limit is continued with the next
+  unproved required theorem and its goal (`6e6178e`); the skill asks for one step per response
+  (`76ed52d`); the final candidate is chosen among the versions seen on disk as well as those a
+  tool compiled (`20046a5`); `lean_build` with `file` builds the candidate (`7641551`); build output
+  in the `full` profile leaves out Lean's rendered hint diffs (`5c8bef8`).
+- `alone` arm: unchanged except `a3b9b23`, which only affects calls with an argument the tool does
+  not take.
+- Library: `lib/ProofForgeFin` git tree `5d67153032f39eb937dcd277c95d48aca26fdf6a`, source tree
+  sha256 `ab7b5a1572a432d9de7f4c2ca4664fcd4637cce8b2788ae749217c5afc680752`. It is the library of
+  Addendum 1 together with `ProofForgeFin.Accumulator` (`3e0895f`, written for
+  `results/frontier-2`), merged on `main`; the reference stays VERIFIED with it (Passport
+  `22b00060f0558a35`, the same six kernels and 2,001 property cases).
+- Task: `realworld/tasks/rw-kyber-swapstep` git tree `524ef52c7f5d2d617c0eeb9fdaa88409bd33ae36`,
+  locked manifest sha256 `46d3ba5391739b16c3b0919c546cdf5619527ee150272dd6404d3b7cde0e3fc8`.
+- Start: after `results/frontier-2` has finished, so that no other model experiment runs on the
+  host. Driver: `integrations/muse/measure.py --parallel 2 --budget-usd 10 --budget-wall 14400
+  --results results/hard-task-2`, `PF_CONTAINER_SLOTS=1`, items `rw-kyber-swapstep:alone:1
+  rw-kyber-swapstep:proofforge-full:1` up to run 10.
