@@ -398,6 +398,25 @@ def scratch_verdict(output, offset, exit_code):
     return not blocking, msgs
 
 
+EXPLORE = re.compile(r"^(?:#(?:check|print|eval|reduce|synth|guard_msgs|find|help)\b|example\b)")
+
+
+def strip_explorations(text):
+    """A banked chunk without the exploration commands a snippet may carry after a declaration
+    (`#check`, `#print`, `#eval`, `example` ...), each with its indented continuation lines: they
+    add nothing to the candidate, and `#eval` is forbidden there."""
+    out, skipping = [], False
+    for l in text.split("\n"):
+        if EXPLORE.match(l):
+            skipping = True
+            continue
+        if skipping and (not l.strip() or l[:1].isspace()):
+            continue
+        skipping = False
+        out.append(l)
+    return "\n".join(out).strip("\n")
+
+
 def join_messages(msgs, limit=SNIPPET_CHARS):
     """Messages for the model, the first ones whole up to `limit` characters; the headers of the
     ones left out are listed."""
@@ -748,9 +767,12 @@ class Session:
                 return ("snippet compiles, but " + res.split("\n")[0] + " so nothing was banked. Errors:\n"
                         + "\n".join(res.split("\n")[1:])[-3000:])
             note += f"; added `import {mod}` to candidate/Solution.lean"
+        self.bank_notes = []
         banked = self.bank(code)
+        notes, self.bank_notes = self.bank_notes, []
         return ("snippet compiles with no errors" + (" (linter warnings only)" if msgs else " or warnings")) + note + (
-            f"; banked into candidate/Solution.lean: {', '.join(banked)} (version {self.version})" if banked else "")
+            f"; banked into candidate/Solution.lean: {', '.join(banked)} (version {self.version})" if banked else "") + (
+            "; " + "; ".join(notes) if notes else "")
 
     def _chunks(self, code):
         """Top-level declarations of `code` as (name, text), each with the attribute and doc
@@ -774,7 +796,7 @@ class Session:
         does not compile they are installed one at a time as before."""
         src = self._source()
         existing = {m.group(1).split(".")[-1] for m in self.DECL.finditer(src)}
-        new = [(n, c) for n, c in self._chunks(code) if "sorry" not in c and n not in existing]
+        new = [(n, strip_explorations(c)) for n, c in self._chunks(code) if "sorry" not in c and n not in existing]
         if len(new) > 1 and len({n for n, _ in new}) == len(new):
             before, text = src, src
             for n, c in new:
@@ -802,13 +824,17 @@ class Session:
             b = starts[k + 1] if k + 1 < len(starts) else len(lines)
             while b > 0 and b - 1 > a and (lines[b - 1].startswith("@[") or lines[b - 1].lstrip().startswith("/--")):
                 b -= 1
-            chunk = "\n".join(lines[a:b]).strip("\n")
+            chunk = strip_explorations("\n".join(lines[a:b]))
             name = self.DECL.match(lines[starts[k]]).group(1).split(".")[-1]
             if "sorry" in chunk:
                 continue
             if name not in existing:
-                self.replace_declaration(name, chunk)
-                banked.append(name)
+                res = self.replace_declaration(name, chunk)
+                if res.startswith("REVERTED"):   # the file is unchanged: nothing was banked
+                    self.__dict__.setdefault("bank_notes", []).append(
+                        f"`{name}` was not banked: " + res.split(" (version")[0].replace("REVERTED: ", ""))
+                else:
+                    banked.append(name)
             elif name in self.theorems or name in self.targets:
                 decl = re.search(rf"theorem\s+{re.escape(name)}\b.*?(?=\n{self.boundary})", self._source(), re.S)
                 if decl and "sorry" in decl.group(0):
@@ -835,6 +861,13 @@ class Session:
                         self.log(kind="bank_failed", name=name, version=self.version, output=self._clean(out)[-1500:])
                     else:
                         self._save(before, f"revert banked {name}")
+                        errs = [l for l in self._clean(out).splitlines() if "error" in l and "build failed" not in l]
+                        self.__dict__.setdefault("bank_notes", []).append(
+                            f"`{name}` was not banked: with it candidate/Solution.lean does not compile"
+                            + (f" ({'; '.join(e.strip()[:200] for e in errs[:2])})" if errs else ""))
+                elif decl:
+                    self.__dict__.setdefault("bank_notes", []).append(
+                        f"`{name}` already has a proof in candidate/Solution.lean, which was kept")
             src = self._source()
             existing = {m.group(1).split(".")[-1]: m.start() for m in self.DECL.finditer(src)}
         return banked
