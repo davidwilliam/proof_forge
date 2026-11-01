@@ -13,6 +13,7 @@ import ProofForgeFin.Tactic
 import ProofForgeFin.Sums
 import ProofForgeFin.Accrual
 import ProofForgeFin.Sqrt
+import ProofForgeFin.SqrtIter
 import ProofForgeFin.WordBridge
 import ProofForgeFin.Harvested
 import ProofForgeFin.Salvaged
@@ -37,6 +38,9 @@ no dependency beyond the Lean core library.
 * `ProofForgeFin.Sqrt`: the integer square root `Nat.sqrt` and one Newton step `(x + a / x) / 2`:
   bounds of the root, the error relation of a step, quadratic and halving convergence, and the
   end of the iteration.
+* `ProofForgeFin.SqrtIter`: Newton iteration over `k` steps, `newtonIter`: the error after `k`
+  steps from above and from below the root, power-of-two estimates through `Nat.log2`, when an
+  iterate reaches the root or the root plus one, and Newton steps on machine words.
 * `ProofForgeFin.WordBridge`: `BitVec w` to `Nat` and back at any width: exactness of `+`, `*`,
   `-`, `<<<` without overflow (as equivalences), `/`, `>>>` and comparisons, shifts by a word,
   sizes of sums and products below `2^w`, and iterations on words as iterations on values.
