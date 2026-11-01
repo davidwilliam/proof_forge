@@ -69,7 +69,7 @@ On these tasks the harness did not complete more tasks than Muse alone. Both Com
 - Muse Spark Open, Meta's open-weight model (`results/e1-test-open-1`, 30 frozen test tasks, $3 and 3,600 s per run): A0 completed 21 of 30, A1 24 of 30; A1's final executables passed the property tests on all 30, A0's built on 21. Difference +0.10, 95% interval [-0.17, +0.38], McNemar exact p = 0.51: not significant.
 - Muse Glimmer 30B, self-hosted on one Modal H100 (`results/e1-test-glimmer-1`, incomplete: 31 of 60 runs scored before the host paused the workspace): A0 0 of 15, A1 3 of 13 excluding three runs ended by the outage (3 of 16 including them); McNemar exact p = 0.25.
 - Muse Wonder 1.0 as planner: on Compound the A1 runs proved 0 of 8 requirements twice and the A2 runs 5 of 8 twice, none accepted (`results/compound-1`); on Knight A1 proved 1 of 6 twice, A2 5 of 6 and then 6 of 6, VERIFIED (`results/knight-1`).
-- Pending: `results/library-1` (Muse with ProofForge and the ProofForgeFin library against Muse alone on Compound, Knight and Balancer) is running; no results are committed.
+- `results/library-1`: Muse with ProofForge and the ProofForgeFin library against Muse alone on Compound, Knight and Balancer, 14 runs committed; see its README.
 
 ## ProofForgeFin
 
