@@ -12,9 +12,9 @@ list of operations with an induction, sums over account lists. The library state
 once, for every scale, state type and operation type, so a specification can name a library
 definition and a proof can cite a library theorem.
 
-The library has 1,750 theorems and 447 definitions in 71 files under fifteen top-level modules
+The library has 1,869 theorems and 449 definitions in 74 files under eighteen top-level modules
 (`Rounding`, `FixedPoint`, `Word`, `Shares`, `Seq`, `Ledger`, `Trading`, `Machine`, `Evm`, `Money`,
-`DeFi`, `Tactic`, `Sums`, `Accrual`, `Sqrt`) and the two generated ones (`Harvested`, `Salvaged`; source
+`DeFi`, `Tactic`, `Sums`, `Accrual`, `Sqrt`, `SqrtIter`, `NatSqrt`, `WordBridge`) and the two generated ones (`Harvested`, `Salvaged`; source
 declarations counted with comments excluded, as `web/tests/contribution.test.ts` recounts them),
 plus demonstrations (329 theorems in 32 files)
 that re-prove lemmas of task reference solutions with it and exercise the modules. Every definition, structure
@@ -267,6 +267,82 @@ No statement names a step count, an initial estimate or a machine word. Its 71 c
 six kernels and `leanchecker` (`harness/fin_kernels.py --modules ProofForgeFin.Sqrt`,
 `results/hard-task-1/kernels-sqrt.json`).
 
+### `ProofForgeFin.SqrtIter`: Newton iteration over `k` steps
+
+`newtonIter a k x` applies `k` steps of `newton a` to `x` (`newtonIter_succ`, `newtonIter_succ'`,
+`newtonIter_add`, `newtonIter_eq_repeat`); `s = Nat.sqrt a`.
+
+* Above the root: `sqrt_le_newtonIter_of_le`, `sqrt_le_newtonIter` (from any positive start after
+  one step), `newtonIter_le_max` (the iterates stay at most `max x (s + 1)`).
+* The error after `k` steps for any start: `newtonIter_sub_sqrt_le_half_pow`
+  (`(x - s) / 2^k + 2`); quadratic convergence in relative form, `newton_sub_sqrt_le_div_mul`
+  (`s / m + 2` becomes `s / (2 * m * m) + 2`) and `newtonIter_sub_sqrt_le_two_pow` (`s / 2^j + 2`
+  becomes `s / 2^((j + 1) * 2^k - 1) + 2` after `k` steps).
+* From below the root: `newton_sub_sqrt_le_of_le`, `newton_sub_sqrt_le_of_lt_two_mul`
+  (`x ≤ s < 2 * x` gives an error at most `s / 4 + 2`), `newtonIter_sub_sqrt_le_of_lt_two_mul`
+  (after `k + 1` steps, `s / 2^(3 * 2^k - 1) + 2`).
+* Reaching the root or the root plus one: `newton_eq_or_succ_of_le_add_two`,
+  `newton_eq_or_succ_of_err` (an error at most `s / m + 2` with `s / m + 8 ≤ m`, no lower bound on
+  `s`), `div_two_pow_add_eight_le`, `newtonIter_eq_or_succ_of_lt_two_mul` (from `x ≤ s < 2 * x`,
+  `k + 2` steps suffice when `s < 2^b` and `b + 3 ≤ 2 * (3 * 2^k - 1)`), `newton_mem_of_mem`,
+  `newtonIter_of_mem`.
+* Power-of-two estimates: `two_pow_half_log2_le_sqrt`, `sqrt_lt_two_mul_two_pow_half_log2`
+  (`2^(log2 a / 2) ≤ s < 2 * 2^(log2 a / 2)`).
+* Sizes and the final squaring: `add_div_le_of_sqrt_le`, `div_lt_of_sqrt_lt_mul`,
+  `sqrt_lt_two_pow_of_lt`, `mul_self_sqrt_lt_two_pow`, `le_div_add_of_mul_le`,
+  `div_add_le_of_add_mul_le`, `mul_self_le_of_le_div_add_two`, `mul_self_le_of_mul_le`.
+* Squares and powers of two without `ring`: `add_mul_self_eq`, `sub_mul_self_add_eq`,
+  `two_mul_le_add_mul_self`, `two_pow_mul_two_pow`, `two_pow_sub_mul_two_pow`, `div_mul_div_le`,
+  `mul_self_lt_mul_self_iff`, `lt_two_pow_of_mul_self_lt`.
+* The root rounded up: `le_mul_self_sqrt_add_ite`, `sqrt_add_ite_sub_one_mul_self_lt`; the order of
+  the root: `le_sqrt_iff`, `sqrt_lt_iff`.
+* `sqrtSearch` and `sqrt_eq_sqrtSearch`: the root by structural search, which `decide` evaluates
+  on literals where `Nat.sqrt` (well-founded recursion) does not reduce.
+* Newton steps on `w`-bit words: `toNat_newton_word`, `toNat_newton_word_of_sqrt_le`,
+  `sqrt_toNat_lt_two_pow`.
+
+### `ProofForgeFin.NatSqrt`: `Nat.sqrt` facts under their usual names
+
+In the `Nat` namespace, with the names and statements Mathlib uses, since proofs reach for them by
+name and Lean core states only `Nat.sqrt_le` and `Nat.lt_succ_sqrt`: `Nat.le_sqrt`,
+`Nat.le_sqrt'`, `Nat.sqrt_lt`, `Nat.sqrt_lt'`, `Nat.sqrt_le'`, `Nat.lt_succ_sqrt'`,
+`Nat.sqrt_le_add`, `Nat.sqrt_le_self`, `Nat.sqrt_le_sqrt`, `Nat.sqrt_lt_self`, `Nat.sqrt_pos`,
+`Nat.sqrt_eq_zero`, `Nat.sqrt_zero`, `Nat.sqrt_one`, `Nat.eq_sqrt`, `Nat.eq_sqrt'`, `Nat.sqrt_eq`,
+`Nat.sqrt_eq'`, `Nat.sqrt_add_eq`, `Nat.sqrt_succ_le_succ_sqrt`; and `Nat.pow_log2_le`,
+`Nat.lt_pow_succ_log2`, `Nat.log2_lt_of_lt_pow`.
+
+### `ProofForgeFin.WordBridge`: from `BitVec w` to `Nat` and back
+
+For every width `w`:
+
+* Exactness as equivalences: `toNat_add_eq_iff`, `toNat_mul_eq_iff`, `toNat_sub_eq_iff`,
+  `toNat_shiftLeft_eq_iff` (the word result is the `Nat` result exactly when it fits, or when the
+  subtraction does not underflow), and the implications `toNat_add_of_lt'`, `toNat_mul_of_lt'`,
+  `toNat_sub_of_toNat_le`, `toNat_shiftLeft_of_mul_lt`.
+* Shifts by a word amount (`x <<< y`, `x >>> y` with `y : BitVec v`): `shiftLeft_bv_eq`,
+  `toNat_shiftLeft_bv_of_mul_lt`, `toNat_shiftRight_bv`, `toNat_one_shiftLeft_bv`
+  (`1 <<< y` is `2^y` for `y < w`); `toNat_shiftRight`, `toNat_shiftRight_one`, `toNat_div`.
+* Comparisons and conditionals: `lt_iff_toNat_lt`, `le_iff_toNat_le`, `eq_iff_toNat_eq`,
+  `ne_zero_iff_toNat_pos`, `eq_zero_iff_toNat_eq_zero`, `toNat_ite`, `toNat_ite_lt` (the minimum),
+  `toNat_ite_lt_max`, `decide_lt_eq`.
+* Sizes below `2^w`: `mul_lt_two_pow`, `mul_self_lt_two_pow`, `add_lt_two_pow`,
+  `lt_two_pow_of_le`, `toNat_mul_of_lt_two_pow`, `toNat_add_of_lt_two_pow`, `log2_toNat_lt`,
+  `toNat_lt_two_pow_of_le`; literals: `toNat_ofNat_of_lt'`, `toNat_one'`, `toNat_zero'`.
+* Iterations: `iter_succ_of_eqns`, `iter_map_of_sim` and `iter_map_invariant` (an iteration of a
+  word function that acts as `g` on values satisfying an invariant `g` preserves is
+  `Nat.repeat g k` on the values), `repeat_succ'`.
+
+Added after `results/hard-task-1`, where no run proved the convergence of a seven-step integer
+square root on 256-bit words (`realworld/tasks/rw-oz-sqrt`). The runs stopped at the error after
+several steps (bounds rebuilt step by step with literal constants that `omega` could not
+square), the final squaring of the error, the shift by a word amount in the estimate
+`1 << (log2(a) >> 1)`, the link from a word iteration to a `Nat` iteration, and `Nat.sqrt` names
+that core does not have. No statement names a step count, a width or an estimate routine. The
+221 safe constants of the three modules (214 theorems, counting compiler-generated ones) pass the six kernels and `leanchecker`
+replays the modules; the 2 `_unsafe_rec` constants pass Lean's kernels and lean4lean
+(`harness/fin_kernels.py --modules ProofForgeFin.SqrtIter ProofForgeFin.NatSqrt
+ProofForgeFin.WordBridge`, `results/library-newton-1/kernels.json`).
+
 ### `ProofForgeFin.Salvaged`: lemmas runs that were not accepted did prove
 
 Generated by `harness/harvest.py run --unverified` (`docs/HARVEST.md`) from the final candidates
@@ -502,6 +578,8 @@ not be checked; every other declaration passed all six kernels. Now all 10,128 s
 the library and the demonstrations (5,982 theorems, counting compiler-generated ones) pass all
 six kernels in one Comparator run, and `leanchecker` accepts all 87 modules that declare
 constants (`results/feedback-library-1/kernels-full.json`); `ProofForgeFin.Sqrt`, added after that
-run, was checked on its own with the same tool (`results/hard-task-1/kernels-sqrt.json`). The 60 `_unsafe_rec` constants (Lean's compiled form of recursive definitions, which no
+run, was checked on its own with the same tool (`results/hard-task-1/kernels-sqrt.json`), and so
+were `ProofForgeFin.SqrtIter`, `ProofForgeFin.NatSqrt` and `ProofForgeFin.WordBridge`
+(`results/library-newton-1/kernels.json`). The 60 `_unsafe_rec` constants (Lean's compiled form of recursive definitions, which no
 proof mentions) pass Lean's kernels and lean4lean; nanoda, con-leche and con-ron decline `unsafe`
 code by design.
