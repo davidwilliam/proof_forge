@@ -4,15 +4,15 @@ import { useEffect, useRef } from "react";
 import { SPLASH_SVG } from "./splash-svg";
 
 /**
- * The identity splash: the kit's sequence (premises, inference line, conclusion with its labels, then
+ * The identity splash: the kit's sequence (premises, inference line, conclusion with its labels, the six kernels, then
  * the lockup) over the page, on the first view of the home page in a browser session.
  *
  * The page renders underneath; the splash is an overlay. The head script in splash-script.ts decides before first paint
  * whether to show it (html[data-splash]); without that attribute the overlay is display: none, so
  * crawlers, browsers without scripts, automated browsers and reduced motion never see it. CSS alone
- * fades it out at 4.3 s; a click, key or scroll ends it at once. `?splash` shows it again.
+ * fades it out at 5.85 s; a click, key or scroll ends it at once. `?splash` shows it again.
  */
-const DURATION_MS = 4700;
+const DURATION_MS = 6250;
 
 export function Splash() {
   const ref = useRef<HTMLDivElement>(null);
