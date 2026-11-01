@@ -12,9 +12,9 @@ list of operations with an induction, sums over account lists. The library state
 once, for every scale, state type and operation type, so a specification can name a library
 definition and a proof can cite a library theorem.
 
-The library has 1,869 theorems and 449 definitions in 74 files under eighteen top-level modules
+The library has 1,932 theorems and 452 definitions in 79 files under nineteen top-level modules
 (`Rounding`, `FixedPoint`, `Word`, `Shares`, `Seq`, `Ledger`, `Trading`, `Machine`, `Evm`, `Money`,
-`DeFi`, `Tactic`, `Sums`, `Accrual`, `Sqrt`, `SqrtIter`, `NatSqrt`, `WordBridge`) and the two generated ones (`Harvested`, `Salvaged`; source
+`DeFi`, `Tactic`, `Sums`, `Accrual`, `Sqrt`, `SqrtIter`, `NatSqrt`, `WordBridge`, `Accumulator`) and the two generated ones (`Harvested`, `Salvaged`; source
 declarations counted with comments excluded, as `web/tests/contribution.test.ts` recounts them),
 plus demonstrations (329 theorems in 32 files)
 that re-prove lemmas of task reference solutions with it and exercise the modules. Every definition, structure
@@ -343,6 +343,65 @@ replays the modules; the 2 `_unsafe_rec` constants pass Lean's kernels and lean4
 (`harness/fin_kernels.py --modules ProofForgeFin.SqrtIter ProofForgeFin.NatSqrt
 ProofForgeFin.WordBridge`, `results/library-newton-1/kernels.json`).
 
+### `ProofForgeFin.Accumulator`: reward accumulators over sequences of actions
+
+No measured run proved the three sequence bounds of `rw-compound-comp` (REQ-REWARDS-BOUNDED,
+REQ-ACCOUNT-BOUNDED, REQ-NO-BACKDATED-REWARDS): not Muse alone, not Muse with ProofForge, not the
+repair agent with the planner, top-down or resumed, and not with all seven feedback capabilities
+(`results/compound-1`, `results/library-1`, `results/feedback-measure-1/rw-compound-comp`). Their
+open goals show where they stopped. The runs that set up a potential chose a sound one (credited
+COMP at scale 1e36, plus pending rewards from `accrualStart`, plus unindexed emission) and proved
+the run-level induction from a one-operation step, but left that step open: `td0_exec_inv` and
+`td0_exec_potentialTo_le` (`library-1` A2-topdown-3), `plan5_exec_step` with
+`plan5_supply_distributed_pot_le` and `plan7_pot_accrueSupply_le` (A2-full-1), and
+`plan6_exec_potential_step` (A2-resume-1), whose goal is the potential after `exec comptroller s
+op` for all nine operations at once, every sum and index unfolded. What was missing is the
+decomposition: one action as a chain of primitive transitions, a bound on each transition stated
+for any account term, and the induction over a run as the specification defines it. The module
+states these as general facts; it names no protocol and states no requirement of the task.
+
+* `Accumulator.Index`: `catchUp one index last rate now total` (the index brought up to date:
+  `+ (now - last) * rate * one / total` when time passed, the rate is positive and units exist),
+  `unindexed last rate now = (now - last) * rate`, and `Covered total E i i'` (`i ≤ i'` and
+  `total * (i' - i) ≤ E`): `covered_catchUp` (an update is covered by `one` times the emission it
+  indexes), `lt_covered_catchUp`, `Covered.trans`, `Covered.share_ite_mul` (an account's part of a
+  covered increase is covered only while it holds units), `unindexed_add` and `unindexed_ite_add`
+  (time passing), `firstStart_mono` and `le_firstStart_self` (the start of an account without a
+  checkpoint rises with the index; an account settled at the index owes nothing).
+* `Accumulator.Potential`, for any account type and any term `t i a` of the index and the account:
+  `owed_le_add` (`u * (i' - s') ≤ u * (i - s) + u * (i' - i)` for `s ≤ s'`), `settle_scaled_le`
+  (crediting the owed amount rounded down and restarting at the index does not raise the scaled
+  term), `pot_accrue_le` and `pot_accrue_settle_le` (`Σ t + one * U` is not raised by an update
+  whose increase is covered by `U`, nor by an update followed by the settlement of one account),
+  `acct_accrue_le` and `getD_modify_le` (the same for one account), `sum_scaled_le` and
+  `sum_mul_le_sum_scaled` (the potential against the credited amount at the start and the end),
+  `sum_owed_index_eq` (exactly, accrued equals units times index difference).
+* `Accumulator.Runs`: `Moves R`, the chains of a primitive relation, with `Moves.bound` (a bound on
+  every move bounds every chain, for every potential at once) and `Moves.of_getD` (a call that
+  may fail); `run_bound` (a run, its ghost total and its ghost state given by their defining
+  equations, so that it applies to a specification's own `run`, `emitted` and `speedsAfter` with
+  `rfl` for each equation), `run_invariant`, `run_bound_after` (after any history);
+  `amount_le_of_scaled` and `amount_le_of_scaled_exact` (from a potential at scale `c` to an
+  amount: start amount, plus the start remainder rounded down once, plus emission).
+* `Accumulator.Floor`: `sum_map_div_le_div` (the sum of the floors is at most the floor of the
+  sum), `div_sum_map_eq` (the floor of the sum is the sum of the floors plus the remainders
+  rounded down), `div_sum_map_lt` (rounding `n` parts loses less than `n` units).
+
+A candidate for `rw-compound-comp` written with the module (by the build team; not committed)
+proves the three bounds through the per-call effect requirements: a primitive relation with
+eight transitions (index update and settlement on each side, payment, units change of a settled
+account on each side, a drip), one bound per transition for the global and the per-account
+potential, one case analysis of `exec` into chains of transitions, and `run_bound`. It is VERIFIED,
+8 of 8, with all six kernels and the executable's 2,001 property cases. It has 720 lines against
+1,650 for the reference solution; the three bounds take 576 lines against 1,138 in the reference
+(996, plus 142 lines of list lemmas they use) and 911 in the library route of
+`ProofForgeFinDemo.DeFi.Compound`. The candidate defines the distribution in the specification's
+terms, so it has no counterpart of the reference's 316-line Solidity transcription.
+
+The module's 116 constants pass the six kernels and `leanchecker`
+(`harness/fin_kernels.py --modules ProofForgeFin.Accumulator`,
+`results/library-accumulator-1/kernels-accumulator.json`).
+
 ### `ProofForgeFin.Salvaged`: lemmas runs that were not accepted did prove
 
 Generated by `harness/harvest.py run --unverified` (`docs/HARVEST.md`) from the final candidates
@@ -439,6 +498,12 @@ The counts include the constants Lean generates for each declaration (recursors,
 `injEq` theorems, auxiliary proofs). When this output was recorded the source declared 233 library
 theorems and 27 demonstration theorems, in the first six modules; the kernel check below covers the
 current sources.
+
+With `ProofForgeFin.Accumulator` (library source tree `0d7f3844dd28b400`), in the same image:
+`audit: 10387 constants, 3312 theorems, 0 violations`, axioms used `[Classical.choice, Quot.sound,
+propext]`; of its main results `Moves.bound` depends on no axiom, `covered_catchUp` on `propext`,
+and `pot_accrue_settle_le`, `acct_accrue_le`, `run_bound`, `amount_le_of_scaled` and
+`div_sum_map_lt` on `propext` and `Quot.sound`.
 
 ## Building
 
@@ -580,6 +645,7 @@ six kernels in one Comparator run, and `leanchecker` accepts all 87 modules that
 constants (`results/feedback-library-1/kernels-full.json`); `ProofForgeFin.Sqrt`, added after that
 run, was checked on its own with the same tool (`results/hard-task-1/kernels-sqrt.json`), and so
 were `ProofForgeFin.SqrtIter`, `ProofForgeFin.NatSqrt` and `ProofForgeFin.WordBridge`
-(`results/library-newton-1/kernels.json`). The 60 `_unsafe_rec` constants (Lean's compiled form of recursive definitions, which no
+(`results/library-newton-1/kernels.json`), and so was `ProofForgeFin.Accumulator`
+(`results/library-accumulator-1/kernels-accumulator.json`). The 60 `_unsafe_rec` constants (Lean's compiled form of recursive definitions, which no
 proof mentions) pass Lean's kernels and lean4lean; nanoda, con-leche and con-ron decline `unsafe`
 code by design.
