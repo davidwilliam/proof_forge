@@ -224,3 +224,26 @@ listed above it has small general facts on squares and the root (`four_mul_le_sq
 
 The commit of the `proofforge` arm's code is not part of this branch; it is recorded in an
 Addendum 2 before the first measured run, and no run starts before that.
+
+## Addendum 2 (2026-10-31): arm code frozen, before any measured run
+
+No model has been called on either task.
+
+- Code of both arms: repository commit `76f8f0d` (main), run from a worktree checked out at the commit
+  of this addendum. The `alone` arm is `agents/muse_code.py --arm alone`. The `proofforge` arm is
+  `agents/muse_code.py --arm proofforge-full`: the MCP profile `full` (check_candidate, try_snippet,
+  check_snippet_fast, goal_at, try_tactics, refute_statement, search_library with the goal-aware
+  ranking, verify_passport, show_task, list_tasks, lean_build) and the skill in
+  `.agents/skills/proofforge/SKILL.md`. No planner model is called by either arm.
+- Muse Code 1.4.14 (build 1.4.14-R7309.1), `MUSE_NO_AUTO_UPDATE=1`, model
+  `muse-spark-1.3-contributor` at medium effort, for every run.
+- Library source tree `5190779eefac61f328a4d5a7a2dfa91d42ea6d191fa707eedc5b71b65798a44a`.
+- Metering: `integrations/muse/meter.py` with the prefix bound (commit `b1cdca0`): worst-case
+  pre-charge, settlement from reported usage, $10 at standard list prices and 14,400 s per run,
+  identical for both arms.
+- Driver: `integrations/muse/measure.py --parallel 2 --budget-usd 10 --budget-wall 14400`,
+  with `PF_CONTAINER_SLOTS=1`, items in this order, so each concurrent pair is one run of each arm:
+  `rw-oz-sqrt:alone:1 rw-oz-sqrt:proofforge-full:1 rw-vyper-sqrt:alone:1
+  rw-vyper-sqrt:proofforge-full:1`, then the same for runs 2 to 5.
+- Host: two runs of another experiment (`results/feedback-measure-1`, Compound) were still
+  executing when this measurement started; they load both arms alike.
