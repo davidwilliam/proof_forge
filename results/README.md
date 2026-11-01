@@ -6,7 +6,7 @@ Model-written text in these files is verbatim except that em dashes are replaced
 
 | Directory | What | Notes |
 |---|---|---|
-| `e1-dev-1` | E1 on the 23 dev tasks, arms A0, A1, A2, $3 list and 2700 s per run | before the harness fixes in commit f8e0e6d; two runs lost to network timeouts |
+| `e1-dev-1` | E1 on the 23 dev tasks, arms A0, A1, A2, $3 list and 2700 s per run | before the harness fixes in commit f8e0e6d; three runs have no verdict (`payouts-fee-b2` A2, `transfers-batch-b1` A1 and A2) |
 | `e1-dev-2` | the same, after those fixes | used to set the test-run caps |
 | `e1-test-1` | E1 on the 30 frozen test tasks, arms A0, A1, A2, $3 list and 3600 s per run, Muse Spark 1.3 on the Contributor tier | run from an isolated checkout under `results/test-freeze.json`; all 90 runs completed, none set aside |
 | `e1-test-open-1` | E1 on the 30 frozen test tasks with Meta's open-weight Muse Spark Open (`meta-models/muse-spark-open-1026`, Baseten Model APIs), arms A0 and A1, $3 list and 3600 s per run, run from an isolated checkout at commit 36fc8d3 under `results/test-freeze.json` | A0 21 of 30, A1 24 of 30 (McNemar exact p = 0.51); A1's executable passed the property tests on all 30, A0's built on 21; all 9 A0 failures stopped at the dollar cap without a candidate that builds; $74.68 at list prices for the batch; intermediate candidates not committed |
