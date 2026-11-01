@@ -1,9 +1,9 @@
 # hard-task-1: two decisive tasks for Muse Code alone against Muse Code with ProofForge
 
-Status: the two tasks and the library module are built, validated and frozen. No model has been
-run on them; the measured runs are pending. The plan, the arms, the caps, the number of runs and
-the analysis were committed before anything was built (`PREREGISTRATION.md`, commit `54bf8cc`);
-its addenda record what changed since.
+Status: measured. The 20 preregistered runs (5 per arm per task) ran from 2026-10-31 20:48 to
+2026-11-01 06:06 EDT with the arm code, tasks and library frozen in the addenda of
+`PREREGISTRATION.md` (plan committed before anything was built, commit `54bf8cc`). Every final
+candidate was judged again from the frozen commit and every Passport reproduced.
 
 ## The tasks
 
@@ -38,6 +38,72 @@ the locked challenge.
 
 Passports and their console output: `passports/`. Spec-strength reports: `spec-strength/`.
 
+## Results
+
+Primary outcome: VERIFIED by `bin/proofforge check` on the run's final candidate, judged again
+outside the budget from commit `baa38a0` (`judged/<task>/<run>/passport.json`); all 20 Passports
+reproduced by `bin/proofforge verify` (`judged/<task>/<run>/verify.txt`).
+
+| Task | `alone` (Muse Code) | `proofforge` (Muse Code with ProofForge) | One-sided Fisher exact test |
+|---|---|---|---|
+| `rw-vyper-sqrt` | 2 of 5 | 5 of 5 | p = 0.083 |
+| `rw-oz-sqrt` | 0 of 5 | 0 of 5 | p = 1 |
+| Both tasks (secondary) | 2 of 10 | 5 of 10 | p = 0.175 |
+
+Neither difference is significant at the preregistered alpha. On `rw-vyper-sqrt` the difference is
+three; the preregistration states that 5 runs per arm reach p < 0.05 only with a difference of
+four. No run was set aside and none was rerun.
+
+| Task | Arm | List dollars | Per verified run | Dollars charged | Runs stopped by the $10 cap |
+|---|---|---|---|---|---|
+| `rw-vyper-sqrt` | `alone` | $45.88 | $22.94 | $1.47 | 3 of 5 |
+| `rw-vyper-sqrt` | `proofforge` | $27.46 | $5.49 | $0.96 | 0 of 5 |
+| `rw-oz-sqrt` | `alone` | $48.53 | no verified run | $1.82 | 5 of 5 |
+| `rw-oz-sqrt` | `proofforge` | $46.06 | no verified run | $1.68 | 5 of 5 |
+
+List dollars are the meter's charge at standard list prices, the quantity the cap applies to;
+dollars charged are what the contributor tier billed.
+
+Every run. "Proved in the last compiling version" counts the required theorems proved without
+`sorry` in the last version of the run that built (`ledger.json`, `best_candidate`).
+
+| Task | Run | Passport status | Final candidate | Proved in the last compiling version | List dollars | Wall time | Passport |
+|---|---|---|---|---|---|---|---|
+| `rw-vyper-sqrt` | alone-1 | UNRESOLVED | does not build | 2 of 5 | $9.87 | 20 min | `201ac173f19897c4` |
+| `rw-vyper-sqrt` | alone-2 | VERIFIED | VERIFIED | 5 of 5 | $9.22 | 88 min | `60089873b4cf6bb1` |
+| `rw-vyper-sqrt` | alone-3 | VERIFIED | VERIFIED | 5 of 5 | $7.72 | 47 min | `5dc7cffb5f27603b` |
+| `rw-vyper-sqrt` | alone-4 | UNRESOLVED | builds with `sorry` | 0 of 5 | $9.53 | 57 min | `a615801f7172750a` |
+| `rw-vyper-sqrt` | alone-5 | UNRESOLVED | builds with `sorry` | 2 of 5 | $9.55 | 38 min | `f72d8f9fd570f027` |
+| `rw-vyper-sqrt` | proofforge-full-1 | VERIFIED | VERIFIED | 5 of 5 | $6.13 | 21 min | `4f5a15c052197dcf` |
+| `rw-vyper-sqrt` | proofforge-full-2 | VERIFIED | VERIFIED | 5 of 5 | $4.79 | 35 min | `8184ef36fc5a13df` |
+| `rw-vyper-sqrt` | proofforge-full-3 | VERIFIED | VERIFIED | 5 of 5 | $4.05 | 53 min | `869f15d14b4b02c2` |
+| `rw-vyper-sqrt` | proofforge-full-4 | VERIFIED | VERIFIED | 5 of 5 | $7.19 | 74 min | `633c857097c55e39` |
+| `rw-vyper-sqrt` | proofforge-full-5 | VERIFIED | VERIFIED | 5 of 5 | $5.29 | 14 min | `5e872b17ec048114` |
+| `rw-oz-sqrt` | alone-1 | UNRESOLVED | does not build | 2 of 8 | $9.88 | 66 min | `302a022931ba0b27` |
+| `rw-oz-sqrt` | alone-2 | UNRESOLVED | builds with `sorry` | 2 of 8 | $9.72 | 27 min | `397132f48046b65c` |
+| `rw-oz-sqrt` | alone-3 | UNRESOLVED | builds with `sorry` | 4 of 8 | $9.67 | 152 min | `f275358143dc5978` |
+| `rw-oz-sqrt` | alone-4 | UNRESOLVED | builds with `sorry` | 3 of 8 | $9.34 | 81 min | `fbe6aec72793478d` |
+| `rw-oz-sqrt` | alone-5 | UNRESOLVED | builds with `sorry` | 2 of 8 | $9.93 | 65 min | `538cfc3f1ff595c7` |
+| `rw-oz-sqrt` | proofforge-full-1 | UNRESOLVED | does not build | 0 of 8 | $9.22 | 83 min | `c03a03d3da4880e8` |
+| `rw-oz-sqrt` | proofforge-full-2 | UNRESOLVED | builds with `sorry` | 3 of 8 | $9.62 | 79 min | `693932e21a84e16e` |
+| `rw-oz-sqrt` | proofforge-full-3 | UNRESOLVED | does not build | 1 of 8 | $9.48 | 81 min | `4cdc7c9ed4b15710` |
+| `rw-oz-sqrt` | proofforge-full-4 | UNRESOLVED | does not build | 0 of 8 | $8.38 | 37 min | `3cb06f5511259f98` |
+| `rw-oz-sqrt` | proofforge-full-5 | UNRESOLVED | does not build | 1 of 8 | $9.36 | 102 min | `c98db7bd40193b3b` |
+
+No unverified final candidate is REFUTED: each fails on proof (a `sorry` left or a build error),
+not on a counterexample.
+
+On `rw-oz-sqrt` no run of either arm proved REQ-SQRT-NOT-BELOW, REQ-SQRT-UP-COVERS, REQ-MINT-FULL or
+REQ-MINT-LIVE, the requirements that need the error bound of seven Newton steps from the
+power-of-two estimate over every 256-bit input. The `alone` arm kept more required theorems proved
+in its last compiling version (13 over five runs against 5), and four of the five `proofforge`
+final candidates do not build: those runs ended at the cap in the middle of a restructuring of the
+proof.
+
+Run directories: `runs/<task>/<run>/` (`summary.json`, `ledger.json`, `final.lean`, the model calls
+in `calls.jsonl` and `requests.jsonl`, the MCP calls in `mcp-calls.jsonl`, the Muse Code event
+stream in `events.jsonl.gz`). Intermediate candidate versions are not committed.
+
 ## Library work done for this experiment
 
 `ProofForgeFin.Sqrt` (`lib/ProofForgeFin/Sqrt.lean`, commit `b3a851a`; library source tree
@@ -59,15 +125,10 @@ The protected lemmas of each task (`spec/*/Lemmas.lean`: the port of `log2` is `
 Newton line is the step on values when it does not wrap, the decimal operations on non-negative
 values, one iteration of the Vyper loop) are visible to both arms.
 
-## For the measurement
-
-Task ids: `rw-oz-sqrt`, `rw-vyper-sqrt`. Repair mode from `candidate/Solution.lean`, 5 runs per arm
-per task, arms `alone` and `proofforge` as defined in the preregistration, $10 at list prices and
-14,400 s per run, every final candidate judged by `bin/proofforge check`.
-
 ## Reproduce
 
 ```sh
+bin/proofforge verify results/hard-task-1/judged/rw-vyper-sqrt/proofforge-full-1/passport.json --candidate results/hard-task-1/runs/rw-vyper-sqrt/proofforge-full-1/final.lean
 bin/proofforge verify results/hard-task-1/passports/oz-reference.json --candidate realworld/tasks/rw-oz-sqrt/reference/SolutionA.lean
 bin/proofforge verify results/hard-task-1/passports/vyper-reference.json --candidate realworld/tasks/rw-vyper-sqrt/reference/SolutionA.lean
 bin/proofforge verify results/hard-task-1/passports/oz-start.json --candidate realworld/tasks/rw-oz-sqrt/candidate/Solution.lean
