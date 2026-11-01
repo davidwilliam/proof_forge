@@ -151,7 +151,8 @@ class Meter:
                 if info is not None:
                     info.update(input_bound=bound, bound=kind, prefix_items=k)
                 try:
-                    mt, _ = self.budget.call_limits(model, nbytes, n_items, want, 3600, min_tokens=MIN_OUTPUT,
+                    # a request that asks for less output than MIN_OUTPUT needs only what it asks for
+                    mt, _ = self.budget.call_limits(model, nbytes, n_items, want, 3600, min_tokens=min(MIN_OUTPUT, want),
                                                     input_tokens=bound)
                 except BudgetExceeded as e:
                     # A call that does not fit beside the worst cases of calls still in flight waits

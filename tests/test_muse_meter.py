@@ -201,6 +201,13 @@ def test_unpriced_model_is_refused():
     m.stop()
 
 
+def test_a_small_output_request_is_admitted():
+    m = meter.Meter(tempfile.mkdtemp(), usd_cap=10)
+    b = {**request(max_out=500)}
+    tok, granted = m.admit(b, len(json.dumps(b)))
+    assert granted == 500 and tok["worst"]["completion_tokens"] == 500
+
+
 def test_wall_cap_refuses():
     up = Upstream()
     m = meter.Meter(tempfile.mkdtemp(), usd_cap=10, wall_cap=0.0, upstream=up.url)
@@ -268,7 +275,7 @@ def test_compaction_or_a_changed_prefix_falls_back_to_the_byte_bound():
         "other instructions": body(first + [ITEM(2)], instructions="You are a summarizer"),
         "other tools": body(first + [ITEM(2)], tools=[]),
         "other reasoning effort": body(first + [ITEM(2)], reasoning={"effort": "low"}),
-        "input as a string": {**CTX, "input": "hi", "max_output_tokens": 2000},
+        "input as a string": {**CTX, "input": "hi", "max_output_tokens": 1000},
     }
     for why, b in cases.items():
         _, info, nbytes = admit(m, b)
