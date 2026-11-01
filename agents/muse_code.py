@@ -69,7 +69,12 @@ Sessions
   (progress_prompt): Lean's first errors rather than the end of its output, the required theorems
   the file proves, whether the session changed the file, and the best compiling version of the run
   when it proves more; a file that does not compile is saved as `.proofforge/unfinished-NN.lean`
-  and the best compiling version, when there is one, takes its place.
+  and the best compiling version, when there is one, takes its place. A session that ended after
+  responses cut at their output allowance (Muse Code ends the turn, with no text, after such
+  responses) is told so, and a compiling file gets its first unproved required theorem as the next
+  target, with the proof state from goal_at when its proof is a tactic block with `sorry`. Each
+  session part records its model responses, those cut at the allowance (`incomplete`) and how many
+  in a row ended it (`cut_off`).
 
 Result
   The candidate on disk when the run stops is the run's result (`final.lean`), except in
@@ -288,17 +293,65 @@ def describe(task, status):
             + ("; not proved yet: " + ", ".join(open_) if open_ else ""))
 
 
-def progress_prompt(server, task, ws, n, feedback, record, start_text, versions):
+def cut_off_note(n):
+    """Why a session ended after `n` responses in a row reached their output allowance."""
+    return (f"The session ended after {n} response{'s' if n > 1 else ''} in a row reached the output limit of a "
+            f"response ({metermod.MAX_OUTPUT:,} tokens, reasoning included) before a tool call or an edit; what "
+            f"{'they' if n > 1 else 'it'} worked out is lost. Take one step per response: a tool call (goal_at, "
+            "try_tactics, check_snippet_fast) or an edit, with a long proof written as `have` steps ending in "
+            "`sorry` and checked step by step, not worked out in full before acting. ")
+
+
+def goal_state(ws, task, name):
+    """goal_at (integrations/muse/session_tools.py) on declaration `name` of the workspace
+    candidate, on a persistent Lean session closed afterwards; None when Lean gives no state."""
+    import session_tools
+    s = session_tools.WorkspaceSession(ws, task)
+    try:
+        out = session_tools.goal_at(s, name)
+    except Exception:
+        return None
+    finally:
+        s.close()
+    return out if out and not out.startswith("error") else None
+
+
+def next_target(task, ws, text, status, goal_chars=3000):
+    """The first required theorem the file does not prove, as a concrete next step: its statement
+    in the file (the locked one when the file lacks it) and, when its proof is a tactic block with
+    `sorry`, the proof state there (goal_state). '' when every required theorem is proved."""
+    import passport
+    th = next((t for t in task.theorems if status.get(t) != "PROVED"), None)
+    if th is None:
+        return ""
+    decl = next((d for name, kind, d in ledger.declarations(text, task.ns) if name == th and kind == "theorem"), None)
+    stmt = ledger.statement(decl) if decl else f"theorem {th} : {passport.statement(task, th)}"
+    out = (f"\nNext target: `{th}`, the first required theorem not proved yet:\n```lean\n{stmt[:1500]}\n```\n")
+    _, proof = ledger.split_proof(decl) if decl else (None, None)
+    goal = None
+    if proof and proof.strip().startswith("by") and ledger.has_sorry(proof):
+        goal = goal_state(ws, task, th)
+    if goal:
+        return out + "goal_at on it:\n" + goal[:goal_chars] + "\n"
+    return (out + f"Run try_tactics on `{th}` first; if no tactic closes it, write its proof as `:= by` with `have` "
+            "steps ending in `sorry` and call goal_at on it.\n")
+
+
+def progress_prompt(server, task, ws, n, feedback, record, start_text, versions, cut_off=0):
     """The continuation message of a KEEP_BEST arm after session part n: what ordinary checking
     gives (`feedback`, `record` from ordinary_feedback), with Lean's first errors in place of the
     end of its output, and the progress of the run: whether the session changed the file, the
     required theorems the file proves, and the best compiling version of the run (best_version)
     when it proves more. When the file does not compile and a compiling version exists, the file is
     saved as .proofforge/unfinished-NN.lean and that version takes its place. The best version is
-    also kept as the MCP server's .proofforge/best.lean. A judge's rejection is passed on as is."""
+    also kept as the MCP server's .proofforge/best.lean. A judge's rejection is passed on as is.
+    A session that ended after `cut_off` responses in a row cut at their output allowance is told
+    so (cut_off_note); a compiling file with required theorems left gets the first of them as the
+    next target (next_target)."""
     path = ws / "candidate/Solution.lean"
     text = path.read_text()
     msg = CONTINUE + ("The session made no change to candidate/Solution.lean. " if text == start_text else "")
+    msg += cut_off_note(cut_off) if cut_off else ""
     broken, status = "lean" in record, record.get("status") or {}
     proved = len(proved_names(task, status))
     if not broken and (not status or proved == len(task.theorems)):
@@ -329,11 +382,25 @@ def progress_prompt(server, task, ws, n, feedback, record, start_text, versions)
         proofforge_mcp.save_best(ws, pick[0], proved_names(task, pick[1]))
         msg += (f"\nAn earlier compiling version of this run, saved as {proofforge_mcp.BEST}, proves more; "
                 f"{describe(task, pick[1])}.")
-    return msg + CONTINUE_END
+    return msg + next_target(task, ws, text, status).rstrip("\n") + CONTINUE_END
 
 
 # ------------------------------------------------------------------------------------------------
 # One Muse Code session
+
+def response_end(e):
+    """The last wire event of a model response (`response.completed`, `response.incomplete` when
+    the response reached its output allowance, `response.failed`) from Muse Code's status event of
+    that response, or None for any other event."""
+    if e.get("payload_type") != "task.lifecycle.status":
+        return None
+    ev = (e.get("payload") or {}).get("event") or {}
+    for f in (ev.get("details") or {}).get("facets") or []:
+        end = (((f or {}).get("detail") or {}).get("stream") or {}).get("last_wire_event_type")
+        if end:
+            return end
+    return None
+
 
 class Session:
     def __init__(self, a, task, ws, out, meter, port, env, sid):
@@ -369,7 +436,8 @@ class Session:
         p = subprocess.Popen(cmd, cwd=self.ws, env=self.env, stdout=subprocess.PIPE, stderr=errf, text=True,
                              start_new_session=True)
         self.proc = p
-        info = {"part": n, "terminal": None, "run_usage": None, "exit": None, "killed": None}
+        info = {"part": n, "terminal": None, "run_usage": None, "exit": None, "killed": None,
+                "responses": 0, "incomplete": 0, "cut_off": 0}
 
         def reader():
             for line in p.stdout:
@@ -380,7 +448,13 @@ class Session:
                 except ValueError:
                     continue
                 pt = e.get("payload_type", "")
-                if pt == "run.usage":
+                end = response_end(e)
+                if end:
+                    info["responses"] += 1
+                    cut = end == "response.incomplete"
+                    info["incomplete"] += cut
+                    info["cut_off"] = info["cut_off"] + 1 if cut else 0
+                elif pt == "run.usage":
                     info["run_usage"] = e["payload"]
                 elif pt.startswith("run.terminal"):
                     info["terminal"] = {k: e["payload"].get(k) for k in ("terminal", "reason")}
@@ -757,7 +831,7 @@ def main():
             break
         if a.arm in KEEP_BEST:
             prompt = progress_prompt(server, task, ws, n, feedback, record, start_text,
-                                     compiled_sources(record_dir, runner_compiled))
+                                     compiled_sources(record_dir, runner_compiled), cut_off=info["cut_off"])
         else:
             prompt = CONTINUE + (feedback or "") + CONTINUE_END
     else:
