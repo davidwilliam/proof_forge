@@ -76,7 +76,7 @@ const comparisons = L.comparisons.map((c) => ({
   classification: c.classification,
   factors: { cost: c.factors.cost ?? null, time: c.factors.time ?? null },
   test: c.test
-    ? { name: c.test.name, p: c.test.p, preregistered: c.test.preregistered === true, significant: c.test.significant_at_0_05 === true, statedIn: c.test.stated_in }
+    ? { name: c.test.name, p: c.test.p, preregistered: c.test.preregistered === true, significant: c.test.significant_at_0_05 === true, statedIn: c.test.stated_in, ...(c.test.secondary ? { secondary: { name: c.test.secondary.name, p: c.test.secondary.p } } : {}) }
     : null,
   flags: c.flags,
   caveats: c.caveats.map((x) => caveats.indexOf(x)),

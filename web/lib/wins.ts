@@ -32,6 +32,8 @@ export interface Test {
   preregistered: boolean;
   significant: boolean;
   statedIn: string;
+  /** A preregistered secondary test, reported without a confirmatory claim. */
+  secondary?: { name: string; p: number };
 }
 
 export interface Comparison {
@@ -190,7 +192,9 @@ export const KIND_LABEL: Record<Kind, string> = {
 
 /** IDs of the headline wins, hardest real-world tasks first. */
 export const HEADLINE_IDS = {
-  vyper: "hard-task-1/rw-vyper-sqrt",
+  vyper: "vyper-replication-1/rw-vyper-sqrt+hard-task-1",
+  vyperFirst: "hard-task-1/rw-vyper-sqrt",
+  vyperReplication: "vyper-replication-1/rw-vyper-sqrt",
   balancer: "library-1/rw-balancer-upscale/all-measured/A2-vs-A0",
   openAll: "e1-test-open-1/all/A1-vs-A0",
   openExperiment: "e1-test-open-1",
@@ -211,6 +215,8 @@ const reportLinks = (paths: string[]) => paths.map((p) => ({ label: p.replace(/\
 /** The four strongest wins, each with its significance stated as the ledger states it. */
 export function headlines(d: WinsData): Headline[] {
   const v = comparison(d, HEADLINE_IDS.vyper);
+  const v1 = comparison(d, HEADLINE_IDS.vyperFirst);
+  const v2 = comparison(d, HEADLINE_IDS.vyperReplication);
   const b = comparison(d, HEADLINE_IDS.balancer);
   const openAll = comparison(d, HEADLINE_IDS.openAll);
   const openWins = d.wins.filter((w) => w.group === 1 && w.id.startsWith(`${HEADLINE_IDS.openExperiment}/`) && comparison(d, w.id).scope === "task");
@@ -226,9 +232,9 @@ export function headlines(d: WinsData): Headline[] {
       key: "vyper",
       figure: `${runsOf(v.proofforge)}`,
       figureAlt: `vs ${runsOf(v.alone)}`,
-      text: `Vyper sqrt(), CVE-2025-26622: ${modelName(v.model)} in Muse Code verified ${runsOf(v.proofforge)} runs with ProofForge and ${runsOf(v.alone)} alone, ${factor1(v.factors.cost!)} cheaper per verified run (${usd(v.proofforge.usdPerVerified)} against ${usd(v.alone.usdPerVerified)}) and ${factor1(v.factors.time!)} faster.`,
-      note: `${capital(testPhrase(v.test!))}; with ${v.alone.runs} runs per arm only a difference of four runs reaches p < 0.05. List prices, caps of $${vCap.usd} and ${vCap.seconds / 3600} hours per run. The ProofForgeFin square-root module was written by the build team knowing the task.`,
-      links: [{ label: "Full comparison", path: v.links.comparison }, ...reportLinks(v.links.reports)],
+      text: `Vyper sqrt(), CVE-2025-26622, over two preregistered experiments: ${modelName(v.model)} in Muse Code verified ${runsOf(v.proofforge)} runs with ProofForge and ${runsOf(v.alone)} alone, ${factor1(v.factors.cost!)} cheaper per verified run (${usd(v.proofforge.usdPerVerified)} against ${usd(v.alone.usdPerVerified)}) and ${factor1(v.factors.time!)} faster.`,
+      note: `First experiment ${runsOf(v1.proofforge)} against ${runsOf(v1.alone)} (p = ${pValue(v1.test!.p)}); replication ${runsOf(v2.proofforge)} against ${runsOf(v2.alone)} (p = ${pValue(v2.test!.p)}), where ProofForge runs spent fewer list dollars (${v2.test!.secondary!.name.replace(/, ProofForge.*$/, "")} p = ${pValue(v2.test!.secondary!.p)}, a preregistered secondary test). Pooled, ${testPhrase({ ...v.test!, name: "one-sided Fisher exact", preregistered: false })}; the pool includes the runs that motivated the replication. List prices, caps of $${vCap.usd} and ${vCap.seconds / 3600} hours per run. The ProofForgeFin square-root module was written by the build team knowing the task.`,
+      links: [{ label: "Full comparison", path: v.links.comparison }, ...reportLinks([...new Set([...v1.links.reports, ...v2.links.reports])])],
     },
     {
       key: "balancer",

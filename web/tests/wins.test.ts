@@ -25,7 +25,7 @@ interface LedgerComparison {
   proofforge: LedgerArm;
   classification: Record<string, string>;
   factors: { cost?: number; time?: number };
-  test: { name: string; p: number; preregistered?: boolean; significant_at_0_05?: boolean } | null;
+  test: { name: string; p: number; preregistered?: boolean; significant_at_0_05?: boolean; secondary?: { name: string; p: number } } | null;
 }
 interface Ledger {
   comparisons: LedgerComparison[];
@@ -65,13 +65,20 @@ describe("wins over the Meta models alone", () => {
     }
   });
 
-  it("Vyper CVE-2025-26622: 2 of 5 alone, 5 of 5 with ProofForge, 4.2x cheaper, preregistered p = 0.083 not significant", () => {
+  it("Vyper CVE-2025-26622: both preregistered experiments, 10 of 15 alone, 14 of 15 with ProofForge, 2.1x cheaper, no significant rate difference", () => {
     const l = lc(HEADLINE_IDS.vyper);
-    expect([l.alone.verified, l.alone.runs, l.proofforge.verified, l.proofforge.runs]).toEqual([2, 5, 5, 5]);
-    expect([l.alone.list_usd_per_verified, l.proofforge.list_usd_per_verified, l.factors.cost]).toEqual([22.94, 5.49, 4.18]);
-    expect(l.test).toMatchObject({ p: 0.08333, preregistered: true, significant_at_0_05: false });
+    expect([l.alone.verified, l.alone.runs, l.proofforge.verified, l.proofforge.runs]).toEqual([10, 15, 14, 15]);
+    expect([l.alone.list_usd_per_verified, l.proofforge.list_usd_per_verified, l.factors.cost]).toEqual([11.79, 5.62, 2.1]);
+    expect(l.test).toMatchObject({ p: 0.08429, preregistered: true, significant_at_0_05: false });
+    const first = lc(HEADLINE_IDS.vyperFirst);
+    expect([first.alone.verified, first.proofforge.verified, first.test!.p]).toEqual([2, 5, 0.08333]);
+    const rep = lc(HEADLINE_IDS.vyperReplication);
+    expect([rep.alone.verified, rep.alone.runs, rep.proofforge.verified, rep.proofforge.runs, rep.test!.p]).toEqual([8, 10, 9, 10, 0.5]);
+    expect(rep.test!.secondary!.p).toBeCloseTo(0.0216, 4);
     const t = all(H.vyper!);
-    for (const s of ["5 of 5", "2 of 5", "4.2x cheaper", "$5.49", "$22.94", `${l.factors.time!.toFixed(1)}x faster`, "Preregistered one-sided Fisher exact p = 0.083, not significant at 0.05", "CVE-2025-26622"])
+    for (const s of ["14 of 15", "10 of 15", "two preregistered experiments", "First experiment 5 of 5 against 2 of 5 (p = 0.083)",
+      "replication 9 of 10 against 8 of 10 (p = 0.5)", "Mann-Whitney U p = 0.022, a preregistered secondary test", "2.1x cheaper", "$5.62", "$11.79",
+      `${l.factors.time!.toFixed(1)}x faster`, "Pooled, one-sided Fisher exact p = 0.084, not significant at 0.05", "includes the runs that motivated the replication", "CVE-2025-26622"])
       expect(t).toContain(s);
     expect(t).not.toMatch(/(?<!not )significant at 0\.05/);
   });
