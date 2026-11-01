@@ -4,7 +4,9 @@ Meta Model API. No model calls.
 The input bound: a request that extends an earlier settled request (same context, its items as a
 prefix) is bounded by that request's reported prompt_tokens plus the bytes of the new items and
 the overheads; a compacted or rewritten history, other instructions, or a request with no settled
-predecessor gets the byte bound; the smaller bound is used.
+predecessor gets the byte bound; the smaller bound is used. The recorded call logs of
+results/muse-code-1 replayed through the meter (integrations/muse/meter_replay.py) never exceed the
+cap or the bound under either rule.
 
 Run: python3 tests/test_muse_meter.py
 """
@@ -13,6 +15,7 @@ import http.client, http.server, json, pathlib, socketserver, sys, tempfile, thr
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT / "integrations" / "muse"), str(ROOT / "agents")]
 import meter  # noqa: E402
+import meter_replay  # noqa: E402
 import budget  # noqa: E402
 
 MODEL = "muse-spark-1.3-contributor"
@@ -302,6 +305,27 @@ def test_proxy_records_the_bound_of_each_call():
     assert up.seen[1]["body"]["input"] == first + [ITEM(1)]               # forwarded unchanged
     assert m.summary()["input_bounds"] == {"prefix": 1, "bytes": 1}
     m.stop()
+
+
+def test_recorded_runs_replayed_through_the_meter_stay_within_the_cap_and_the_bound():
+    """Every measured run of results/muse-code-1, replayed under the byte bound and the prefix
+    bound: no reservation above the $10 cap, no reported input above the bound used, every recorded
+    call admitted under the prefix bound; the byte bound reproduces the recorded dollar stops, and
+    the prefix bound leaves the runs it stopped more of the cap."""
+    runs = sorted(p.parent for p in (ROOT / "results/muse-code-1").glob("*/*-[0-9]/calls.jsonl"))
+    assert len(runs) == 14, runs
+    for d in runs:
+        cl = [json.loads(l) for l in (d / "calls.jsonl").read_text().splitlines() if l.strip()]
+        s = json.loads((d / "summary.json").read_text())
+        old, new = meter_replay.replay(cl, 10.0, prefix=False), meter_replay.replay(cl, 10.0, prefix=True)
+        for r in (old, new):
+            assert not r["over_cap"] and r["max_reserved_usd"] <= 10 and r["input_bound_violations"] == 0, (d, r)
+        assert new["refused_at"] is None and new["bounds"]["prefix"] > 0, (d, new)
+        assert new["final_request"]["input_bound"] <= old["final_request"]["input_bound"]
+        if s["ended_by"] == "usd":
+            # the old rule stops where the run stopped (within the last calls' settlement)
+            assert abs(old["final_request"]["usable_usd"] - s["meter"]["usd_list"]) < 0.1, (d, old, s["meter"]["usd_list"])
+            assert new["final_request"]["usable_usd"] >= 9.4, (d, new)
 
 
 if __name__ == "__main__":
