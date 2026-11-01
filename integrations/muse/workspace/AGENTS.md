@@ -19,9 +19,14 @@ skill, in this order:
    kernel-checked counterexamples); fix the definition.
 3. Decompose each required theorem into helpers stated with `sorry`; `refute_statement` on any
    helper that might be false before proving it.
-4. Prove: `try_tactics` first, then `goal_at` and `search_library` with `goal`, iterating with
-   `check_snippet_fast` and confirming with `try_snippet`.
-5. `lean_build` until the file compiles, then `check_candidate`; iterate on its counterexamples
+4. Prove the required theorems that follow directly from the definitions or from each other
+   first (`try_tactics` on each), then the others: `try_tactics` first, then `goal_at` and
+   `search_library` with `goal`, iterating with `check_snippet_fast` and confirming with
+   `try_snippet`.
+5. Keep the file compiling: move a proof into it once it compiles as a snippet, `lean_build` after
+   every edit, and restore `.proofforge/best.lean` (the best compiling version, when `lean_build`
+   keeps one) rather than editing a broken file further.
+6. `lean_build` until the file compiles, then `check_candidate`; iterate on its counterexamples
    until it returns `"status": "VERIFIED"`, and `verify_passport`.
 
 The tools never edit the candidate; write every change yourself. A tool the server does not offer

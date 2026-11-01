@@ -23,7 +23,7 @@ no merge: a fix that compiles but leaves a requirement `sorry`, REFUTED or UNRES
 | `refute_statement` | a proposed helper statement evaluated on concrete values; FALSE comes with a kernel-checked counterexample | seconds |
 | `search_library` | ProofForgeFin theorems, tactics and simp sets; pass `goal` (a statement or a declaration name) to rank by the goal's shape | instant |
 | `try_snippet` | a full compile of a snippet after the candidate, without changing the file | a compile |
-| `lean_build` | Lean's own output: `lake build Solution`, or `lake env lean <file>` for a scratch file | a compile |
+| `lean_build` | Lean's own output: `lake build Solution`, or `lake env lean <file>` for a scratch file; with the full toolset, also the required theorems the build proves and the best compiling version so far (`.proofforge/best.lean`) | a compile |
 | `check_candidate` | the official check (`bin/proofforge check`): VERIFIED / REFUTED / UNRESOLVED per requirement, witnesses, kernel-checked counterexamples, Lean errors, sorry status, Passport | minutes |
 | `verify_passport` | reproduce a Passport (`bin/proofforge verify`) | minutes |
 | `list_tasks` | the task catalog | instant |
@@ -56,7 +56,13 @@ finds a proof (`try_tactics`) or proved declarations (`prior_attempts`) gives yo
    `statement` before writing it), above all for inequalities with subtraction, division, rounding
    or scaling and for claims about every input. A FALSE result gives the values that break it:
    add the missing hypothesis or fix the bound, and sample it again.
-5. **Prove, cheapest first.** For each open theorem, helpers first:
+5. **Bank the short requirements first.** Once the fixed definition compiles, run `try_tactics`
+   on every required theorem, and prove the ones that follow directly from the definitions, from
+   the locked lemmas or from another requirement (a bound given by the routine's last step, an
+   equality with the deployed algorithm, a consequence of a requirement already proved) before
+   starting a long proof. A long proof can outlast the budget; the requirements already proved
+   are kept.
+6. **Prove, cheapest first.** For each open theorem, helpers first:
    - `try_tactics` on it. If a tactic closes it, put the returned proof in the file.
    - Otherwise `goal_at` to see the exact hypotheses and goal at each `sorry`; then
      `search_library` with `goal` set to the theorem's name for lemmas whose conclusion fits.
@@ -66,13 +72,17 @@ finds a proof (`try_tactics`) or proved declarations (`prior_attempts`) gives yo
    - Write the proof in steps with `have h : P := by sorry` and iterate with
      `check_snippet_fast` (seconds) until it has no error; then `try_snippet` (a full compile)
      and put it in the file. Break a step that resists into a new helper and go back to step 4.
-6. **Compile.** `lean_build` until the file compiles. `#print axioms` in a scratch file that
-   imports `Solution` shows which theorems still depend on `sorryAx`.
-7. **Check and iterate.** `check_candidate`. A new witness or counterexample means the behavior
+7. **Keep the file compiling.** Move a proof into `candidate/Solution.lean` only once it compiles
+   as a snippet, and run `lean_build` after every edit of the file. Where `lean_build` keeps the
+   best compiling version as `.proofforge/best.lean`, restore it
+   (`cp .proofforge/best.lean candidate/Solution.lean`) when an edit breaks the file and the error
+   is not a quick fix. `#print axioms` in a scratch file that imports `Solution` shows which
+   theorems still depend on `sorryAx`.
+8. **Check and iterate.** `check_candidate`. A new witness or counterexample means the behavior
    is still wrong: go back to step 3 with it. `lean_errors` and `theorem_status` show what is
    not proved; `proof_check.reasons` names scan violations or a Comparator rejection (a statement
    that differs from the lock, a forbidden axiom, a kernel that rejects a declaration).
-8. **Done.** Stop only at `"status": "VERIFIED"`. Report the Passport path and `passport_sha256`;
+9. **Done.** Stop only at `"status": "VERIFIED"`. Report the Passport path and `passport_sha256`;
    `verify_passport` reproduces it.
 
 ## Rules the judge enforces

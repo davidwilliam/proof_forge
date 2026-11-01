@@ -16,7 +16,10 @@ neither it nor a candidate declaration it uses has `sorry` or `admit`).
     position, which the end of a long output leaves out), the required theorems the file proves,
     a session that did not change the file, and an earlier compiling version that proves more; a
     file that does not compile is saved under .proofforge/ and the best compiling version takes its
-    place (and becomes the server's best.lean); the other arms get the message they always got.
+    place (and becomes the server's best.lean); the other arms get the message they always got;
+  * the skill and AGENTS.md of the ProofForge workspace ask for the short requirements first and
+    for a file that keeps compiling, with .proofforge/best.lean as the way back; the alone
+    workspace has neither.
 
 Run: python3 tests/test_muse_keep_best.py
 """
@@ -379,6 +382,27 @@ def test_a_judge_rejection_is_passed_on_as_is():
     finally:
         shutil.rmtree(ws)
         shutil.rmtree(out)
+
+
+# Guidance
+
+def test_workspace_guidance_banks_short_requirements_and_keeps_the_file_compiling():
+    alone = muse_code.make_workspace(TASK, "alone")
+    full = muse_code.make_workspace(TASK, "proofforge-full")
+    try:
+        skill = (full / ".agents/skills/proofforge/SKILL.md").read_text()
+        agents = (full / "AGENTS.md").read_text()
+        steps = re.findall(r"^(\d+)\. \*\*([^*]+)\*\*", skill, re.M)
+        assert [int(n) for n, _ in steps] == list(range(1, len(steps) + 1)), steps
+        names = [s for _, s in steps]
+        assert names.index("Bank the short requirements first.") < names.index("Prove, cheapest first.")
+        assert names.index("Keep the file compiling.") < names.index("Check and iterate.")
+        assert "`cp .proofforge/best.lean candidate/Solution.lean`" in skill and pm.BEST in agents
+        assert "Keep the file compiling" in agents and "follow directly from the definitions" in agents
+        assert not (alone / ".agents").exists() and not (alone / "AGENTS.md").exists()
+    finally:
+        shutil.rmtree(alone)
+        shutil.rmtree(full)
 
 
 if __name__ == "__main__":
