@@ -82,8 +82,10 @@ Result
   theorems proved by Lean, the latest on a tie, when the file on disk does not compile or proves
   fewer (a run stopped by a cap is often in the middle of an edit); the file on disk is then kept
   as `final-on-disk.lean` and summary.json records the choice (`final_choice`). The versions
-  considered are those Lean compiled in a tool call or in the runner's checks; the choice is made
-  after the caps, as the theorem status of the final file is. The result is judged
+  considered are those Lean compiled in a tool call or in the runner's checks, and those seen on
+  disk (every 2 s) that prove more by their text than any of them, however they were built; Lean
+  compiles them when the choice is made, which is after the caps, as the theorem status of the
+  final file is. The continuation between sessions draws on the same versions. The result is judged
   outside the budget by `bin/proofforge check` (identical for every arm); a VERIFIED Passport is
   reproduced with `bin/proofforge verify`. summary.json records the tools Muse Code called and how
   often (`tool_calls`: every tool from the transcript, and the ProofForge tools from the MCP log
@@ -95,7 +97,7 @@ Usage: muse_code.py --task T --arm alone|proofforge|proofforge-full [--model mus
                     [--resume-from DIR[,DIR...]] [--prompt-file FILE] [--max-sessions 12]
                     [--max-model-steps 400]
 """
-import argparse, collections, json, os, pathlib, re, shutil, signal, subprocess, sys, tempfile, threading, time, uuid
+import argparse, collections, hashlib, json, os, pathlib, re, shutil, signal, subprocess, sys, tempfile, threading, time, uuid
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT / "agents"), str(ROOT / "harness"), str(ROOT / "integrations" / "muse")]
@@ -337,7 +339,7 @@ def next_target(task, ws, text, status, goal_chars=3000):
             "steps ending in `sorry` and call goal_at on it.\n")
 
 
-def progress_prompt(server, task, ws, n, feedback, record, start_text, versions, cut_off=0):
+def progress_prompt(server, task, ws, n, feedback, record, start_text, versions, cut_off=0, compiled=None):
     """The continuation message of a KEEP_BEST arm after session part n: what ordinary checking
     gives (`feedback`, `record` from ordinary_feedback), with Lean's first errors in place of the
     end of its output, and the progress of the run: whether the session changed the file, the
@@ -347,7 +349,7 @@ def progress_prompt(server, task, ws, n, feedback, record, start_text, versions,
     also kept as the MCP server's .proofforge/best.lean. A judge's rejection is passed on as is.
     A session that ended after `cut_off` responses in a row cut at their output allowance is told
     so (cut_off_note); a compiling file with required theorems left gets the first of them as the
-    next target (next_target)."""
+    next target (next_target). `versions` and `compiled` are as for choose_final."""
     path = ws / "candidate/Solution.lean"
     text = path.read_text()
     msg = CONTINUE + ("The session made no change to candidate/Solution.lean. " if text == start_text else "")
@@ -356,10 +358,10 @@ def progress_prompt(server, task, ws, n, feedback, record, start_text, versions,
     proved = len(proved_names(task, status))
     if not broken and (not status or proved == len(task.theorems)):
         return msg + feedback + CONTINUE_END
-    pick, top = None, rank_versions(task, versions)[:1]
-    if top and (broken or text_proved(task, versions[top[0]]) > proved):
+    pick, top = None, candidates(task, versions, text, 1, compiled)
+    if top and (broken or any(text_proved(task, versions[i]) > proved for i in top)):
         try:
-            pick = best_version(server, task, ws, versions)
+            pick = best_version(server, task, ws, versions, compiled=compiled)
         except RuntimeError:
             pick = None
     if broken:
@@ -407,6 +409,7 @@ class Session:
         self.a, self.task, self.ws, self.out, self.meter, self.port, self.env, self.sid = a, task, ws, out, meter, port, env, sid
         self.snap_hash = None
         self.snaps = 0
+        self.seen = []          # (epoch seconds, text) of each version of the candidate seen on disk
 
     def snapshot(self):
         f = self.ws / "candidate/Solution.lean"
@@ -418,6 +421,7 @@ class Session:
         if h != self.snap_hash:
             self.snap_hash = h
             self.snaps += 1
+            self.seen.append((time.time(), text))
             (self.out / f"candidate_v{self.snaps:03d}.lean").write_text(text)   # not tracked (.gitignore)
 
     def run(self, prompt, n):
@@ -633,10 +637,27 @@ def compiled_sources(record_dir, extra=()):
     return list(dict.fromkeys(text for _, text in sorted(srcs, key=lambda x: x[0])))
 
 
+def version_pool(record_dir, extra=(), seen=()):
+    """Every version of the candidate the run has, oldest first by when it was first compiled or
+    seen, de-duplicated, and the set of those Lean compiled without errors: compiled_sources
+    (`record_dir`, `extra`) and the versions seen on disk (`seen`, Session.seen, (epoch seconds,
+    text)), whatever built them, if anything did."""
+    timed = [(p.stat().st_mtime, p.read_text()) for p in pathlib.Path(record_dir).glob("compiled-*.lean")] if record_dir else []
+    timed += [x for x in list(extra) + list(seen) if x and x[1]]
+    texts = list(dict.fromkeys(text for _, text in sorted(timed, key=lambda x: x[0])))
+    return texts, set(compiled_sources(record_dir, extra))
+
+
+_TEXT_PROVED = {}
+
+
 def text_proved(task, text):
     """The required theorems a compiling version proves in its text: no `sorry` in the theorem or in
     a candidate declaration it uses (ledger.proved_in)."""
-    return sum(1 for n in ledger.proved_in(text, task.ns) if n in task.theorems)
+    key = (task.ns, tuple(task.theorems), hashlib.sha256(text.encode()).hexdigest())
+    if key not in _TEXT_PROVED:
+        _TEXT_PROVED[key] = sum(1 for n in ledger.proved_in(text, task.ns) if n in task.theorems)
+    return _TEXT_PROVED[key]
 
 
 def rank_versions(task, versions):
@@ -644,15 +665,30 @@ def rank_versions(task, versions):
     return sorted(range(len(versions)), key=lambda i: (text_proved(task, versions[i]), i), reverse=True)
 
 
-def best_version(server, task, ws, versions, limit=BEST_CANDIDATES):
+def candidates(task, versions, current, limit=BEST_CANDIDATES, compiled=None):
+    """Indices of `versions` for best_version to compile: the `limit` best by their text, or, with
+    `compiled` (the set of versions Lean compiled), the `limit` best compiled ones and the `limit`
+    best of the others (versions seen on disk only) that prove more by their text than any of
+    those; never `current`, the file on disk, whose status the caller has."""
+    ranked = rank_versions(task, versions)
+    if compiled is None:
+        return ranked[:limit]
+    known = [i for i in ranked if versions[i] in compiled][:limit]
+    bar = max((text_proved(task, versions[i]) for i in known), default=-1)
+    fresh = [i for i in ranked if versions[i] not in compiled and versions[i] != current
+             and text_proved(task, versions[i]) > bar][:limit]
+    return known + fresh
+
+
+def best_version(server, task, ws, versions, limit=BEST_CANDIDATES, compiled=None):
     """The compiling version with the most required theorems proved by Lean (`#print axioms`), the
-    latest on a tie, among the `limit` best of `versions` by their text: (text, theorem status), or
-    None when none of them compiles. The workspace candidate is left as it was. RuntimeError when
-    Lean gives no verdict."""
+    latest on a tie, among the versions `candidates` picks by their text: (text, theorem status),
+    or None when none of them compiles. The workspace candidate is left as it was. RuntimeError
+    when Lean gives no verdict."""
     path = ws / "candidate/Solution.lean"
     current, best = path.read_text(), None
     try:
-        for i in rank_versions(task, versions)[:limit]:
+        for i in candidates(task, versions, current, limit, compiled):
             path.write_text(versions[i])
             ok, status = compiles(server)
             n = sum(v == "PROVED" for v in status.values())
@@ -663,23 +699,28 @@ def best_version(server, task, ws, versions, limit=BEST_CANDIDATES):
     return None if best is None else (versions[best[1]], best[2])
 
 
-def choose_final(server, task, ws, out, versions, disk_text, disk_ok, disk_status):
+def choose_final(server, task, ws, out, versions, disk_text, disk_ok, disk_status, compiled=None):
     """The result of a KEEP_BEST arm: the best compiling version of the run (best_version) when the
     file on disk does not compile or proves fewer required theorems; the file on disk otherwise, and
     when Lean gives no verdict. The chosen text becomes the workspace candidate; a replaced file on
-    disk is kept as final-on-disk.lean. Returns (text, compiles, theorem status, record)."""
+    disk is kept as final-on-disk.lean. With `compiled`, `versions` also holds versions seen on disk
+    only, and the record says which kind was chosen. Returns (text, compiles, theorem status,
+    record)."""
     def proved(status):
         return sorted(t for t, v in status.items() if v == "PROVED")
     rec = {"from": "file on disk", "on_disk": {"compiles": disk_ok, "proved": len(proved(disk_status))}}
     try:
-        pick = best_version(server, task, ws, versions)
+        pick = best_version(server, task, ws, versions, compiled=compiled)
     except RuntimeError as e:
         return disk_text, disk_ok, disk_status, {**rec, "error": str(e)}
     if pick is None or (disk_ok and len(proved(pick[1])) <= len(proved(disk_status))):
         return disk_text, disk_ok, disk_status, rec
     (out / "final-on-disk.lean").write_text(disk_text)
     (ws / "candidate/Solution.lean").write_text(pick[0])
-    return pick[0], True, pick[1], {**rec, "from": "best compiling version", "proved": proved(pick[1])}
+    rec = {**rec, "from": "best compiling version", "proved": proved(pick[1])}
+    if compiled is not None:
+        rec["compiled_in_run"] = pick[0] in compiled
+    return pick[0], True, pick[1], rec
 
 
 def write_ledger(task, out, arm, summary, sources, events, final_text, final_status, last_compiling=None):
@@ -830,8 +871,9 @@ def main():
             stop = "judge_unavailable"    # Lean or the judge gave no verdict twice; nothing is sent to the agent
             break
         if a.arm in KEEP_BEST:
-            prompt = progress_prompt(server, task, ws, n, feedback, record, start_text,
-                                     compiled_sources(record_dir, runner_compiled), cut_off=info["cut_off"])
+            pool, compiled = version_pool(record_dir, runner_compiled, sess.seen)
+            prompt = progress_prompt(server, task, ws, n, feedback, record, start_text, pool,
+                                     cut_off=info["cut_off"], compiled=compiled)
         else:
             prompt = CONTINUE + (feedback or "") + CONTINUE_END
     else:
@@ -861,8 +903,10 @@ def main():
         final_ok, status = compiles(server)
         srcs = compiled_sources(record_dir, runner_compiled + ([(time.time(), final_text)] if final_ok else []))
         if a.arm in KEEP_BEST and not accepted:
-            final_text, final_ok, status, summary["final_choice"] = choose_final(server, task, ws, out, srcs, final_text,
-                                                                                final_ok, status)
+            pool, compiled = version_pool(record_dir, runner_compiled + ([(time.time(), final_text)] if final_ok else []),
+                                          sess.seen)
+            final_text, final_ok, status, summary["final_choice"] = choose_final(server, task, ws, out, pool, final_text,
+                                                                                final_ok, status, compiled)
         summary.update(final_theorem_status=status, requirements_proved_in_run=sum(v == "PROVED" for v in status.values()))
         last = None
         older = [x for x in srcs if x != final_text]
