@@ -21,12 +21,15 @@ neither it nor a candidate declaration it uses has `sorry` or `admit`).
     for a file that keeps compiling, with .proofforge/best.lean as the way back; the alone
     workspace has neither.
 
-Run: python3 tests/test_muse_keep_best.py
+With Lean (the pinned image, one container at a time; skipped with --quick): the final choice and
+the restore at the end of a session on rate-limiters-bucket-b1, with the runner's own Lean checks.
+
+Run: python3 tests/test_muse_keep_best.py [--quick]
 """
 import json, pathlib, re, shutil, sys, tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path[:0] = [str(ROOT / "agents"), str(ROOT / "harness"), str(ROOT / "integrations" / "muse")]
+sys.path[:0] = [str(ROOT / "agents"), str(ROOT / "harness"), str(ROOT / "integrations" / "muse"), str(ROOT / "tests")]
 import muse_code, ledger  # noqa: E402
 import proofforge_mcp as pm  # noqa: E402
 import task as taskmod  # noqa: E402
@@ -405,8 +408,47 @@ def test_workspace_guidance_banks_short_requirements_and_keeps_the_file_compilin
         shutil.rmtree(full)
 
 
+# With Lean (the pinned image, one container at a time)
+
+def test_final_choice_and_restore_with_lean():
+    """On rate-limiters-bucket-b1: a run whose file on disk does not compile ends on its compiling
+    version with the most required theorems proved, and a session ending on that file is continued
+    from it."""
+    import test_topdown as td, test_feedback as fb
+    bucket = td.BUCKET
+    broken = fb.CLEAN.replace("theorem td0_step_of_not", "theorem td0_step_of_not : Nat := \"x\"\n\ntheorem td0_unused")
+    ws = muse_code.make_workspace(bucket, "proofforge-full", None)
+    out = pathlib.Path(tempfile.mkdtemp(prefix="pf-keep-out-"))
+    try:
+        server = pm.Server(ws, bucket.id, "lean")
+        (ws / "candidate/Solution.lean").write_text(broken)
+        ok, status = muse_code.compiles(server)
+        assert not ok
+        versions = [td.FIXED_BUCKET, fb.CLEAN, td.FIXED_BUCKET + "\n"]
+        text, ok, status, rec = muse_code.choose_final(server, bucket, ws, out, versions, broken, ok, status)
+        assert text == fb.CLEAN and ok and rec["from"] == "best compiling version", rec
+        assert len(rec["proved"]) == len(bucket.theorems) - 1 and (out / "final-on-disk.lean").read_text() == broken
+        (ws / "candidate/Solution.lean").write_text(broken)
+        record = {}
+        ok, feedback = muse_code.ordinary_feedback(server, bucket, ws, record)
+        assert not ok and "lean" in record
+        msg = muse_code.progress_prompt(server, bucket, ws, 2, feedback, record, td.FIXED_BUCKET, versions)
+        assert "error: " in msg and "unfinished-02.lean" in msg and (ws / "candidate/Solution.lean").read_text() == fb.CLEAN, msg
+        assert muse_code.compiles(server)[0]
+    finally:
+        shutil.rmtree(ws, ignore_errors=True)
+        shutil.rmtree(out, ignore_errors=True)
+
+
+LEAN_TESTS = {"test_final_choice_and_restore_with_lean"}
+
 if __name__ == "__main__":
+    quick = "--quick" in sys.argv
     for name, fn in list(globals().items()):
-        if name.startswith("test_"):
-            fn()
-            print(f"ok  {name}")
+        if not name.startswith("test_"):
+            continue
+        if name in LEAN_TESTS and (quick or not __import__("test_topdown").have_lean()):
+            print(f"skip  {name}")
+            continue
+        fn()
+        print(f"ok  {name}")
