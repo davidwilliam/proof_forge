@@ -45,6 +45,9 @@ import { PROOF_GRAPH, layoutGraph } from "@/lib/proofgraph";
 import { GRAPH_TASK, bellOf, guarantees, layoutLayers } from "@/lib/lenses";
 import { holeRun } from "@/lib/hole";
 import { EXPECTED_PROJECTS, describeInput, listWords, pendingProjects, type RwProject, type RwVersion } from "@/lib/realworld";
+import { WinsHeadline } from "@/components/Wins";
+import { countsSentence, headlines } from "@/lib/wins";
+import { WINS } from "@/lib/wins-data";
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 const usd = (n: number) => `$${n < 0.1 ? n.toFixed(n < 0.045 ? 3 : 2) : n.toFixed(2)}`;
@@ -91,6 +94,8 @@ export default function Home() {
       </section>
 
       <div className="page home-body">
+      <HomeWins />
+
       <div className="hero-grid">
         <HeroCase f={FEATURED} />
         <TrustModel />
@@ -249,12 +254,34 @@ function HeroGraph() {
           <a className="btn" href={githubFile(CETUS_HOTFIX.passport)}>
             Open the hotfix Passport
           </a>
-          <Link className="btn" href="/results">
-            Read the results
+          <Link className="btn" href="/wins">
+            Wins over Muse alone
           </Link>
         </div>
       }
     />
+  );
+}
+
+/** The strongest wins of the ledger (results/wins/ledger.json), right after the hero, with the counts and the way to every comparison. */
+function HomeWins() {
+  return (
+    <section className="home-section home-wins" id="wins" aria-labelledby="home-wins">
+      <h2 id="home-wins">Meta&apos;s models with ProofForge, against the same models alone</h2>
+      <p className="home-section-lead">
+        Same model, same tasks, same caps, and ProofForge judges both arms against the same locked specification. {countsSentence(WINS)} Ties
+        and losses are kept in the same ledger.
+      </p>
+      <WinsHeadline items={headlines(WINS)} />
+      <p className="home-wins-more">
+        <Link className="btn btn-primary" href="/wins">
+          Every win, tie and loss
+        </Link>
+        <a className="btn" href={githubFile(WINS.readme)}>
+          The ledger on GitHub
+        </a>
+      </p>
+    </section>
   );
 }
 
