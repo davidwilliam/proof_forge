@@ -4,6 +4,7 @@ import { ImageResponse } from "next/og";
 import { CETUS_HOTFIX } from "@/lib/contribution";
 import { E2 } from "@/lib/evidence";
 import { FEATURED, HEADLINE } from "@/lib/flagships";
+import { SEAL_KERNELS, SEAL_RING } from "@/components/Seal";
 
 // The card shown when a link to the site is shared (Open Graph and, through twitter-image.tsx, X), in the
 // identity kit: Void ground, the reversed lockup, the headline in Instrument Serif. Every figure comes from
@@ -68,7 +69,18 @@ export default async function OpenGraphImage() {
                     borderRadius: 4,
                   }}
                 >
-                  <div style={{ width: 8, height: 8, background: INK, borderRadius: 1 }} />
+                  {v.verdict === "VERIFIED" ? (
+                    // The Passport seal in ink on the verdict colour: the proof inside the six kernels.
+                    <svg width={20} height={20} viewBox="0 0 100 100">
+                      <path d={SEAL_RING} fill="none" stroke={INK} strokeOpacity={0.55} strokeWidth={5} strokeLinejoin="round" />
+                      {SEAL_KERNELS.map((k, i) => (
+                        <rect key={i} x={k.x - 8} y={k.y - 8} width={16} height={16} rx={1.6} fill={INK} />
+                      ))}
+                      <rect x={37} y={37} width={26} height={26} rx={1.8} fill={INK} />
+                    </svg>
+                  ) : (
+                    <div style={{ width: 8, height: 8, background: INK, borderRadius: 1 }} />
+                  )}
                   {v.verdict}
                 </div>
               </div>

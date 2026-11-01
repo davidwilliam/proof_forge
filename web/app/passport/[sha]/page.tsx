@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { ApiError, apiUrl, getJson, type CheckRecord, type Passport, type PassportCandidate } from "@/lib/api";
 import { commandText, formatDuration, formatInt, formatMs, formatUsd, innerCommand, prettyJson, requirementText, shortHash } from "@/lib/format";
+import { Seal } from "@/components/Seal";
 import { Code, ErrorBox, Hash, Status } from "@/components/ui";
 import { Markdown } from "@/components/Markdown";
 import { CopyText, DownloadJson, DownloadText } from "@/components/DownloadJson";
@@ -84,7 +85,10 @@ export default async function PassportPage({ params }: { params: Promise<{ sha: 
   return (
     <main id="main" className="page passport">
       <div className="cert" data-status={p.status}>
-        <h1>Proof Passport for {p.task.id}</h1>
+        <div className="cert-head">
+          {p.status === "VERIFIED" ? <Seal size={64} lit={Math.min(6, p.checks.comparator_kernels.length)} className="cert-seal" /> : null}
+          <h1>Proof Passport for {p.task.id}</h1>
+        </div>
         <p className="cert-status">
           Component status: <Status value={p.status} /> for <code>{p.task.definitions.join(", ")}</code> ({verified} of {p.requirements.length} requirements
           verified).

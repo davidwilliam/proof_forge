@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { CheckFix } from "@/components/CheckFix";
 import { Pipeline } from "@/components/Pipeline";
 import { HeroLenses } from "@/components/HeroLenses";
+import { Seal } from "@/components/Seal";
 import { Status } from "@/components/ui";
 import {
   CETUS_HOTFIX,
@@ -952,6 +953,7 @@ function CaseCard({ f }: { f: Flagship }) {
       </div>
       <div className="verdict-box" data-verdict="VERIFIED">
         <div className="verdict-head">
+          <Seal size={28} />
           <Status value="VERIFIED" />
           <span>
             {f.repair.model} repair{f.repair.planner ? `, planned by ${f.repair.planner}` : ""}

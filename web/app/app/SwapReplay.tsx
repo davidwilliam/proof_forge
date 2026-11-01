@@ -21,6 +21,7 @@ import {
   type SwapResultOut,
   type SwapVersionOut,
 } from "@/lib/swap";
+import { Seal } from "@/components/Seal";
 import { ErrorBox, Status } from "@/components/ui";
 import { ValueChart } from "./ValueChart";
 
@@ -380,7 +381,7 @@ function OutcomeCard({ v, repaired, batch, tokens }: { v: SwapVersionOut; repair
       )}
       {compare ? <p>{compare}</p> : null}
       <p className="small muted">
-        Passport: <Status value={info.verdict} />
+        Passport: {info.verdict === "VERIFIED" ? <Seal size={24} /> : null}<Status value={info.verdict} />
       </p>
     </div>
   );
