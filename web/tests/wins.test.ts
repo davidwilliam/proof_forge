@@ -39,7 +39,7 @@ const lc = (id: string) => ledger.comparisons.find((c) => c.id === id)!;
 const H = Object.fromEntries(headlines(WINS).map((h) => [h.key, h]));
 const all = (h: { figure: string; figureAlt: string; text: string; note: string }) => `${h.figure} ${h.figureAlt} ${h.text} ${h.note}`;
 
-describe("wins over the Meta models alone", () => {
+describe("the frontier, measured: Meta's models on their own and with ProofForge", () => {
   it("generated/wins.json is up to date with results/wins/ledger.json", () => {
     expect(() => execFileSync(process.execPath, [path.join(ROOT, "web/scripts/wins.mjs"), "--check"], { stdio: "pipe" })).not.toThrow();
   });
@@ -76,6 +76,7 @@ describe("wins over the Meta models alone", () => {
     expect([rep.alone.verified, rep.alone.runs, rep.proofforge.verified, rep.proofforge.runs, rep.test!.p]).toEqual([8, 10, 9, 10, 0.5]);
     expect(rep.test!.secondary!.p).toBeCloseTo(0.0216, 4);
     const t = all(H.vyper!);
+    expect([H.vyper!.figure, H.vyper!.figureAlt]).toEqual(["10 → 14", "of 15"]);
     for (const s of ["14 of 15", "10 of 15", "two preregistered experiments", "First experiment 5 of 5 against 2 of 5 (p = 0.083)",
       "replication 9 of 10 against 8 of 10 (p = 0.5)", "Mann-Whitney U p = 0.022, a preregistered secondary test", "2.1x cheaper", "$5.62", "$11.79",
       `${l.factors.time!.toFixed(1)}x faster`, "Pooled, one-sided Fisher exact p = 0.084, not significant at 0.05", "includes the runs that motivated the replication", "CVE-2025-26622"])
@@ -94,7 +95,7 @@ describe("wins over the Meta models alone", () => {
     expect(t).not.toContain("preregistered one-sided");
   });
 
-  it("Muse Spark Open: six test tasks failed alone and verified with ProofForge, aggregate not significant", () => {
+  it("Muse Spark Open: six test tasks verified only with ProofForge, aggregate not significant", () => {
     const six = ledger.wins["1_alone_did_not_verify_proofforge_did"]!.filter((w) => w.id.startsWith("e1-test-open-1/") && lc(w.id).scope === "task");
     expect(six).toHaveLength(6);
     for (const w of six) {
@@ -107,7 +108,7 @@ describe("wins over the Meta models alone", () => {
     expect(agg.test).toMatchObject({ p: 0.5078, significant_at_0_05: false });
     const losses = ledger.comparisons.filter((c) => c.experiment === "e1-test-open-1" && c.scope === "task" && c.classification.verification === "loss");
     const t = all(H.open!);
-    for (const s of ["6 tasks", "of 30", "24 verified with ProofForge, 21 alone", `on ${losses.length} tasks only the model alone verified`, "p = 0.51, not significant at 0.05", "$3 cap"])
+    for (const s of ["6 tasks", "of 30", "24 verified with ProofForge, 21 on its own", `on ${losses.length} tasks only the model on its own verified`, "p = 0.51, not significant at 0.05", "$3 cap"])
       expect(t).toContain(s);
   });
 
@@ -166,15 +167,15 @@ describe("wins over the Meta models alone", () => {
     const b = lc(HEADLINE_IDS.balancer);
     expect(readme).toContain(countsSentence(WINS));
     for (const s of [
-      `${v.alone.verified} of ${v.alone.runs} alone`,
+      `${v.alone.verified} of ${v.alone.runs} on its own`,
       `${v.proofforge.verified} of ${v.proofforge.runs} with ProofForge`,
       `$${v.proofforge.list_usd_per_verified} against $${v.alone.list_usd_per_verified}`,
       `p = ${pValue(v.test!.p)}`,
       `$${b.proofforge.list_usd_per_verified!.toFixed(2)} against $${b.alone.list_usd_per_verified!.toFixed(2)}`,
       `${b.factors.cost!.toFixed(1)}x cheaper`,
       `${ledger.catches[0]!.bad_accepted.ordinary} of ${ledger.catches[0]!.bad_cases}`,
-      `${ledger.counts.classification.cost.win} wins and ${ledger.counts.classification.cost.loss} losses on list dollars per verified run`,
-      `${ledger.counts.classification.time.win} wins and ${ledger.counts.classification.time.loss} losses on wall time`,
+      `cheaper per verified run in ${ledger.counts.classification.cost.win} and more expensive in ${ledger.counts.classification.cost.loss}`,
+      `faster in ${ledger.counts.classification.time.win} and slower in ${ledger.counts.classification.time.loss}`,
       "results/wins/README.md",
     ])
       expect(readme).toContain(s);

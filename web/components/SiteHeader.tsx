@@ -6,7 +6,7 @@ import { ThemeToggle } from "./ThemeToggle";
 
 const LINKS = [
   { href: "/", label: "Overview" },
-  { href: "/wins", label: "Wins" },
+  { href: "/frontier", label: "Frontier" },
   { href: "/forge", label: "Forge session" },
   { href: "/challenge", label: "Challenge" },
   { href: "/app", label: "Balancer replay" },

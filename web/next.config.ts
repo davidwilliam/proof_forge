@@ -13,7 +13,7 @@ const config: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   async redirects() {
-    return legacySession;
+    return [...legacySession, { source: "/wins", destination: "/frontier", permanent: false }];
   },
 };
 

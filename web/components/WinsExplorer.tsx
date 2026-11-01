@@ -67,7 +67,7 @@ export function WinsExplorer({ rows, groups }: { rows: WinRow[]; groups: WinGrou
           </select>
         </label>
         <p className="wins-count" aria-live="polite">
-          {shown.length} of {rows.length} wins shown
+          {shown.length} of {rows.length} gains shown
         </p>
       </div>
       {groups.map((g) => {
@@ -77,7 +77,7 @@ export function WinsExplorer({ rows, groups }: { rows: WinRow[]; groups: WinGrou
         return (
           <section key={g.group} className="wins-group" id={`group-${g.group}`} aria-labelledby={`${uid}-h${g.group}`}>
             <h2 id={`${uid}-h${g.group}`}>
-              Wins ({g.group}): {g.title.charAt(0).toLowerCase() + g.title.slice(1)}
+              Gains ({g.group}): {g.title.charAt(0).toLowerCase() + g.title.slice(1)}
             </h2>
             <p className="wins-group-lead">
               {total} in the ledger{items.length !== total ? `, ${items.length} with these filters` : ""}. {g.text}
@@ -107,7 +107,7 @@ export function WinsExplorer({ rows, groups }: { rows: WinRow[]; groups: WinGrou
                 ))}
               </ol>
             ) : (
-              <p className="muted">No win in this group matches these filters.</p>
+              <p className="muted">No gain in this group matches these filters.</p>
             )}
           </section>
         );

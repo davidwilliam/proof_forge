@@ -36,7 +36,8 @@ export function WinsHeadline({ items, headingLevel = 3 }: { items: Headline[]; h
   );
 }
 
-const LETTER: Record<Outcome, string> = { win: "W", tie: "T", loss: "L", "n/a": "-" };
+const LETTER: Record<Outcome, string> = { win: "+", tie: "=", loss: "x", "n/a": "-" };
+const WORD: Record<Outcome, string> = { win: "better with ProofForge", tie: "the same", loss: "worse with ProofForge", "n/a": "not applicable" };
 
 function OutcomeChips({ c }: { c: Comparison }) {
   return (
@@ -44,10 +45,10 @@ function OutcomeChips({ c }: { c: Comparison }) {
       {DIMENSIONS.map((d) => {
         const o = c.classification[d.key];
         return (
-          <span key={d.key} className="wo-chip" data-outcome={o} title={`${d.label}: ${o}`}>
+          <span key={d.key} className="wo-chip" data-outcome={o} title={`${d.label}: ${WORD[o]}`}>
             <span aria-hidden="true">{LETTER[o]}</span>
             <span className="sr-only">
-              {d.label}: {o}.
+              {d.label}: {WORD[o]}.
             </span>
           </span>
         );
@@ -74,7 +75,7 @@ function Row({ c }: { c: Comparison }) {
           {c.flags.length ? `; ${c.flags.join("; ")}` : ""}
         </span>
       </td>
-      <td data-label="Verified, alone / ProofForge">{pair(`${al.verified} of ${al.runs}`, `${pf.verified} of ${pf.runs}`)}</td>
+      <td data-label="Verified, on its own / with ProofForge">{pair(`${al.verified} of ${al.runs}`, `${pf.verified} of ${pf.runs}`)}</td>
       <td data-label="List $ per verified run">{pair(usd(al.usdPerVerified), usd(pf.usdPerVerified))}</td>
       <td data-label="Wall time">{pair(seconds(c.time.alone), seconds(c.time.proofforge))}</td>
       <td data-label="Requirements proved, mean">
@@ -98,7 +99,7 @@ function Row({ c }: { c: Comparison }) {
   );
 }
 
-/** Every comparison of a set, ties and losses included, in the ledger's order. */
+/** Every comparison of a set, including where ProofForge did not help, in the ledger's order. */
 export function ComparisonTable({ rows, caption }: { rows: Comparison[]; caption: string }) {
   return (
     <div className="ledger-wrap">
@@ -107,7 +108,7 @@ export function ComparisonTable({ rows, caption }: { rows: Comparison[]; caption
         <thead>
           <tr>
             <th scope="col">Comparison</th>
-            <th scope="col">Verified, alone / ProofForge</th>
+            <th scope="col">Verified, on its own / with ProofForge</th>
             <th scope="col">List $ per verified run</th>
             <th scope="col">Wall time</th>
             <th scope="col">Requirements proved, mean</th>

@@ -116,18 +116,18 @@ export const DIMENSIONS: { key: Dimension; letter: string; label: string }[] = [
 export const GROUPS: { group: 1 | 2 | 3; title: string; text: string }[] = [
   {
     group: 1,
-    title: "The model alone did not verify, ProofForge did",
-    text: "Task-level comparisons and aggregates where no run of the model alone verified and at least one run with ProofForge did. In E1 there is one run per arm per task.",
+    title: "Verified only with ProofForge",
+    text: "Task-level comparisons and aggregates where no run of the model on its own verified and at least one run with ProofForge did. In E1 there is one run per arm per task.",
   },
   {
     group: 2,
-    title: "Both verified, ProofForge cheaper or faster",
-    text: "The factor is the alone arm's value divided by the ProofForge arm's: list dollars per verified run, or the mean wall time of the verified runs. A difference under 5% is a tie and not listed.",
+    title: "Verified either way, cheaper or faster with ProofForge",
+    text: "The factor is the model's value on its own divided by its value with ProofForge: list dollars per verified run, or the mean wall time of the verified runs. A difference under 5% is a tie and not listed.",
   },
   {
     group: 3,
-    title: "Other wins",
-    text: "Verified more often where the model alone also verified some runs; more requirements proved or fewer runs stopped by a cap where verification did not differ; bad candidates caught that ordinary checking accepted.",
+    title: "Other gains",
+    text: "Verified more often where the model on its own also verified some runs; more requirements proved or fewer runs stopped by a cap where verification did not differ; bad candidates caught that ordinary checking accepted.",
   },
 ];
 
@@ -230,9 +230,9 @@ export function headlines(d: WinsData): Headline[] {
   return [
     {
       key: "vyper",
-      figure: `${runsOf(v.proofforge)}`,
-      figureAlt: `vs ${runsOf(v.alone)}`,
-      text: `Vyper sqrt(), CVE-2025-26622, over two preregistered experiments: ${modelName(v.model)} in Muse Code verified ${runsOf(v.proofforge)} runs with ProofForge and ${runsOf(v.alone)} alone, ${factor1(v.factors.cost!)} cheaper per verified run (${usd(v.proofforge.usdPerVerified)} against ${usd(v.alone.usdPerVerified)}) and ${factor1(v.factors.time!)} faster.`,
+      figure: `${v.alone.verified} → ${v.proofforge.verified}`,
+      figureAlt: `of ${v.proofforge.runs}`,
+      text: `Vyper sqrt(), CVE-2025-26622, over two preregistered experiments: ${modelName(v.model)} in Muse Code verified ${runsOf(v.proofforge)} runs with ProofForge and ${runsOf(v.alone)} on its own, ${factor1(v.factors.cost!)} cheaper per verified run (${usd(v.proofforge.usdPerVerified)} against ${usd(v.alone.usdPerVerified)}) and ${factor1(v.factors.time!)} faster.`,
       note: `First experiment ${runsOf(v1.proofforge)} against ${runsOf(v1.alone)} (p = ${pValue(v1.test!.p)}); replication ${runsOf(v2.proofforge)} against ${runsOf(v2.alone)} (p = ${pValue(v2.test!.p)}), where ProofForge runs spent fewer list dollars (${v2.test!.secondary!.name.replace(/, ProofForge.*$/, "")} p = ${pValue(v2.test!.secondary!.p)}, a preregistered secondary test). Pooled, ${testPhrase({ ...v.test!, name: "one-sided Fisher exact", preregistered: false })}; the pool includes the runs that motivated the replication. List prices, caps of $${vCap.usd} and ${vCap.seconds / 3600} hours per run. The ProofForgeFin square-root module was written by the build team knowing the task.`,
       links: [{ label: "Full comparison", path: v.links.comparison }, ...reportLinks([...new Set([...v1.links.reports, ...v2.links.reports])])],
     },
@@ -240,7 +240,7 @@ export function headlines(d: WinsData): Headline[] {
       key: "balancer",
       figure: factor1(b.factors.cost!),
       figureAlt: "cheaper",
-      text: `Per verified Balancer V2 repair: ${modelName(b.model)} verified ${runsOf(b.proofforge)} runs with ProofForge at ${usd(b.proofforge.usdPerVerified)} each and ${runsOf(b.alone)} alone at ${usd(b.alone.usdPerVerified)}, ${factor1(b.factors.time!)} faster.`,
+      text: `Per verified Balancer V2 repair: ${modelName(b.model)} verified ${runsOf(b.proofforge)} runs with ProofForge at ${usd(b.proofforge.usdPerVerified)} each and ${runsOf(b.alone)} on its own at ${usd(b.alone.usdPerVerified)}, ${factor1(b.factors.time!)} faster.`,
       note: `Caps of $${bCap.usd} and ${bCap.seconds / 3600} hours per run, list prices. The ProofForge arm adds Muse Wonder 1.0 as lemma planner, a second Meta model on the same budget, and the runs are pooled from three experiments. On the verification rate, ${testPhrase(b.test!)}${b.test!.preregistered ? "" : "; the test was not preregistered"}.`,
       links: [{ label: "Full comparison", path: b.links.comparison }, ...reportLinks(b.links.reports)],
     },
@@ -248,8 +248,8 @@ export function headlines(d: WinsData): Headline[] {
       key: "open",
       figure: `${openWins.length} tasks`,
       figureAlt: `of ${openAll.alone.runs}`,
-      text: `Where ${modelName(openAll.model)}, Meta's open-weight model, did not verify alone and verified with ProofForge, on the frozen test tasks; alone, ${openCapped === openWins.length ? `each of those ${openWins.length} runs` : `${openCapped} of those ${openWins.length} runs`} stopped at the $${openCap.usd} cap.`,
-      note: `Over all ${openAll.alone.runs} tasks: ${openAll.proofforge.verified} verified with ProofForge, ${openAll.alone.verified} alone, and on ${openLosses.length} tasks only the model alone verified; ${testPhrase(openAll.test!)}.`,
+      text: `Where ${modelName(openAll.model)}, Meta's open-weight model, did not verify on its own and verified with ProofForge, on the frozen test tasks; on its own, ${openCapped === openWins.length ? `each of those ${openWins.length} runs` : `${openCapped} of those ${openWins.length} runs`} stopped at the $${openCap.usd} cap.`,
+      note: `Over all ${openAll.alone.runs} tasks: ${openAll.proofforge.verified} verified with ProofForge, ${openAll.alone.verified} on its own, and on ${openLosses.length} tasks only the model on its own verified; ${testPhrase(openAll.test!)}.`,
       links: [{ label: "Full comparison", path: comparison(d, openWins[0]!.id).links.comparison }, ...reportLinks(openAll.links.reports)],
     },
     {
@@ -266,5 +266,5 @@ export function headlines(d: WinsData): Headline[] {
 /** One sentence with the counts of the ledger, for the home page, the README and llms.txt. */
 export function countsSentence(d: WinsData): string {
   const c = d.counts;
-  return `${fmtInt(c.comparisons)} comparisons over ${fmtInt(c.runs)} runs: ${c.wins_group_1} where the model alone did not verify and ProofForge did, ${c.wins_group_2} where both verified and ProofForge was cheaper or faster, and ${c.wins_group_3} wins of other kinds.`;
+  return `${fmtInt(c.comparisons)} comparisons over ${fmtInt(c.runs)} runs: on ${c.wins_group_1} the model verified only with ProofForge, on ${c.wins_group_2} it verified either way and ProofForge made it cheaper or faster, and ${c.wins_group_3} are gains of other kinds.`;
 }

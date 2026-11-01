@@ -254,8 +254,8 @@ function HeroGraph() {
           <a className="btn" href={githubFile(CETUS_HOTFIX.passport)}>
             Open the hotfix Passport
           </a>
-          <Link className="btn" href="/wins">
-            Wins over Muse alone
+          <Link className="btn" href="/frontier">
+            How far ProofForge takes Muse
           </Link>
         </div>
       }
@@ -263,19 +263,19 @@ function HeroGraph() {
   );
 }
 
-/** The strongest wins of the ledger (results/wins/ledger.json), right after the hero, with the counts and the way to every comparison. */
+/** The largest gains of the ledger (results/wins/ledger.json), right after the hero, with the counts and the way to every comparison. */
 function HomeWins() {
   return (
     <section className="home-section home-wins" id="wins" aria-labelledby="home-wins">
-      <h2 id="home-wins">Meta&apos;s models with ProofForge, against the same models alone</h2>
+      <h2 id="home-wins">How far ProofForge takes Meta&apos;s models</h2>
       <p className="home-section-lead">
-        Same model, same tasks, same caps, and ProofForge judges both arms against the same locked specification. {countsSentence(WINS)} Ties
-        and losses are kept in the same ledger.
+        The same Meta model on the same tasks and caps, on its own and with ProofForge, both judged against the same locked specification.{" "}
+        {countsSentence(WINS)} Comparisons where ProofForge did not help are kept in the same ledger.
       </p>
       <WinsHeadline items={headlines(WINS)} />
       <p className="home-wins-more">
-        <Link className="btn btn-primary" href="/wins">
-          Every win, tie and loss
+        <Link className="btn btn-primary" href="/frontier">
+          Every comparison
         </Link>
         <a className="btn" href={githubFile(WINS.readme)}>
           The ledger on GitHub
