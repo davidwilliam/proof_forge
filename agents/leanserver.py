@@ -382,11 +382,16 @@ def fast_snippet(s, scratch, offset, code):
         return "clean", ms
     _count(s, "fast_rejected")
     # the lines the compile path shows (Session._clean), so both paths give the model the same messages
-    msgs = s._clean("\n".join(msgs)).split("\n") if msgs else []
+    msgs = [_shorten(s._clean(m)) for m in msgs]
     states = sorry_states(srv, scratch, offset, code, "snippet line")
     if states:
         msgs.append("Proof state at each `sorry` of the snippet:\n" + states)
     return False, msgs, ms
+
+
+def _shorten(text, n=1500):
+    """One message, at most `n` characters (repair.MESSAGE_CHARS), so that every header stays visible."""
+    return text if len(text) <= n else text[:n].rstrip() + "\n  ... [message shortened]"
 
 
 def sorry_states(srv, text, first_line, part, where, limit=6):

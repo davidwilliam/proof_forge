@@ -356,6 +356,63 @@ def tools_for(task, library=False, topdown=False, compact=False):
     ] + lib + (TOPDOWN_TOOLS if topdown else [])
 
 
+SCRATCH_EXIT = "PF_SCRATCH_EXIT="
+SCRATCH_HEADER = re.compile(r"^Scratch\.lean:(\d+):(\d+): (error|warning)\b")
+MESSAGE_CHARS = 1500     # characters of one Lean message shown for a snippet
+SNIPPET_CHARS = 6000     # characters of all messages shown for a snippet
+UNSHOWN = ("linter", "Hint:", "deprecated")   # header words of warnings Session._clean drops
+
+
+def scratch_verdict(output, offset, exit_code, linter_ok=False):
+    """(clean, messages) of a snippet compiled at line `offset` + 1 of Scratch.lean, from Lean's
+    complete output and the exit status of `lean`. Messages located in the snippet are renumbered
+    from 1 (`snippet:L:C`) and cleaned as Session._clean does, each shortened to MESSAGE_CHARS so
+    that every header stays visible; a warning whose header Session._clean drops (a deprecation)
+    is left out whole. The snippet is clean when it has no error and no shown warning; with
+    `linter_ok` (the top-down loop) a warning raised by a linter (it names a `linter.` option) does
+    not count. A missing exit status, or a failed `lean` that reported no error at all, is not
+    clean."""
+    msgs, blocking, any_error = [], False, False
+    for b in re.split(r"(?m)^(?=Scratch\.lean:\d+:\d+: (?:error|warning))", output or ""):
+        m = SCRATCH_HEADER.match(b)
+        if not m:
+            continue
+        sev, ln = m.group(3), int(m.group(1)) - offset
+        any_error = any_error or sev == "error"
+        if ln < 0:
+            continue
+        header = b.split("\n", 1)[0]
+        if sev == "warning" and any(u in header for u in UNSHOWN):
+            continue
+        if sev == "error" or not (linter_ok and re.search(r"\blinter\.\w+", b)):
+            blocking = True
+        text = Session._clean(re.sub(r"^Scratch\.lean:\d+", f"snippet:{ln}", b)).strip("\n")
+        if len(text) > MESSAGE_CHARS:
+            text = text[:MESSAGE_CHARS].rstrip() + "\n  ... [message shortened]"
+        msgs.append(text)
+    if exit_code is None or (exit_code != 0 and not any_error):
+        blocking = True
+        msgs = msgs or [f"error: Lean stopped without reporting an error (exit status {exit_code}); "
+                        "nothing is established"]
+    return not blocking, msgs
+
+
+def join_messages(msgs, limit=SNIPPET_CHARS):
+    """Messages for the model, the first ones whole up to `limit` characters; the headers of the
+    ones left out are listed."""
+    out, used, rest = [], 0, []
+    for k, m in enumerate(msgs):
+        if used + len(m) > limit and out:
+            rest = [x.split("\n", 1)[0] for x in msgs[k:]]
+            break
+        out.append(m)
+        used += len(m) + 1
+    text = "\n".join(out)
+    if rest:
+        text += f"\n... {len(rest)} more message(s): " + "; ".join(r[:160] for r in rest[:12])
+    return text
+
+
 class Session:
     # Class defaults, so that a session built without __init__ (tests) behaves as in the other loops.
     topdown = False
@@ -655,27 +712,17 @@ class Session:
                 self.log(kind="fast_check", version=self.version, ok=False, ms=fast[2])
                 return fast
         (self.ws / "Scratch.lean").write_text(scratch)
-        r = judge.in_container(self.ws, f"lake build {self.task.lib} >/dev/null 2>&1; lake env lean Scratch.lean 2>&1 | tail -c 9000", timeout=300)
-        out = self._clean(r["output_tail"])
-        # Keep only messages located in the snippet, renumbered from 1.
-        msgs, cur = [], None
-        for l in out.splitlines():
-            m = re.match(r"^Scratch\.lean:(\d+):(\d+): (error|warning)", l)
-            if m:
-                ln = int(m.group(1)) - offset
-                cur = ln >= 0
-                if cur:
-                    l = re.sub(r"^Scratch\.lean:\d+", f"snippet:{ln}", l)
-            if cur:
-                msgs.append(l)
-        clean = not any(re.search(r": (error|warning)", m) for m in msgs)
-        if self.topdown and not clean:
-            # A warning that only a linter raises (an unused variable or simp argument, a style
-            # check) does not make the proof wrong, and the judge decides on exit codes: in the
-            # top-down loop such a snippet counts as clean. Errors and other warnings (`sorry`) do not.
-            blocks = re.split(r"(?m)^(?=Scratch\.lean:\d+:\d+: (?:error|warning))", r["output_tail"])
-            clean = not any(m and int(m.group(1)) >= offset and (m.group(2) == "error" or not re.search(r"\blinter\.\w+", b))
-                            for b in blocks for m in [re.match(r"Scratch\.lean:(\d+):\d+: (error|warning)", b)])
+        # Lean's whole output goes to a file the host reads back, with the exit status of `lean`:
+        # the verdict never rests on a truncated tail (goal states of a large definition can push
+        # every error header out of a few kilobytes of output).
+        name = judge.output_name("scratch")
+        r = judge.in_container(self.ws, f"lake build {self.task.lib} >/dev/null 2>&1; lake env lean Scratch.lean > {name} 2>&1; "
+                                        f"echo {SCRATCH_EXIT}$?", timeout=300)
+        path = self.ws / name
+        output = path.read_text(errors="replace") if path.exists() else ""
+        path.unlink(missing_ok=True)
+        m = re.search(rf"{SCRATCH_EXIT}(\d+)", r["output_tail"])
+        clean, msgs = scratch_verdict(output, offset, int(m.group(1)) if m else None, linter_ok=self.topdown)
         if judge.TIMEOUT_MARK in r["output_tail"]:   # stopped at the time limit: nothing is established
             clean = False
             msgs = msgs or [judge.TIMEOUT_MARK]
@@ -691,7 +738,7 @@ class Session:
         clean, msgs, ms = self._scratch(code, hoist)
         self.log(kind="snippet", version=self.version, ok=clean, ms=ms, **({"hoisted": hoist} if hoist else {}))
         if not clean:
-            return "\n".join(msgs)[-6000:]
+            return join_messages(msgs)
         note = ""
         for mod in hoist:   # the candidate gets the imports the snippet compiled with
             res = self.add_import(mod)
