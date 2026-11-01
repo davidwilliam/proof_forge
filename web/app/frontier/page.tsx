@@ -202,7 +202,7 @@ export default function WinsPage() {
             .map((c) => (
               <li key={c.id}>
                 <code>{c.id}</code>: {testPhrase(c.test, c.classification.verification)} (stated in{" "}
-                <a href={githubFile(c.test.statedIn)}>{c.test.statedIn}</a>).
+                <a href={githubFile(c.test.statedIn)}>{c.test.statedIn}</a>){c.flags.length ? `; ${c.flags.join("; ")}` : ""}.
               </li>
             ))}
         </ul>
