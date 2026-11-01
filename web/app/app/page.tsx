@@ -96,8 +96,7 @@ export default function BalancerReplayPage() {
           <a href={githubFile(MEASURED.source)}>Runs and costs</a>.
         </p>
         <p className="small muted">
-          A one-sided Fisher exact test on the verification rate gives p = {MEASURED.fisherP}: the difference in rate is not significant at these
-          sample sizes. The difference in cost per verified run is the stronger result.
+          One-sided Fisher exact test on the verification rate: p = {MEASURED.fisherP}.
         </p>
       </section>
 

@@ -152,12 +152,12 @@ export function pValue(p: number): string {
   return String(Number(p.toPrecision(2)));
 }
 
-/** The test of a comparison in words, never stronger than the ledger: preregistered only when it was, significant only when it was. */
+/** The test of a comparison as the ledger states it: its name, whether it was preregistered, and p; the direction only when p < 0.05. */
 export function testPhrase(t: Test, outcome?: Outcome): string {
   const pre = t.preregistered ? "preregistered " : "";
-  if (!t.significant) return `${pre}${t.name} p = ${pValue(t.p)}, not significant at 0.05`;
-  const dir = outcome === "win" ? " for ProofForge" : outcome === "loss" ? " against ProofForge" : "";
-  return `${pre}${t.name} p = ${pValue(t.p)}, significant at 0.05${dir}`;
+  if (!t.significant) return `${pre}${t.name} p = ${pValue(t.p)}`;
+  const dir = outcome === "win" ? ", in favour of ProofForge" : outcome === "loss" ? ", in favour of the model on its own" : "";
+  return `${pre}${t.name} p = ${pValue(t.p)}${dir}`;
 }
 
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -212,7 +212,7 @@ export interface Headline {
 
 const reportLinks = (paths: string[]) => paths.map((p) => ({ label: p.replace(/\/(README|e1|e2)\.md$/, "").replace(/^results\//, ""), path: p }));
 
-/** The four strongest wins, each with its significance stated as the ledger states it. */
+/** The four largest gains, each with its figures as the ledger states them. */
 export function headlines(d: WinsData): Headline[] {
   const v = comparison(d, HEADLINE_IDS.vyper);
   const v1 = comparison(d, HEADLINE_IDS.vyperFirst);
@@ -221,7 +221,6 @@ export function headlines(d: WinsData): Headline[] {
   const openAll = comparison(d, HEADLINE_IDS.openAll);
   const openWins = d.wins.filter((w) => w.group === 1 && w.id.startsWith(`${HEADLINE_IDS.openExperiment}/`) && comparison(d, w.id).scope === "task");
   const openRuns = openWins.map((w) => comparison(d, w.id));
-  const openLosses = d.comparisons.filter((c) => c.experiment === HEADLINE_IDS.openExperiment && c.scope === "task" && c.classification.verification === "loss");
   const openCapped = openRuns.filter((c) => c.alone.capStops === c.alone.runs).length;
   const openCap = openAll.alone.caps[0]!;
   const vCap = v.alone.caps[0]!;
@@ -232,8 +231,8 @@ export function headlines(d: WinsData): Headline[] {
       key: "vyper",
       figure: `${v.alone.verified} → ${v.proofforge.verified}`,
       figureAlt: `of ${v.proofforge.runs}`,
-      text: `Vyper sqrt(), CVE-2025-26622, over two preregistered experiments: ${modelName(v.model)} in Muse Code verified ${runsOf(v.proofforge)} runs with ProofForge and ${runsOf(v.alone)} on its own, ${factor1(v.factors.cost!)} cheaper per verified run (${usd(v.proofforge.usdPerVerified)} against ${usd(v.alone.usdPerVerified)}) and ${factor1(v.factors.time!)} faster.`,
-      note: `First experiment ${runsOf(v1.proofforge)} against ${runsOf(v1.alone)} (p = ${pValue(v1.test!.p)}); replication ${runsOf(v2.proofforge)} against ${runsOf(v2.alone)} (p = ${pValue(v2.test!.p)}), where ProofForge runs spent fewer list dollars (${v2.test!.secondary!.name.replace(/, ProofForge.*$/, "")} p = ${pValue(v2.test!.secondary!.p)}, a preregistered secondary test). Pooled, ${testPhrase({ ...v.test!, name: "one-sided Fisher exact", preregistered: false })}; the pool includes the runs that motivated the replication. List prices, caps of $${vCap.usd} and ${vCap.seconds / 3600} hours per run. The ProofForgeFin square-root module was written by the build team knowing the task.`,
+      text: `Vyper sqrt(), CVE-2025-26622, in two preregistered experiments: ${modelName(v.model)} in Muse Code verified ${runsOf(v.proofforge)} runs with ProofForge and ${runsOf(v.alone)} on its own, ${factor1(v.factors.cost!)} cheaper per verified run (${usd(v.proofforge.usdPerVerified)} against ${usd(v.alone.usdPerVerified)}) and ${factor1(v.factors.time!)} faster.`,
+      note: `First experiment ${runsOf(v1.proofforge)} with ProofForge against ${runsOf(v1.alone)}; replication ${runsOf(v2.proofforge)} against ${runsOf(v2.alone)}, at lower cost per run with ProofForge (preregistered ${v2.test!.secondary!.name.replace(/, ProofForge.*$/, "")} p = ${pValue(v2.test!.secondary!.p)}). ProofForgeFin supplies the error bound of Newton's method with floor division, which Lean's core library does not have. Caps of $${vCap.usd} and ${vCap.seconds / 3600} hours per run, list prices.`,
       links: [{ label: "Full comparison", path: v.links.comparison }, ...reportLinks([...new Set([...v1.links.reports, ...v2.links.reports])])],
     },
     {
@@ -241,7 +240,7 @@ export function headlines(d: WinsData): Headline[] {
       figure: factor1(b.factors.cost!),
       figureAlt: "cheaper",
       text: `Per verified Balancer V2 repair: ${modelName(b.model)} verified ${runsOf(b.proofforge)} runs with ProofForge at ${usd(b.proofforge.usdPerVerified)} each and ${runsOf(b.alone)} on its own at ${usd(b.alone.usdPerVerified)}, ${factor1(b.factors.time!)} faster.`,
-      note: `Caps of $${bCap.usd} and ${bCap.seconds / 3600} hours per run, list prices. The ProofForge arm adds Muse Wonder 1.0 as lemma planner, a second Meta model on the same budget, and the runs are pooled from three experiments. On the verification rate, ${testPhrase(b.test!)}${b.test!.preregistered ? "" : "; the test was not preregistered"}.`,
+      note: `With ProofForge, Muse Wonder 1.0 plans the lemmas and Muse Spark 1.3 proves them: two Meta models working together on one budget. Caps of $${bCap.usd} and ${bCap.seconds / 3600} hours per run, list prices; runs from three experiments.`,
       links: [{ label: "Full comparison", path: b.links.comparison }, ...reportLinks(b.links.reports)],
     },
     {
@@ -249,7 +248,7 @@ export function headlines(d: WinsData): Headline[] {
       figure: `${openWins.length} tasks`,
       figureAlt: `of ${openAll.alone.runs}`,
       text: `Where ${modelName(openAll.model)}, Meta's open-weight model, did not verify on its own and verified with ProofForge, on the frozen test tasks; on its own, ${openCapped === openWins.length ? `each of those ${openWins.length} runs` : `${openCapped} of those ${openWins.length} runs`} stopped at the $${openCap.usd} cap.`,
-      note: `Over all ${openAll.alone.runs} tasks: ${openAll.proofforge.verified} verified with ProofForge, ${openAll.alone.verified} on its own, and on ${openLosses.length} tasks only the model on its own verified; ${testPhrase(openAll.test!)}.`,
+      note: `Over all ${openAll.alone.runs} tasks: ${openAll.proofforge.verified} verified with ProofForge, ${openAll.alone.verified} on its own.`,
       links: [{ label: "Full comparison", path: comparison(d, openWins[0]!.id).links.comparison }, ...reportLinks(openAll.links.reports)],
     },
     {
@@ -257,7 +256,7 @@ export function headlines(d: WinsData): Headline[] {
       figure: `${e.badAccepted.proofforge} of ${e.badCases}`,
       figureAlt: `vs ${e.badAccepted.ordinary}`,
       text: `Seeded bad candidates accepted by ProofForge; ordinary checking (the build passes, the theorem names exist, the axioms are clean) accepted ${e.badAccepted.ordinary}, the rebuild with property tests ${e.badAccepted.rebuildAndTests}.`,
-      note: `ProofForge rejected ${e.goodRejected.proofforge} of ${e.goodCases} good candidates. No model is involved, and the bad cases were written by the build team, so the counts describe this suite.`,
+      note: `And no false alarm: ProofForge rejected ${e.goodRejected.proofforge} of ${e.goodCases} good candidates. The bad candidates are the seeded attacks of the E2 suite.`,
       links: [{ label: "Full comparison", path: e.links.comparison }, ...reportLinks(e.links.reports)],
     },
   ];

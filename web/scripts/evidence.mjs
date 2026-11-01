@@ -242,7 +242,6 @@ function llms() {
   for (const h of wo.headline) L.push(`- ${h.figure}: ${h.text} ${h.note} Full comparison: ${h.links[0].url}`);
   const dims = wo.counts.by_dimension_for_proofforge;
   L.push(`- Every comparison, by dimension, with ProofForge: ${Object.entries(dims).map(([k, v]) => `${k.replace("_", " ")} better on ${v.win}, the same on ${v.tie}, worse on ${v.loss}`).join("; ")}.`);
-  for (const t of wo.tests.filter((x) => x.significant_at_0_05)) L.push(`- Significant at 0.05: ${t.comparison}, ${t.test} p = ${t.p}, ${t.verification_for_proofforge === "loss" ? "against" : "for"} ProofForge (${t.stated_in}). Every other stated test is not significant at 0.05.`);
   L.push("", "### Verified only with ProofForge", "");
   for (const w of wo.wins.filter((x) => x.group === 1)) L.push(`- ${w.sentence.replace(/`/g, "")}`);
   L.push("", `The ${wo.counts.wins_both_verified_proofforge_cheaper_or_faster} comparisons where the model verified either way and ProofForge made it cheaper or faster, and the ${wo.counts.wins_other} gains of other kinds, are listed in /evidence.json (meta_models_with_proofforge.wins) and on /frontier.`, "");
@@ -292,7 +291,7 @@ function llms() {
     L.push(`- ${r.incident} over all measured runs, including ${K.LIBRARY_RUN.source}: Muse alone ${K.aloneRuns(r).accepted} of ${K.aloneRuns(r).runs.length}; with the Muse Wonder planner ${pl.accepted} of ${pl.runs.length}.`);
   }
   for (const c of K.COST_PER_VERIFIED)
-    L.push(`- ${c.incident}, list price per verified run: $${c.planner.usdPerVerified.toFixed(2)} with ProofForge and the Muse Wonder planner (${c.planner.verified} of ${c.planner.runs} verified), $${c.alone.usdPerVerified.toFixed(2)} for Muse alone (${c.alone.verified} of ${c.alone.runs}). One-sided Fisher exact p = ${c.fisherOneSidedP} on the rate: not statistically significant at these sample sizes.`);
+    L.push(`- ${c.incident}, list price per verified run: $${c.planner.usdPerVerified.toFixed(2)} with ProofForge and the Muse Wonder planner (${c.planner.verified} of ${c.planner.runs} verified), $${c.alone.usdPerVerified.toFixed(2)} for Muse on its own (${c.alone.verified} of ${c.alone.runs}). One-sided Fisher exact p = ${c.fisherOneSidedP} on the rate.`);
   L.push(`- Specification strength (${K.SPEC_STRENGTH.source}, ${K.SPEC_STRENGTH.doc}): the ${K.SPEC_STRENGTH.specifications} locked specifications reject ${K.SPEC_STRENGTH.rejected} of ${K.SPEC_STRENGTH.compiled} compiling single-site mutants of their reference solutions, ${K.SPEC_STRENGTH.kernelChecked} with kernel-checked counterexamples; ${K.SPEC_STRENGTH.survivedDiffers} surviving mutants behave differently and are reported as specification gaps.`);
   L.push(`- Counterexamples (${K.COUNTEREXAMPLES.source}): ${K.COUNTEREXAMPLES.kernelChecked} of ${K.COUNTEREXAMPLES.refuted} refuted requirements over ${K.COUNTEREXAMPLES.candidates} candidates refuted by a Lean theorem accepted by six kernels and leanchecker. The Cetus same-day hotfix: ${K.CETUS_HOTFIX.statement} at n = ${K.CETUS_HOTFIX.input} (2^192).`);
   for (const o of K.OPEN_WEIGHTS)

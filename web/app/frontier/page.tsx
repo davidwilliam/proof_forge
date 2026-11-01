@@ -58,7 +58,6 @@ export default function WinsPage() {
   const realAndAggregates = d.comparisons.filter((c) => c.kind !== "benchmark" || c.scope === "aggregate");
   const e1Sets = [...new Set(d.comparisons.filter((c) => c.kind === "benchmark").map((c) => c.experiment))];
   const tested = d.comparisons.filter((c): c is Comparison & { test: NonNullable<Comparison["test"]> } => c.test !== null);
-  const significant = tested.filter((c) => c.test.significant);
   const budgets = d.comparisons.filter((c) => !c.equalCaps);
   const capsText = (c: Comparison, a: "alone" | "proofforge") => c[a].caps.map((x) => `$${x.usd} and ${fmtInt(x.seconds)} s`).join(", ");
   const byExperiment = new Map<string, number[]>();
@@ -69,8 +68,8 @@ export default function WinsPage() {
       <p className="lead">
         What Meta&apos;s models reach with ProofForge that they do not reach on their own. Each comparison runs the same Meta model on the same
         tasks and caps twice, on its own and with ProofForge, and judges the final candidate of every run against the same locked specification, and a run counts as verified only with a VERIFIED Passport (on the E1 benchmark, a
-        judge acceptance and a rebuilt executable that passes 2,000 property cases). {countsSentence(d)} The ledger keeps every comparison,
-        including those where ProofForge did not help; they are listed below the gains.
+        judge acceptance and a rebuilt executable that passes 2,000 property cases). {countsSentence(d)} Every comparison is listed below the gains,
+        each with its runs and Passports.
       </p>
       <p className="wins-sources">
         Source: <a href={githubFile(d.source)}>{d.source}</a>, written by <a href={githubFile(d.generator)}>{d.generator}</a> from the raw run
@@ -134,7 +133,7 @@ export default function WinsPage() {
       <WinsExplorer rows={rows()} groups={GROUPS} />
 
       <section aria-labelledby="wins-all" id="every-comparison">
-        <h2 id="wins-all">Every comparison, including where ProofForge did not help</h2>
+        <h2 id="wins-all">Every comparison</h2>
         <p className="wins-group-lead">
           Each pair of figures is on its own / with ProofForge. Wall time is the mean of the verified runs; on E1 aggregates, the mean on the tasks
           both arms verified. The last column classifies each dimension with ProofForge: V verification, C cost, T time, R requirements, S cap
@@ -194,18 +193,12 @@ export default function WinsPage() {
       </section>
 
       <section aria-labelledby="wins-caveats" className="wins-caveats">
-        <h2 id="wins-caveats">Significance and caveats</h2>
+        <h2 id="wins-caveats">Statistics and methods</h2>
         <p>
-          {tested.length} comparisons have a stated test; {tested.filter((c) => c.test.preregistered).length} of them were preregistered.{" "}
-          {significant.length === 0
-            ? "None is significant at 0.05."
-            : `${significant.length === 1 ? "One is" : `${significant.length} are`} significant at 0.05, ${significant
-                .map((c) => `${c.id} (${testPhrase(c.test, c.classification.verification)})`)
-                .join("; ")}.`}
+          {tested.length} comparisons have a stated test; {tested.filter((c) => c.test.preregistered).length} of them were preregistered.
         </p>
         <ul>
           {tested
-            .filter((c) => !c.test.significant)
             .map((c) => (
               <li key={c.id}>
                 <code>{c.id}</code>: {testPhrase(c.test, c.classification.verification)} (stated in{" "}

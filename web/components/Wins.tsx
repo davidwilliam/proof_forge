@@ -11,7 +11,7 @@ import {
   type Outcome,
 } from "@/lib/wins";
 
-/** The headline wins as cards: figure and sentence, then the significance and limits, then the links. */
+/** The headline gains as cards: figure and sentence, then the conditions, then the links. */
 export function WinsHeadline({ items, headingLevel = 3 }: { items: Headline[]; headingLevel?: 2 | 3 }) {
   const H = headingLevel === 2 ? "h2" : "h3";
   return (
@@ -99,7 +99,7 @@ function Row({ c }: { c: Comparison }) {
   );
 }
 
-/** Every comparison of a set, including where ProofForge did not help, in the ledger's order. */
+/** Every comparison of a set, in the ledger's order. */
 export function ComparisonTable({ rows, caption }: { rows: Comparison[]; caption: string }) {
   return (
     <div className="ledger-wrap">

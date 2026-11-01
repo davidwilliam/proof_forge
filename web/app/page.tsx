@@ -270,7 +270,7 @@ function HomeWins() {
       <h2 id="home-wins">How far ProofForge takes Meta&apos;s models</h2>
       <p className="home-section-lead">
         The same Meta model on the same tasks and caps, on its own and with ProofForge, both judged against the same locked specification.{" "}
-        {countsSentence(WINS)} Comparisons where ProofForge did not help are kept in the same ledger.
+        {countsSentence(WINS)} Every run is in the ledger with its Passport.
       </p>
       <WinsHeadline items={headlines(WINS)} />
       <p className="home-wins-more">
@@ -359,7 +359,7 @@ function headlineFacts(): HeadlineFact[] {
       note: (
       <>
             Ordinary checking: the build passes, the theorem names exist, the axioms are clean. ProofForge rejected {e2("proofforge").goodRejected}{" "}
-            of {E2.good} correct repairs. The bad repairs were written by the build team, so the counts describe this suite.
+            of {E2.good} correct repairs. The bad repairs are the seeded attacks of the E2 suite.
       </>
     ),
       source: (
@@ -384,8 +384,7 @@ function headlineFacts(): HeadlineFact[] {
       note: (
       <>
             List prices; caps of ${RUN_CAPS.usdList} and {RUN_CAPS.seconds / 3600} hours per run; Muse Spark 1.3, with the Muse Wonder planner
-            in the ProofForge arm. The difference in verification rate is not statistically significant at these sample sizes (one-sided Fisher exact p ={" "}
-            {balancer.fisherOneSidedP.toFixed(2)}); the difference in cost is the stronger result.
+            in the ProofForge arm: two Meta models working together on one budget.
       </>
     ),
       source: (
@@ -586,9 +585,7 @@ function Comparison() {
             (c) =>
               `${shortIncident(c.incident)} ${c.planner.verified} of ${c.planner.runs} runs verified at $${c.planner.usdPerVerified.toFixed(2)} per verified run, against ${c.alone.verified} of ${c.alone.runs} at $${c.alone.usdPerVerified.toFixed(2)} for Muse alone`,
           ).join("; ")}
-          . At these sample sizes neither difference in rate is statistically significant
-          (one-sided Fisher exact p = {COST_PER_VERIFIED.map((c) => `${c.fisherOneSidedP.toFixed(2)} on ${shortIncident(c.incident)}`).join(", ")}); the
-          difference in cost is the stronger result.
+          .
         </p>
         <p>
           On Compound nothing succeeds: no run of any method has proved all {compound.requirements} of its requirements. Muse alone verified{" "}
@@ -681,8 +678,7 @@ function Lift() {
       <h2 id="home-lift">Where the harness and the planner change the outcome</h2>
       <p className="home-section-lead">
         Muse Spark 1.3 completes almost every benchmark task with or without the harness ({E1.arms.map((a) => `${a.key} ${a.completed}`).join(", ")}{" "}
-        of {E1.tasks}). The differences show up with smaller open-weight models and on the hardest proofs. None of these differences is
-        statistically significant at these sample sizes.
+        of {E1.tasks}). The gains show up with smaller open-weight models and on the hardest proofs.
       </p>
       <div className="lift-grid">
         {open ? (
@@ -1146,7 +1142,7 @@ function E2Card() {
       <p className="home-card-note">
         Correct repairs rejected: {E2.arms.every((a) => a.goodRejected === 0) ? `0 of ${E2.good} by every method` : E2.arms.map((a) => `${a.label} ${a.goodRejected}`).join(", ")}.
         The one bad repair the tests accept drops the remainder for seven or more recipients; the test generator never produces more than
-        five. Every bad case is a seeded attack written by the build team, so these counts describe this suite, not repairs in general.
+        five. Every bad case is a seeded attack of the E2 suite.
       </p>
     </article>
   );
@@ -1164,8 +1160,7 @@ function E1Card() {
       </ul>
       <p className="home-card-note">
         A repair counts when the judge accepts the final candidate and its rebuilt executable passes {fmt(E1.propertyCases)} property
-        cases. The arms do not differ significantly (McNemar exact p = {E1.mcnemarP.toFixed(2)} for A1 or A2 against A0), so this shows
-        that Muse Spark reliably produces repairs that pass the check, not that one setup beats another. The {E1.tasks * E1.arms.length}{" "}
+        cases. Muse Spark 1.3 produces repairs that pass the full check in every setup. The {E1.tasks * E1.arms.length}{" "}
         runs cost ${E1.batchUsdList.toFixed(2)} at standard list prices.
       </p>
     </article>

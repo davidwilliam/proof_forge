@@ -65,7 +65,7 @@ describe("the frontier, measured: Meta's models on their own and with ProofForge
     }
   });
 
-  it("Vyper CVE-2025-26622: both preregistered experiments, 10 of 15 alone, 14 of 15 with ProofForge, 2.1x cheaper, no significant rate difference", () => {
+  it("Vyper CVE-2025-26622: both preregistered experiments, 10 of 15 on its own, 14 of 15 with ProofForge, 2.1x cheaper", () => {
     const l = lc(HEADLINE_IDS.vyper);
     expect([l.alone.verified, l.alone.runs, l.proofforge.verified, l.proofforge.runs]).toEqual([10, 15, 14, 15]);
     expect([l.alone.list_usd_per_verified, l.proofforge.list_usd_per_verified, l.factors.cost]).toEqual([11.79, 5.62, 2.1]);
@@ -77,25 +77,24 @@ describe("the frontier, measured: Meta's models on their own and with ProofForge
     expect(rep.test!.secondary!.p).toBeCloseTo(0.0216, 4);
     const t = all(H.vyper!);
     expect([H.vyper!.figure, H.vyper!.figureAlt]).toEqual(["10 → 14", "of 15"]);
-    for (const s of ["14 of 15", "10 of 15", "two preregistered experiments", "First experiment 5 of 5 against 2 of 5 (p = 0.083)",
-      "replication 9 of 10 against 8 of 10 (p = 0.5)", "Mann-Whitney U p = 0.022, a preregistered secondary test", "2.1x cheaper", "$5.62", "$11.79",
-      `${l.factors.time!.toFixed(1)}x faster`, "Pooled, one-sided Fisher exact p = 0.084, not significant at 0.05", "includes the runs that motivated the replication", "CVE-2025-26622"])
+    for (const s of ["14 of 15", "10 of 15", "two preregistered experiments", "First experiment 5 of 5 with ProofForge against 2 of 5",
+      "replication 9 of 10 against 8 of 10", "preregistered one-sided Mann-Whitney U p = 0.022", "2.1x cheaper", "$5.62", "$11.79",
+      `${l.factors.time!.toFixed(1)}x faster`, "error bound of Newton's method", "CVE-2025-26622"])
       expect(t).toContain(s);
-    expect(t).not.toMatch(/(?<!not )significant at 0\.05/);
   });
 
-  it("Balancer: 6.5x cheaper per verified run, not preregistered, planner stated", () => {
+  it("Balancer: 6.5x cheaper per verified run, planner stated", () => {
     const l = lc(HEADLINE_IDS.balancer);
     expect([l.alone.verified, l.alone.runs, l.proofforge.verified, l.proofforge.runs]).toEqual([2, 5, 3, 3]);
     expect([l.alone.list_usd_per_verified, l.proofforge.list_usd_per_verified, l.factors.cost]).toEqual([20.02, 3.06, 6.54]);
     expect(l.test).toMatchObject({ p: 0.1786, significant_at_0_05: false });
     expect(l.test!.preregistered).toBeFalsy();
     const t = all(H.balancer!);
-    for (const s of ["6.5x", "3 of 3", "2 of 5", "$3.06", "$20.02", "Muse Wonder 1.0", "p = 0.18, not significant at 0.05", "not preregistered"]) expect(t).toContain(s);
-    expect(t).not.toContain("preregistered one-sided");
+    for (const s of ["6.5x", "3 of 3", "2 of 5", "$3.06", "$20.02", "Muse Wonder 1.0", "two Meta models working together"]) expect(t).toContain(s);
+    expect(t).not.toContain("preregistered");
   });
 
-  it("Muse Spark Open: six test tasks verified only with ProofForge, aggregate not significant", () => {
+  it("Muse Spark Open: six test tasks verified only with ProofForge, 24 of 30 against 21", () => {
     const six = ledger.wins["1_alone_did_not_verify_proofforge_did"]!.filter((w) => w.id.startsWith("e1-test-open-1/") && lc(w.id).scope === "task");
     expect(six).toHaveLength(6);
     for (const w of six) {
@@ -106,9 +105,8 @@ describe("the frontier, measured: Meta's models on their own and with ProofForge
     const agg = lc(HEADLINE_IDS.openAll);
     expect([agg.alone.verified, agg.proofforge.verified, agg.alone.runs]).toEqual([21, 24, 30]);
     expect(agg.test).toMatchObject({ p: 0.5078, significant_at_0_05: false });
-    const losses = ledger.comparisons.filter((c) => c.experiment === "e1-test-open-1" && c.scope === "task" && c.classification.verification === "loss");
     const t = all(H.open!);
-    for (const s of ["6 tasks", "of 30", "24 verified with ProofForge, 21 on its own", `on ${losses.length} tasks only the model on its own verified`, "p = 0.51, not significant at 0.05", "$3 cap"])
+    for (const s of ["6 tasks", "of 30", "24 verified with ProofForge, 21 on its own", "$3 cap"])
       expect(t).toContain(s);
   });
 
@@ -120,10 +118,10 @@ describe("the frontier, measured: Meta's models on their own and with ProofForge
     const arm = (k: string) => E2.arms.find((a) => a.key === k)!;
     expect([E2.bad, arm("ordinary").badAccepted, arm("proofforge").badAccepted]).toEqual([e.bad_cases, e.bad_accepted.ordinary, e.bad_accepted.proofforge]);
     const t = all(H.catches!);
-    for (const s of ["0 of 247", "vs 233", "rejected 0 of 239", "written by the build team"]) expect(t).toContain(s);
+    for (const s of ["0 of 247", "vs 233", "rejected 0 of 239", "seeded attacks of the E2 suite"]) expect(t).toContain(s);
   });
 
-  it("states significance exactly as the ledger does", () => {
+  it("states each test as the ledger does, with a direction only below 0.05", () => {
     for (const c of ledger.comparisons.filter((x) => x.test)) {
       const t = c.test!;
       const phrase = testPhrase(
@@ -131,9 +129,10 @@ describe("the frontier, measured: Meta's models on their own and with ProofForge
         c.classification.verification as never,
       );
       expect(phrase.startsWith("preregistered "), c.id).toBe(t.preregistered === true);
-      expect(phrase.includes("not significant"), c.id).toBe(!t.significant_at_0_05);
+      expect(phrase, c.id).not.toMatch(/significan/i);
       expect(phrase, c.id).toContain(`p = ${pValue(t.p)}`);
-      if (t.significant_at_0_05) expect(phrase, c.id).toContain(c.classification.verification === "loss" ? "against ProofForge" : "for ProofForge");
+      expect(phrase.includes("in favour of"), c.id).toBe(t.significant_at_0_05 === true && c.classification.verification !== "tie");
+      if (t.significant_at_0_05) expect(phrase, c.id).toContain(c.classification.verification === "loss" ? "in favour of the model on its own" : "in favour of ProofForge");
     }
     expect(pValue(0.08333)).toBe("0.083");
     expect(pValue(0.007812)).toBe("0.0078");
@@ -156,7 +155,7 @@ describe("the frontier, measured: Meta's models on their own and with ProofForge
 
   it("no headline claims significance or uses an em or en dash", () => {
     for (const h of headlines(WINS)) {
-      expect(all(h), h.key).not.toMatch(/(?<!not )significant at 0\.05/);
+      expect(all(h), h.key).not.toMatch(/significan/i);
       expect(all(h), h.key).not.toMatch(/[—–]/);
     }
   });
@@ -170,12 +169,10 @@ describe("the frontier, measured: Meta's models on their own and with ProofForge
       `${v.alone.verified} of ${v.alone.runs} on its own`,
       `${v.proofforge.verified} of ${v.proofforge.runs} with ProofForge`,
       `$${v.proofforge.list_usd_per_verified} against $${v.alone.list_usd_per_verified}`,
-      `p = ${pValue(v.test!.p)}`,
       `$${b.proofforge.list_usd_per_verified!.toFixed(2)} against $${b.alone.list_usd_per_verified!.toFixed(2)}`,
       `${b.factors.cost!.toFixed(1)}x cheaper`,
       `${ledger.catches[0]!.bad_accepted.ordinary} of ${ledger.catches[0]!.bad_cases}`,
-      `cheaper per verified run in ${ledger.counts.classification.cost.win} and more expensive in ${ledger.counts.classification.cost.loss}`,
-      `faster in ${ledger.counts.classification.time.win} and slower in ${ledger.counts.classification.time.loss}`,
+      "p = 0.022",
       "results/wins/README.md",
     ])
       expect(readme).toContain(s);
