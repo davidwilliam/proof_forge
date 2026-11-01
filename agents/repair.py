@@ -417,6 +417,39 @@ def strip_explorations(text):
     return "\n".join(out).strip("\n")
 
 
+BUILD_EXIT = "PF_BUILD_EXIT="
+BUILD_CHARS = 4000       # characters of a build digest (as many as the plain tail held)
+
+
+def build_digest(output, exit_code, limit=BUILD_CHARS):
+    """The messages of a `lake build` output for the model and for the error checks: every error
+    with its location, in order, each cleaned as Session._clean does and shortened to
+    MESSAGE_CHARS, as many whole as fit in `limit` characters, then the locations of the ones left
+    out, then lake's last line. A failed build always contains `error:`."""
+    blocks = re.split(r"(?m)^(?=(?:error|warning|info): )", output or "")
+    errors = [Session._clean(b).strip("\n") for b in blocks if b.startswith("error: ") and "build failed" not in b[:40]]
+    errors = [e if len(e) <= MESSAGE_CHARS else e[:MESSAGE_CHARS].rstrip() + "\n  ... [message shortened]"
+              for e in errors if e]
+    lines = [l for l in (output or "").strip().splitlines() if l.strip()]
+    last = lines[-1] if lines else ""
+    trailer = last if last.startswith("error:") else ("error: build failed" if exit_code else "")
+    if not errors:
+        if exit_code:   # a failure without located errors: its own last lines
+            return Session._clean(output or "")[-(limit - 100):] + ("\n" + trailer if trailer not in (output or "") else "")
+        return Session._clean(output or "")[-limit:]
+    out, used, rest = [], len(trailer) + 1, []
+    for k, e in enumerate(errors):
+        if used + len(e) + 1 > limit - 200 and out:
+            rest = errors[k:]
+            break
+        out.append(e)
+        used += len(e) + 1
+    if rest:
+        out.append(f"... {len(rest)} more error(s) at: " + "; ".join(
+            re.sub(r"^error: ", "", r.split("\n", 1)[0])[:100] for r in rest[:10]))
+    return "\n".join(out + [trailer or "error: build failed"])
+
+
 def join_messages(msgs, limit=SNIPPET_CHARS):
     """Messages for the model, the first ones whole up to `limit` characters; the headers of the
     ones left out are listed."""
@@ -442,6 +475,7 @@ class Session:
     goal_tool = False        # --goal-tool: persistent Lean session (agents/leanserver.py)
     refute_samples = 0       # --refute: instances per new helper statement (agents/refute.py)
     variants_k = 0           # --variants (agents/variants.py)
+    full_messages = True     # compile(): every error of the build output (A0's FileSession: the tail)
     LOG_LOCK = threading.Lock()   # parallel variants log into the same events
 
     def __init__(self, task, model, start, out, budget=None, mode="repair", library=False):
@@ -618,8 +652,24 @@ class Session:
         return "\n".join(lines[:e] + body + [""] + lines[e:]), "inserted"
 
     def compile(self, tail=9000):
+        """`lake build Solution`. With `full_messages` (this agent; A0's FileSession keeps the
+        plain tail) the whole build output is read back from a file and `output_tail` is
+        build_digest() of it: every error, each shortened, instead of the last characters of
+        the output, which for large goal states hold part of one error and no location."""
         src = self._source()
-        r = judge.in_container(self.ws, f"lake build Solution 2>&1 | tail -c {tail}", timeout=600)
+        if not self.full_messages:
+            r = judge.in_container(self.ws, f"lake build Solution 2>&1 | tail -c {tail}", timeout=600)
+        else:
+            name = judge.output_name("build")
+            r = judge.in_container(self.ws, f"lake build Solution > {name} 2>&1; echo {BUILD_EXIT}$?", timeout=600)
+            path = self.ws / name
+            full = path.read_text(errors="replace") if path.exists() else None
+            path.unlink(missing_ok=True)
+            m = re.search(rf"{BUILD_EXIT}(\d+)", r["output_tail"])
+            if full is not None and m and judge.TIMEOUT_MARK not in r["output_tail"]:
+                r = {**r, "output_tail": build_digest(full, int(m.group(1)), min(tail, BUILD_CHARS))}
+            elif "error:" not in r["output_tail"]:   # no output or no status: nothing is established
+                r = {**r, "output_tail": r["output_tail"] + "\nerror: the build gave no output"}
         if "error:" not in r["output_tail"]:
             self.last_good = src
             self.__dict__.setdefault("compiled", {})[hashlib.sha256(src.encode()).hexdigest()] = (self.version, src)

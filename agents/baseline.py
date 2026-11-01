@@ -31,6 +31,8 @@ KEEP_FILES = 3   # most recent assistant files kept verbatim in the conversation
 
 
 class FileSession(repair.Session):
+    full_messages = False   # A0's compile output is the plain tail of the build output, as measured
+
     def _normalize(self, text):   # A0 gets no declaration reordering
         return text
 
