@@ -12,7 +12,9 @@ or not at all was not considered. Now:
     seen on disk only that prove more by their text than any compiled one, never the file on disk;
   * the final choice and the continuation between sessions compile those too: a version seen on
     disk only that compiles and proves more is chosen (summary.json says it was not compiled in
-    the run), one that does not compile is passed over.
+    the run), one that does not compile is passed over;
+  * in the full profile, lean_build with `file` set to the candidate builds the candidate module,
+    with its progress and the best version kept; the other profiles run `lake env lean` as before.
 
 With Lean (the pinned image, one container at a time; skipped with --quick): the final choice on
 rate-limiters-bucket-b1 takes a version seen on disk only.
@@ -127,6 +129,25 @@ def test_session_keeps_every_version_it_sees():
         assert [x for _, x in s.seen] == ["one", "two", "one"] and s.snaps == 3
         assert all(abs(t - time.time()) < 60 for t, _ in s.seen)
         assert (out / "candidate_v002.lean").read_text() == "two"
+    finally:
+        shutil.rmtree(ws)
+        shutil.rmtree(out)
+
+
+def test_full_profile_builds_the_candidate_named_as_a_file():
+    ws, out = kb.dirs()
+    try:
+        (ws / "candidate/Solution.lean").write_text(kb.candidate(TH[:2]))
+        rec = pathlib.Path(tempfile.mkdtemp(prefix="pf-seen-rec-"))
+        s = kb.Scripted(ws, "full")
+        s.record_dir = rec
+        r = s.lean_build(file="./candidate/Solution.lean")
+        assert r.startswith("$ lake build Solution\n") and "Required theorems proved in this build: 2" in r, r
+        assert (ws / pm.BEST).read_text() == kb.candidate(TH[:2]) and len(list(rec.glob("compiled-*.lean"))) == 1
+        for profile in ("lean", "proofforge"):
+            r = kb.Scripted(ws, profile).lean_build(file="candidate/Solution.lean")
+            assert r.startswith("$ lake env lean candidate/Solution.lean\n") and "Required theorems" not in r, r
+        shutil.rmtree(rec)
     finally:
         shutil.rmtree(ws)
         shutil.rmtree(out)

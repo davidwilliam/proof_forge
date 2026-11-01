@@ -36,12 +36,12 @@ Muse Code starts it from `mcp_servers` with the transport `stdio`. Three profile
                         on the same task and spec hash (agents/ledger.py): their proved
                         declarations re-checked by Lean against the current candidate, and the
                         failure notes of the goals they left open
-      lean_build        of the candidate: Lean's errors whole, other warnings on one line each and
-                        the `sorry` warnings as one list; then the required theorems the build
-                        proves (`#print axioms`) and the best compiling version so far (most
-                        required theorems proved, the latest on a tie), kept in the workspace as
-                        .proofforge/best.lean with .proofforge/best.json; a failed build names it
-                        and how to restore it
+      lean_build        of the candidate (also when `file` names it): Lean's errors whole,
+                        other warnings on one line each and the `sorry` warnings as one list;
+                        then the required theorems the build proves (`#print axioms`) and the
+                        best compiling version so far (most required theorems proved, the latest
+                        on a tie), kept in the workspace as .proofforge/best.lean with
+                        .proofforge/best.json; a failed build names it and how to restore it
   In the full profile, an `unknown tactic` error at a Mathlib tactic (`by_contra`, `set`, `ring`,
   ...) in lean_build, try_snippet or check_snippet_fast gets a line naming the Lean core
   replacement (tactic_hints).
@@ -318,7 +318,10 @@ class Server:
 
     # -- tools ---------------------------------------------------------------------------------
     def lean_build(self, file=None):
-        """Lean's own output for the candidate module, or for one .lean file of the workspace."""
+        """Lean's own output for the candidate module, or for one .lean file of the workspace. In
+        the full profile a `file` that is the candidate builds the candidate module."""
+        if file and self.profile == "full" and self.path(file) == self.ws / "candidate/Solution.lean":
+            file = None
         if file:
             p = self.path(file)
             if p.suffix != ".lean" or not p.is_file():
