@@ -10,9 +10,20 @@ with a locked specification. The only file to change is `candidate/Solution.lean
 - `app/Main.lean`, `lakefile.toml`, `lake-manifest.json`, `lean-toolchain`: locked.
 - `ISSUE.md`: the issue report.
 
-Lean is not installed in the shell. Use the `proofforge` MCP tools: `lean_build`, `try_snippet`,
-`check_candidate`, `search_library`, `show_task`, `verify_passport`. Follow the `proofforge` skill:
-read the locked spec, run `check_candidate` to see the defect (witnesses and kernel-checked
-counterexamples), fix the definition, prove every requirement, and iterate on `check_candidate`
-until it returns `"status": "VERIFIED"`. A requirement that is `sorry`, REFUTED or UNRESOLVED is
-not done. Work only inside this directory.
+Lean is not installed in the shell. Use the `proofforge` MCP tools and follow the `proofforge`
+skill, in this order:
+
+1. In a resumed run, `prior_attempts` first: the earlier attempts' proved declarations, re-checked
+   by Lean against the current file, and their failure notes.
+2. `show_task` and the locked spec; `check_candidate` to see the defect (witnesses and
+   kernel-checked counterexamples); fix the definition.
+3. Decompose each required theorem into helpers stated with `sorry`; `refute_statement` on any
+   helper that might be false before proving it.
+4. Prove: `try_tactics` first, then `goal_at` and `search_library` with `goal`, iterating with
+   `check_snippet_fast` and confirming with `try_snippet`.
+5. `lean_build` until the file compiles, then `check_candidate`; iterate on its counterexamples
+   until it returns `"status": "VERIFIED"`, and `verify_passport`.
+
+The tools never edit the candidate; write every change yourself. A tool the server does not offer
+is skipped. A requirement that is `sorry`, REFUTED or UNRESOLVED is not done. Work only inside this
+directory.

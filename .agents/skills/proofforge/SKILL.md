@@ -13,41 +13,66 @@ no merge: a fix that compiles but leaves a requirement `sorry`, REFUTED or UNRES
 
 ## Tools (MCP server `proofforge`)
 
-| Tool | Use |
-|---|---|
-| `show_task` | issue report, definitions under repair, every locked requirement (id, theorem, exact statement, plain-language text), the rules |
-| `lean_build` | Lean's own output: `lake build Solution`, or `lake env lean <file>` for a scratch file |
-| `try_snippet` | compile a lemma or proof attempt after the candidate without changing the file; errors and goals in the snippet |
-| `search_library` | ProofForgeFin theorems, tactics and simp sets (rounding, fixed point, `ceilDiv`, shares, ledgers, runs of operations) |
-| `check_candidate` | the official check (`bin/proofforge check`): VERIFIED / REFUTED / UNRESOLVED per requirement, witnesses, kernel-checked counterexamples, Lean errors, sorry status, Passport |
-| `verify_passport` | reproduce a Passport (`bin/proofforge verify`) |
-| `list_tasks` | the task catalog |
+| Tool | Use | Cost |
+|---|---|---|
+| `prior_attempts` | only in a resumed run: what earlier attempts proved (re-checked by Lean against your current file, with a file that installs it all) and how they failed on the goals they left open | once, first |
+| `show_task` | issue report, definitions under repair, every locked requirement (id, theorem, exact statement, plain-language text), the rules | instant |
+| `goal_at` | the exact proof state at each `sorry` (or error, or a given line) of one declaration | seconds |
+| `check_snippet_fast` | a lemma or proof attempt checked after the candidate on a persistent Lean session: errors, and the state at each `sorry` | seconds |
+| `try_tactics` | a fixed portfolio of tactics on one theorem proved by `sorry`; returns the proof that closes it | seconds |
+| `refute_statement` | a proposed helper statement evaluated on concrete values; FALSE comes with a kernel-checked counterexample | seconds |
+| `search_library` | ProofForgeFin theorems, tactics and simp sets; pass `goal` (a statement or a declaration name) to rank by the goal's shape | instant |
+| `try_snippet` | a full compile of a snippet after the candidate, without changing the file | a compile |
+| `lean_build` | Lean's own output: `lake build Solution`, or `lake env lean <file>` for a scratch file | a compile |
+| `check_candidate` | the official check (`bin/proofforge check`): VERIFIED / REFUTED / UNRESOLVED per requirement, witnesses, kernel-checked counterexamples, Lean errors, sorry status, Passport | minutes |
+| `verify_passport` | reproduce a Passport (`bin/proofforge verify`) | minutes |
+| `list_tasks` | the task catalog | instant |
 
-There is no local Lean installation in the shell; Lean runs through these tools.
+There is no local Lean installation in the shell; Lean runs through these tools. If a tool in
+this table is not offered by the server, skip the step that uses it.
+
+None of the tools edits `candidate/Solution.lean`; you write every change yourself. A tool that
+finds a proof (`try_tactics`) or proved declarations (`prior_attempts`) gives you their text.
 
 ## Workflow
 
-1. **Read the locked spec.** Call `show_task`, then read `spec/<Lib>/Spec.lean` (the requirement
+1. **Start from what is known.** In a resumed run, call `prior_attempts` first. Take the
+   declarations it re-checked (paste them, or copy
+   `.proofforge/prior-attempts/Solution-with-carried.lean` over the candidate when you want them
+   all), and read its failure notes: do not repeat an approach that already failed on a goal.
+2. **Read the locked spec.** Call `show_task`, then read `spec/<Lib>/Spec.lean` (the requirement
    predicates), `spec/<Lib>/Challenge.lean` (the definitions under repair and the required
    theorems, each `:= sorry`) and `spec/<Lib>/Lemmas.lean` if present. The theorem statements in
    `Challenge.lean` are what the judge compares, byte for byte after elaboration.
-2. **Find the defect.** Run `check_candidate` on the starting file. Each REFUTED requirement comes
-   with a witness (an input, the output, the violated requirement) and a counterexample: the
-   negation of the locked statement proved about the current code by the kernel. That input is
-   the bug. Fix the definition so the witness no longer violates the requirement; do not weaken
-   behavior on valid inputs (requirements that demand success still have to hold).
-3. **Prove.** State helper lemmas first and prove them with `try_snippet`; move each proved lemma
-   into the file above the theorem that uses it. Keep the required theorems at the end of the
-   file with exactly the locked names and statements. Search the library before proving a
-   general fact about rounding, division, scaling or sequences: `import ProofForgeFin` (or one
-   module) is allowed, and its declarations are checked by the same kernels.
-4. **Compile.** `lean_build` until the file compiles. `#print axioms` in a scratch file that
+3. **Check, to find the defect.** Run `check_candidate` on the starting file. Each REFUTED
+   requirement comes with a witness (an input, the output, the violated requirement) and a
+   counterexample: the negation of the locked statement proved about the current code by the
+   kernel. That input is the bug. Fix the definition so the witness no longer violates the
+   requirement; do not weaken behavior on valid inputs (requirements that demand success still
+   have to hold).
+4. **Decompose.** Put each required theorem in the file with its locked statement and `sorry`,
+   and the helper lemmas you plan to use above it, each `:= by sorry`. Compile with `lean_build`.
+   Before you spend effort on a helper, run `refute_statement` on it (by `name`, or pass a
+   `statement` before writing it), above all for inequalities with subtraction, division, rounding
+   or scaling and for claims about every input. A FALSE result gives the values that break it:
+   add the missing hypothesis or fix the bound, and sample it again.
+5. **Prove, cheapest first.** For each open theorem, helpers first:
+   - `try_tactics` on it. If a tactic closes it, put the returned proof in the file.
+   - Otherwise `goal_at` to see the exact hypotheses and goal at each `sorry`; then
+     `search_library` with `goal` set to the theorem's name for lemmas whose conclusion fits.
+     `import ProofForgeFin` (or one module) is allowed and its declarations are checked by the
+     same kernels. The library's `lib_defs` tactic rewrites definitions that match ProofForgeFin
+     definitions (and sums restated by recursion) into the library's, so its lemmas apply.
+   - Write the proof in steps with `have h : P := by sorry` and iterate with
+     `check_snippet_fast` (seconds) until it has no error; then `try_snippet` (a full compile)
+     and put it in the file. Break a step that resists into a new helper and go back to step 4.
+6. **Compile.** `lean_build` until the file compiles. `#print axioms` in a scratch file that
    imports `Solution` shows which theorems still depend on `sorryAx`.
-5. **Check.** `check_candidate`. Iterate on what it returns: a new witness means the behavior is
-   still wrong; `lean_errors` and `theorem_status` show what is not proved; `proof_check.reasons`
-   names scan violations or a Comparator rejection (a statement that differs from the lock, a
-   forbidden axiom, a kernel that rejects a declaration).
-6. **Done.** Stop only at `"status": "VERIFIED"`. Report the Passport path and `passport_sha256`;
+7. **Check and iterate.** `check_candidate`. A new witness or counterexample means the behavior
+   is still wrong: go back to step 3 with it. `lean_errors` and `theorem_status` show what is
+   not proved; `proof_check.reasons` names scan violations or a Comparator rejection (a statement
+   that differs from the lock, a forbidden axiom, a kernel that rejects a declaration).
+8. **Done.** Stop only at `"status": "VERIFIED"`. Report the Passport path and `passport_sha256`;
    `verify_passport` reproduces it.
 
 ## Rules the judge enforces

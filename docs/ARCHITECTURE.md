@@ -14,6 +14,7 @@ This describes the system as built. Each section names the code that implements 
 | Counterexample stage | `harness/counterexample.py`, `counterexamples/` | turns a refuted requirement's witness into a refutation checked by the kernel |
 | Passport | `harness/passport.py`, `bin/proofforge` | assembles statuses, hashes and provenance; reproduces a Passport |
 | Repair agents | `agents/repair.py`, `agents/baseline.py`, `agents/meta_client.py`, `agents/budget.py`, `agents/portfolio.py`, `agents/ledger.py`, `agents/leanserver.py`, `agents/refute.py`, `agents/variants.py` | Meta models fix the code and write the proofs; a tactic portfolio before model turns; attempt ledgers and resumption; a persistent Lean session for proof states; refutation of new helpers on concrete values; parallel short variants |
+| Muse Code integration | `agents/muse_code.py`, `integrations/muse/` | Muse Code runs on a task in arms with equal caps, metered at the wire; the ProofForge MCP server and skill |
 | Evaluation | `eval/e1.py`, `eval/e2.py`, `eval/freeze.py`, `harness/ordinary.py` | completion under equal budgets (E1); integrity of checking (E2) |
 | PR gate | `.github/workflows/proofforge.yml` | judges a pull request's candidate from a trusted checkout |
 | API and web | `server/app.py`, `server/controls.py`, `web/` | jobs, replays, checks, Passports, the payout and swap sidecars, the hidden challenge |
@@ -151,6 +152,39 @@ Provenance: a resumed run's `summary.json` has `resumed_from` (the prior run dir
 ### Run summary
 
 `summary.json` of A1 and A2 records `portfolio` (enabled, heartbeats, seconds, and the run's batches, goals tried, goals closed and by which entry, Lean milliseconds, stopped batches), `goal_tool`, `refute` and `variants` as above. A0 summaries and Passports are unchanged; a Passport carries only the optional `resumed_from` from a resumed run's provenance.
+
+## Muse Code integration
+
+`agents/muse_code.py` runs Meta's Muse Code (`muse exec`) headless on a task in an isolated copy of its project, with
+its model calls metered at list prices by a local proxy (`integrations/muse/meter.py`) and Lean reachable only
+through the MCP server `integrations/muse/proofforge_mcp.py`. The arms differ only in the server's profile, the skill
+and the library:
+
+- `alone`: profile `lean`, one tool, `lean_build`.
+- `proofforge`: profile `proofforge` (the toolset of `results/muse-code-1`): `show_task`, `try_snippet`,
+  `check_candidate`, `verify_passport`, `search_library`, `list_tasks`, the skill and the vendored library.
+- `proofforge-full`: profile `full`, which adds the repair agent's own proof tools through
+  `integrations/muse/session_tools.py`: `goal_at` and `check_snippet_fast` on a persistent Lean session
+  (`agents/leanserver.py`, stopped after `PF_LSP_IDLE` seconds idle, 300 by default), `try_tactics` (the portfolio of
+  `agents/portfolio.py`, returning the closing proof text), `refute_statement` (`agents/refute.py` on a proposed
+  statement or a theorem of the candidate), `search_library` with a `goal` (the goal-aware ranking of
+  `harness/fin_lib.py`) and, in a resumed run, `prior_attempts` (`agents/ledger.py`: the prior runs' proved
+  declarations re-checked by Lean against the current file with `ledger.carry`, their best compiling versions and
+  failure notes). The tools never write the agent's candidate: Lean runs in a shadow copy of the workspace outside it.
+
+The meter reserves each call's worst case before forwarding it: every input token uncached at list price plus the
+output allowance (at most 32,000). The input bound is the request's byte count with per-item and fixed overheads,
+or, for a request that extends an earlier settled request of the same conversation (every field but `input` and
+`max_output_tokens` equal, the earlier items a prefix of its items), the earlier request's reported prompt tokens
+plus the byte length of the new items with the same overheads; the smaller of the two is used. A compacted or
+rewritten history falls back to the byte bound. `integrations/muse/meter_replay.py` replays recorded call logs under
+both bounds (`results/meter-bound-1`).
+
+`--resume-from DIR[,DIR...]` starts every arm from the prior runs' final file that compiles with the most required
+theorems proved (compiled inside the wall cap); only `proofforge-full` also gets `prior_attempts`. Every run writes
+`ledger.json` from the candidate versions Lean compiled during it (the MCP server's `--record-dir` and the runner's
+checks) and failure notes from its ProofForge tool calls, and `summary.json` counts the tools Muse Code called
+(`tool_calls`).
 
 ## Evaluation
 

@@ -627,10 +627,10 @@ class Session:
             lines[i] = f"open {' '.join(active)} in " + " ".join(attrs + [l])
         return "\n".join(lines)
 
-    def _scratch(self, code, hoist=()):
-        """Compile `code` after the current candidate (declarations it redefines removed from
-        the context, modules in `hoist` added to the header). Returns (clean, messages located
-        in the code renumbered from 1, elapsed ms)."""
+    def scratch_text(self, code, hoist=()):
+        """The scratch document of a snippet: the current candidate with the declarations `code`
+        redefines removed and the modules in `hoist` added to the header, then `code`, then the
+        namespace end. Returns (document, number of lines before the snippet)."""
         src = self._source()
         # Declarations redefined by the snippet are removed from the context first.
         for m in self.DECL.finditer(code):
@@ -643,7 +643,12 @@ class Session:
             bl[last + 1:last + 1] = [f"import {m}" for m in hoist]
             body = "\n".join(bl)
         offset = body.count("\n") + 1
-        scratch = body + "\n" + code + f"\n\n{self.end}\n"
+        return body + "\n" + code + f"\n\n{self.end}\n", offset
+
+    def _scratch(self, code, hoist=()):
+        """Compile `code` after the current candidate (scratch_text). Returns (clean, messages
+        located in the code renumbered from 1, elapsed ms)."""
+        scratch, offset = self.scratch_text(code, hoist)
         if self.goal_tool:   # a snippet with an error or a sorry is answered by the persistent session
             fast = leanserver.fast_snippet(self, scratch, offset, code)
             if fast and fast[0] is False:

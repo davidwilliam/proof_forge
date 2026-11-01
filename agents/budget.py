@@ -102,10 +102,11 @@ class Budget:
         per-message and fixed overheads cover the chat template and special tokens."""
         return prompt_bytes + PER_MESSAGE_TOKENS * n_messages + FIXED_TOKENS
 
-    def call_limits(self, model, prompt_bytes, n_messages, max_tokens, timeout, min_tokens=1024):
+    def call_limits(self, model, prompt_bytes, n_messages, max_tokens, timeout, min_tokens=1024, input_tokens=None):
         """(max_tokens, timeout) for the next attempt so that its worst case, every input
         token uncached at list price plus max_tokens of output, fits the dollars left and it
-        ends by the deadline; raises BudgetExceeded when it cannot."""
+        ends by the deadline; raises BudgetExceeded when it cannot. `input_tokens`, when given,
+        is the caller's own upper bound on the input tokens (at most input_bound())."""
         self.check()
         if self.wall_cap is not None:
             timeout = min(timeout, self.remaining_wall())
@@ -114,7 +115,8 @@ class Budget:
                 raise BudgetExceeded("wall")
         if self.usd_cap is not None:
             p, _, o = _list_prices(model)
-            prompt_cost = self.input_bound(prompt_bytes, n_messages) * p / 1e6
+            bound = self.input_bound(prompt_bytes, n_messages)
+            prompt_cost = (bound if input_tokens is None else min(bound, input_tokens)) * p / 1e6
             left = self.usd_cap - self.usd_list - prompt_cost
             max_tokens = min(max_tokens, int(left / (o / 1e6)))
             if max_tokens < min_tokens:
@@ -122,12 +124,14 @@ class Budget:
                 raise BudgetExceeded("usd")
         return max_tokens, timeout
 
-    def reserve(self, model, prompt_bytes, n_messages, max_tokens):
+    def reserve(self, model, prompt_bytes, n_messages, max_tokens, input_tokens=None):
         """Charge an attempt's worst case before it is sent. settle() replaces it with the
         reported usage; an attempt that never settles (lost response, timeout) stays charged
-        at its worst case."""
+        at its worst case. `input_tokens` as in call_limits()."""
         with self.lock:
-            worst = {"prompt_tokens": self.input_bound(prompt_bytes, n_messages), "completion_tokens": max_tokens}
+            bound = self.input_bound(prompt_bytes, n_messages)
+            worst = {"prompt_tokens": bound if input_tokens is None else min(bound, input_tokens),
+                     "completion_tokens": max_tokens}
             tok = {"model": model, "worst": worst, "list": list_cost(model, worst), "actual": actual_cost(model, worst)}
             self.usd_list += tok["list"]
             self.usd_actual += tok["actual"]

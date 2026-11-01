@@ -147,16 +147,18 @@ def test_budget_cap_holds_with_concurrent_requests():
 
 def test_defaults_and_a0():
     a = repair.parser().parse_args([])
-    assert (a.goal_tool, a.refute, a.variants, a.variant_turns) == ("on", "on", 2, 2)
+    assert (a.goal_tool, a.refute, a.variants, a.variant_turns) == ("on", "on", 0, 2)   # variants off (6662568)
     s = td.session(BUCKET)
     try:
         repair.configure(s, a)
-        assert s.goal_tool and s.refute_samples == refute.SAMPLES and s.variants_k == 2
+        assert s.goal_tool and s.refute_samples == refute.SAMPLES and s.variants_k == 0
         f = repair.features_summary(s, a)
-        assert set(f) == {"portfolio", "goal_tool", "refute", "variants"} and f["variants"]["k"] == 2
+        assert set(f) == {"portfolio", "goal_tool", "refute", "variants"} and f["variants"]["k"] == 0
         assert f["portfolio"]["batches"] == 0 and f["goal_tool"]["enabled"] and f["refute"]["enabled"]
         repair.configure(s, repair.parser().parse_args(["--goal-tool", "off", "--refute", "off", "--variants", "0"]))
         assert not s.goal_tool and not s.refute_samples and s.variants_k == 0
+        repair.configure(s, repair.parser().parse_args(["--variants", "2"]))
+        assert s.variants_k == 2
     finally:
         td.close(s)
     # A0: the baseline session class has every feature off and its options have none of them.
