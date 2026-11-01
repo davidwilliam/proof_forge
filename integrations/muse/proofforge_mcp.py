@@ -135,6 +135,15 @@ def kill_containers(pid):
         subprocess.run(["docker", "kill"] + ids, capture_output=True)
 
 
+def save_best(ws, text, proved):
+    """Keep `text` as the workspace's best compiling version (full profile), with the required
+    theorems it proves; the agents/muse_code.py runner keeps a version it restores the same way."""
+    ws = pathlib.Path(ws)
+    (ws / ".proofforge").mkdir(exist_ok=True)
+    (ws / BEST).write_text(text)
+    (ws / BEST_RECORD).write_text(json.dumps({"proved": proved, "sha256": hashlib.sha256(text.encode()).hexdigest()}) + "\n")
+
+
 def scrub(text):
     """Tool output without this machine's paths: the repository and the home directory."""
     return text.replace(str(ROOT), "<proofforge>").replace(str(pathlib.Path.home()), "~")
@@ -297,12 +306,6 @@ class Server:
             return None
         return rec
 
-    def save_best(self, text, proved):
-        (self.ws / ".proofforge").mkdir(exist_ok=True)
-        (self.ws / BEST).write_text(text)
-        (self.ws / BEST_RECORD).write_text(json.dumps({"proved": proved,
-                                                       "sha256": hashlib.sha256(text.encode()).hexdigest()}) + "\n")
-
     def progress(self, text, built, out):
         """After a build of the candidate (full profile): when it compiles, the required theorems it
         proves (`#print axioms`), and the best compiling version so far (most required theorems
@@ -323,7 +326,7 @@ class Server:
             if open_:
                 line += " Not proved yet: " + ", ".join(open_) + "."
             if best is None or len(proved) >= len(best.get("proved") or []):
-                self.save_best(text, proved)
+                save_best(self.ws, text, proved)
                 return line + f" Kept as {BEST}, the best compiling version so far."
             return line + (f" The best compiling version so far, {BEST}, proves {len(best.get('proved') or [])} of {n}"
                            f"{names(best.get('proved'))}.")

@@ -64,7 +64,12 @@ Sessions
   `muse exec` ends when the agent ends its turn. While the caps allow and the judge has not
   accepted the candidate, the runner continues the same session (`--session-id`) with a neutral
   message holding what ordinary checking gives (the Lean errors, or the theorems that still use
-  `sorry`, or the judge's rejection), the same for both arms, as in A0 (agents/baseline.py).
+  `sorry`, or the judge's rejection), the same in `alone` and `proofforge`, as in A0
+  (agents/baseline.py). In `proofforge-full` the message also gives the run's progress
+  (progress_prompt): Lean's first errors rather than the end of its output, the required theorems
+  the file proves, whether the session changed the file, and the best compiling version of the run
+  when it proves more; a file that does not compile is saved as `.proofforge/unfinished-NN.lean`
+  and the best compiling version, when there is one, takes its place.
 
 Result
   The candidate on disk when the run stops is the run's result (`final.lean`), except in
@@ -215,17 +220,22 @@ def unavailable(r):
     return judge.TIMEOUT_MARK in out or r.get("exit_code") in (125, 126, 127) or bool(INFRA.search(out))
 
 
-def ordinary_feedback(server, task, ws):
+def ordinary_feedback(server, task, ws, record=None):
     """(accepted, message): compile; then sorry status; then the judge, as agents/baseline.audit.
     The message is None when Lean or the judge gave no verdict (a time limit or a Docker failure),
-    so that an infrastructure failure is never reported to the agent as a rejection."""
+    so that an infrastructure failure is never reported to the agent as a rejection. `record`, a
+    dict, receives Lean's whole output when the file does not compile (`lean`) and the theorem
+    status when it does (`status`)."""
+    record = {} if record is None else record
     r = server.lean("lake build Solution 2>&1 | tail -c 60000")
     if unavailable(r):
         return False, None
     text = proofforge_mcp.clean_lean(r["output_tail"])
     if "error:" in text:
+        record["lean"] = text
         return False, "candidate/Solution.lean does not compile. Lean output:\n" + text[-6000:]
     status = server.theorem_status(task)
+    record["status"] = status
     scan = judge.impl_scan([ws / "candidate/Solution.lean"], task)
     if all(v == "MISSING" for v in status.values()) and not any("required theorem missing" in p for p in scan["problems"]):
         return False, None      # the axiom audit produced no output
@@ -248,6 +258,78 @@ def ordinary_feedback(server, task, ws):
         return False, None
     return False, ("The file compiles with no sorry, but the judge rejected it: " + "; ".join(reasons) + "\n"
                    + "\n".join(errors)[-3000:])
+
+
+CONTINUE = "Your session ended, but the task is not finished. "
+CONTINUE_END = "\nContinue from the current candidate/Solution.lean until the file compiles and every required theorem is proved."
+
+
+def first_errors(lean, limit=3, lines=30, chars=4000):
+    """Lean's first `limit` errors, each cut to `lines` lines: the message with its position, which
+    the last characters of a long output (the end of one goal state) can leave out."""
+    blocks = [b for sev, b in proofforge_mcp.lean_blocks(lean)
+              if sev == "error" and not re.match(r"^error: build failed", b[0])]
+    if not blocks:
+        return lean[-chars:]
+    text = "\n".join("\n".join(b[:lines] + (["  [...]"] if len(b) > lines else [])) for b in blocks[:limit])
+    if len(blocks) > limit:
+        text += f"\n({len(blocks) - limit} more errors)"
+    return text[:chars]
+
+
+def proved_names(task, status):
+    return [t for t in task.theorems if status.get(t) == "PROVED"]
+
+
+def describe(task, status):
+    proved = proved_names(task, status)
+    open_ = [f"{t} ({(status.get(t) or 'missing').lower()})" for t in task.theorems if status.get(t) != "PROVED"]
+    return (f"it proves {len(proved)} of {len(task.theorems)} required theorems" + (": " + ", ".join(proved) if proved else "")
+            + ("; not proved yet: " + ", ".join(open_) if open_ else ""))
+
+
+def progress_prompt(server, task, ws, n, feedback, record, start_text, versions):
+    """The continuation message of a KEEP_BEST arm after session part n: what ordinary checking
+    gives (`feedback`, `record` from ordinary_feedback), with Lean's first errors in place of the
+    end of its output, and the progress of the run: whether the session changed the file, the
+    required theorems the file proves, and the best compiling version of the run (best_version)
+    when it proves more. When the file does not compile and a compiling version exists, the file is
+    saved as .proofforge/unfinished-NN.lean and that version takes its place. The best version is
+    also kept as the MCP server's .proofforge/best.lean. A judge's rejection is passed on as is."""
+    path = ws / "candidate/Solution.lean"
+    text = path.read_text()
+    msg = CONTINUE + ("The session made no change to candidate/Solution.lean. " if text == start_text else "")
+    broken, status = "lean" in record, record.get("status") or {}
+    proved = len(proved_names(task, status))
+    if not broken and (not status or proved == len(task.theorems)):
+        return msg + feedback + CONTINUE_END
+    pick, top = None, rank_versions(task, versions)[:1]
+    if top and (broken or text_proved(task, versions[top[0]]) > proved):
+        try:
+            pick = best_version(server, task, ws, versions)
+        except RuntimeError:
+            pick = None
+    if broken:
+        errors = first_errors(record["lean"])
+        if pick is None:
+            return msg + "candidate/Solution.lean does not compile. Lean's first errors:\n" + errors + CONTINUE_END
+        saved = f".proofforge/unfinished-{n:02d}.lean"
+        (ws / ".proofforge").mkdir(exist_ok=True)
+        (ws / saved).write_text(text)
+        path.write_text(pick[0])
+        proofforge_mcp.save_best(ws, pick[0], proved_names(task, pick[1]))
+        return (msg + "candidate/Solution.lean did not compile. Lean's first errors:\n" + errors + "\n"
+                f"That file is saved as {saved}, and candidate/Solution.lean is now the best compiling version of this "
+                f"run; {describe(task, pick[1])}. Continue from it, or copy the saved file back and fix its errors."
+                + CONTINUE_END)
+    msg += f"candidate/Solution.lean compiles; {describe(task, status)}."
+    if "Rule violations:" in feedback:
+        msg += " Rule violations:" + feedback.split("Rule violations:", 1)[1]
+    if pick and len(proved_names(task, pick[1])) > proved:
+        proofforge_mcp.save_best(ws, pick[0], proved_names(task, pick[1]))
+        msg += (f"\nAn earlier compiling version of this run, saved as {proofforge_mcp.BEST}, proves more; "
+                f"{describe(task, pick[1])}.")
+    return msg + CONTINUE_END
 
 
 # ------------------------------------------------------------------------------------------------
@@ -477,13 +559,15 @@ def compiled_sources(record_dir, extra=()):
     return list(dict.fromkeys(text for _, text in sorted(srcs, key=lambda x: x[0])))
 
 
+def text_proved(task, text):
+    """The required theorems a compiling version proves in its text: no `sorry` in the theorem or in
+    a candidate declaration it uses (ledger.proved_in)."""
+    return sum(1 for n in ledger.proved_in(text, task.ns) if n in task.theorems)
+
+
 def rank_versions(task, versions):
-    """Indices of `versions` (oldest first), best first: by the required theorems each proves in its
-    text (no `sorry` in the theorem or in a candidate declaration it uses, ledger.proved_in), the
-    latest first on a tie."""
-    def proved(text):
-        return sum(1 for n in ledger.proved_in(text, task.ns) if n in task.theorems)
-    return sorted(range(len(versions)), key=lambda i: (proved(versions[i]), i), reverse=True)
+    """Indices of `versions` (oldest first), best first: by text_proved, the latest first on a tie."""
+    return sorted(range(len(versions)), key=lambda i: (text_proved(task, versions[i]), i), reverse=True)
 
 
 def best_version(server, task, ws, versions, limit=BEST_CANDIDATES):
@@ -629,6 +713,7 @@ def main():
     parts, stop, accepted, idle = [], None, False, 0
     for n in range(1, a.max_sessions + 1):
         calls_before = meter.calls
+        start_text = (ws / "candidate/Solution.lean").read_text()
         info = sess.run(prompt, n)
         info["model_calls"] = meter.calls - calls_before
         info["elapsed_s"] = round(meter.budget.elapsed(), 1)
@@ -649,10 +734,12 @@ def main():
             stop = "no_model_calls"
             break
         checked = (ws / "candidate/Solution.lean").read_text()
-        ok, feedback = ordinary_feedback(server, task, ws)
+        record = {}
+        ok, feedback = ordinary_feedback(server, task, ws, record)
         if not ok and feedback is None and meter.budget.elapsed() < a.budget_wall - 120:
             time.sleep(60)              # no verdict: try once more before deciding anything
-            ok, feedback = ordinary_feedback(server, task, ws)
+            record = {}
+            ok, feedback = ordinary_feedback(server, task, ws, record)
         if ok or (feedback and not feedback.startswith("candidate/Solution.lean does not compile")):
             runner_compiled.append((time.time(), checked))
         feedback_log.append(feedback)
@@ -668,8 +755,11 @@ def main():
         if feedback is None:
             stop = "judge_unavailable"    # Lean or the judge gave no verdict twice; nothing is sent to the agent
             break
-        prompt = ("Your session ended, but the task is not finished. " + (feedback or "") +
-                  "\nContinue from the current candidate/Solution.lean until the file compiles and every required theorem is proved.")
+        if a.arm in KEEP_BEST:
+            prompt = progress_prompt(server, task, ws, n, feedback, record, start_text,
+                                     compiled_sources(record_dir, runner_compiled))
+        else:
+            prompt = CONTINUE + (feedback or "") + CONTINUE_END
     else:
         stop = "max_sessions"
     meter_summary = meter.summary()

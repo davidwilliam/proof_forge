@@ -11,7 +11,12 @@ neither it nor a candidate declaration it uses has `sorry` or `admit`).
     proves, keeps the best compiling version as .proofforge/best.lean (across server restarts, and
     not when the file was changed by hand), says how to restore it after a failed build, and gives
     the `sorry` warnings as one line and other warnings on their first line; the `lean` and
-    `proofforge` profiles return Lean's output as before.
+    `proofforge` profiles return Lean's output as before;
+  * the continuation message of a proofforge-full run gives Lean's first errors (with their
+    position, which the end of a long output leaves out), the required theorems the file proves,
+    a session that did not change the file, and an earlier compiling version that proves more; a
+    file that does not compile is saved under .proofforge/ and the best compiling version takes its
+    place (and becomes the server's best.lean); the other arms get the message they always got.
 
 Run: python3 tests/test_muse_keep_best.py
 """
@@ -40,8 +45,8 @@ def candidate(proved=(), broken=False, admit=(), extra=""):
 
 class ScriptedLean:
     """The two Lean runs muse_code.compiles makes, answered from the workspace candidate."""
-    def __init__(self, ws, verdict=True):
-        self.ws, self.verdict, self.builds = ws, verdict, 0
+    def __init__(self, ws, verdict=True, error="error: candidate/Solution.lean:20:0: unexpected identifier"):
+        self.ws, self.verdict, self.error, self.builds = ws, verdict, error, 0
 
     def text(self):
         return (self.ws / "candidate/Solution.lean").read_text()
@@ -51,7 +56,7 @@ class ScriptedLean:
         if not self.verdict:
             return {"exit_code": 125, "output_tail": "docker: Cannot connect to the Docker daemon"}
         if "BROKEN" in self.text():
-            return {"exit_code": 1, "output_tail": "error: candidate/Solution.lean:20:0: unexpected identifier"}
+            return {"exit_code": 1, "output_tail": self.error}
         return {"exit_code": 0, "output_tail": "Build completed successfully"}
 
     def task(self):
@@ -280,6 +285,97 @@ def test_full_build_without_an_axiom_verdict_says_nothing_of_progress():
         s.theorem_status = lambda t: {x: "MISSING" for x in t.theorems}
         r = s.lean_build()
         assert "exit code 0" in r and "Required theorems" not in r and not (ws / pm.BEST).exists(), r
+    finally:
+        shutil.rmtree(ws)
+        shutil.rmtree(out)
+
+
+# Continuation messages
+
+GOAL_DUMP = "error: candidate/Solution.lean:{a}:6: omega could not prove the goal:\n" + "\n".join(
+    f" v{i} := ↑(ProofForgeFin.Sqrt.newton a (2 ^ k) - a.sqrt) * {i}" for i in range(400)) + "\nerror: build failed"
+
+
+def continue_after(ws, text, versions, start_text=None, error=None, n=2):
+    """Session part n ends with `text` on disk: (message, ordinary_feedback's message)."""
+    (ws / "candidate/Solution.lean").write_text(text)
+    lean = ScriptedLean(ws, error=error or ScriptedLean(ws).error)
+    record = {}
+    ok, feedback = muse_code.ordinary_feedback(lean, TASK, ws, record)
+    assert not ok and feedback
+    msg = muse_code.progress_prompt(lean, TASK, ws, n, feedback, record,
+                                    text if start_text is None else start_text, versions)
+    return msg, feedback
+
+
+def test_other_arms_continue_with_the_message_they_always_got():
+    old = ("Your session ended, but the task is not finished. " + "FEEDBACK" +
+           "\nContinue from the current candidate/Solution.lean until the file compiles and every required theorem is proved.")
+    assert muse_code.CONTINUE + "FEEDBACK" + muse_code.CONTINUE_END == old
+
+
+def test_a_broken_file_at_the_end_of_a_session_gives_way_to_the_best_compiling_version():
+    th, n = TASK.theorems, len(TASK.theorems)
+    ws, out = dirs()
+    try:
+        v1, v2 = candidate(th[:2]), candidate(th[:1], extra="-- later")
+        broken = candidate(th[:3], broken=True)
+        a = broken.splitlines().index("BROKEN") + 1
+        msg, feedback = continue_after(ws, broken, [v1, v2], start_text=v2, error=GOAL_DUMP.format(a=a), n=3)
+        assert "omega could not prove the goal" not in feedback[-6000:]     # the end of the output lost the error
+        assert f"error: candidate/Solution.lean:{a}:6: omega could not prove the goal:" in msg, msg
+        assert "  [...]" in msg and len(msg) < 6000, len(msg)
+        assert "That file is saved as .proofforge/unfinished-03.lean" in msg and "made no change" not in msg, msg
+        assert f"it proves 2 of {n} required theorems: {th[0]}, {th[1]}; not proved yet: {th[2]} (sorry)" in msg, msg
+        assert msg.startswith(muse_code.CONTINUE) and msg.endswith(muse_code.CONTINUE_END)
+        assert (ws / "candidate/Solution.lean").read_text() == v1
+        assert (ws / ".proofforge/unfinished-03.lean").read_text() == broken
+        s = pm.Server(ws, TASK.id, "full")                               # the server takes it as its best version
+        assert s.best_record()["proved"] == list(th[:2]) and (ws / pm.BEST).read_text() == v1
+        # Nothing compiled yet: the file stays, with Lean's first errors.
+        ws2, out2 = dirs()
+        try:
+            msg, _ = continue_after(ws2, broken, [])
+            assert "does not compile. Lean's first errors:\nerror: candidate/Solution.lean:20:0" in msg, msg
+            assert (ws2 / "candidate/Solution.lean").read_text() == broken and not (ws2 / ".proofforge").exists()
+        finally:
+            shutil.rmtree(ws2)
+            shutil.rmtree(out2)
+    finally:
+        shutil.rmtree(ws)
+        shutil.rmtree(out)
+
+
+def test_a_compiling_file_hears_what_it_proves_and_of_a_better_earlier_version():
+    th, n = TASK.theorems, len(TASK.theorems)
+    ws, out = dirs()
+    try:
+        current = candidate(th[:1])
+        msg, _ = continue_after(ws, current, [candidate(th[:3]), current])
+        assert "The session made no change to candidate/Solution.lean." in msg, msg
+        assert f"candidate/Solution.lean compiles; it proves 1 of {n} required theorems: {th[0]}; not proved yet: " in msg, msg
+        assert f"An earlier compiling version of this run, saved as {pm.BEST}, proves more; it proves 3 of {n}" in msg, msg
+        assert (ws / "candidate/Solution.lean").read_text() == current               # a compiling file is never replaced
+        assert (ws / pm.BEST).read_text() == candidate(th[:3])
+        (ws / pm.BEST).unlink()
+        msg, _ = continue_after(ws, current, [candidate(th[:1], extra="-- older"), current], start_text="changed")
+        assert "made no change" not in msg and "earlier compiling version" not in msg and not (ws / pm.BEST).exists(), msg
+    finally:
+        shutil.rmtree(ws)
+        shutil.rmtree(out)
+
+
+def test_a_judge_rejection_is_passed_on_as_is():
+    from unittest.mock import patch
+    ws, out = dirs()
+    try:
+        rejected = {"accepted": False, "checks": {"tree": {"problems": []}, "impl_scan": {"problems": []},
+                                                  "comparator": {"exit_code": 1, "output_tail": "error: theorem statement differs"}}}
+        with patch.object(muse_code.judge, "judge", return_value=rejected), \
+                patch.object(muse_code.judge, "impl_scan", return_value={"problems": []}):
+            msg, feedback = continue_after(ws, candidate(TASK.theorems), [])
+        assert "judge rejected it" in feedback and msg == muse_code.CONTINUE + \
+            "The session made no change to candidate/Solution.lean. " + feedback + muse_code.CONTINUE_END, msg
     finally:
         shutil.rmtree(ws)
         shutil.rmtree(out)
