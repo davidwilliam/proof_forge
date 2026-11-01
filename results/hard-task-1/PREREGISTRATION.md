@@ -189,3 +189,38 @@ witnesses, README or results.
   task that shows no gap and a `proofforge` arm that verifies nothing.
 - The README states the library work done for this experiment, so that a gap can be read as the
   contribution of ProofForge including that library work.
+
+## Addendum 1 (2026-10-31): tasks and library frozen, before any measured run
+
+Both candidates chosen above were built; no other candidate was built. No model was called.
+
+| | `rw-oz-sqrt` | `rw-vyper-sqrt` |
+|---|---|---|
+| Commit | `fe595f7` | `66bc340` |
+| Locked manifest sha256 | `62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616` | `ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1` |
+| Requirements | REQ-SQRT-NOT-ABOVE, REQ-SQRT-NOT-BELOW, REQ-SQRT-UP-COVERS, REQ-SQRT-UP-TIGHT, REQ-MINT-BACKED, REQ-MINT-FULL, REQ-MINT-LIVE, REQ-NEWTON-BUDGET | REQ-SQRT-NOT-ABOVE, REQ-SQRT-NOT-BELOW, REQ-SQRT-TOTAL, REQ-SQRT-NEG-REVERTS, REQ-DEPLOYED-LOOP |
+| Start candidate | six Newton steps (plausible variant, not a release) | the v0.4.0 code (CVE-2025-26622) |
+
+Differences from the plan above:
+
+- The deposit requirements of `rw-oz-sqrt` port Aerodrome's `Pool.mint` only. Velodrome V2 makes the
+  same `Math.sqrt` call (line 305) but reverts when `liquidity < MINIMUM_LIQUIDITY` (line 314)
+  rather than when `liquidity == 0`; that variant is not ported.
+- The requirements of `rw-vyper-sqrt` are stated for raw values in the `decimal` range
+  (`IsDecimal x`).
+- The algorithm-shape requirements (REQ-NEWTON-BUDGET, REQ-DEPLOYED-LOOP) are extensional: the
+  routine must equal the deployed algorithm, with at most seven steps or with some choice from the
+  last two iterates, on every input.
+- Each task has protected lemmas readable by both arms (`spec/*/Lemmas.lean`): `log2` as `Nat.log2`,
+  a Newton line as a step on values, the deposit's success conditions, and for Vyper the decimal
+  operations on non-negative values, one loop iteration and the seed.
+
+Library work done for this experiment, as planned: `ProofForgeFin.Sqrt` (commit `b3a851a`), library
+source tree `5190779eefac61f328a4d5a7a2dfa91d42ea6d191fa707eedc5b71b65798a44a`. Besides the facts
+listed above it has small general facts on squares and the root (`four_mul_le_sq`,
+`mul_self_le_mul_self`, `lt_of_mul_self_lt_mul_self`, `eq_sqrt_iff`, `sqrt_le_sqrt`,
+`sqrt_mul_self`, `sqrt_pos`). Its 71 constants pass the six kernels and `leanchecker`
+(`kernels-sqrt.json`); `harness/fin_lib.py scan` passes. No other library change was made.
+
+The commit of the `proofforge` arm's code is not part of this branch; it is recorded in an
+Addendum 2 before the first measured run, and no run starts before that.
