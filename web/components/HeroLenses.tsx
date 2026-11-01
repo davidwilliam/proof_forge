@@ -583,6 +583,14 @@ export function HeroLenses(props: HeroLensesProps) {
                 ))}
               </g>
               </g>
+              <g className="hl-only-1" aria-hidden="true">
+                <path
+                  className="pg-hexring"
+                  d={kernels.map((k, i) => `${i ? "L" : "M"}${k.x} ${k.y}`).join("") + "Z"}
+                  pathLength={1}
+                  style={{ "--at": kernels.length ? kernels[kernels.length - 1]!.at : 0 } as CSSProperties}
+                />
+              </g>
               <g className="pg-kernels" aria-hidden="true">
                 {kernels.map((k, i) => {
                   const right = k.x > c + 1;
@@ -598,7 +606,7 @@ export function HeroLenses(props: HeroLensesProps) {
                       transform={`translate(${k.x} ${k.y})`}
                       style={{ "--at": k.at } as CSSProperties}
                     >
-                      <rect className="pg-kernel-mark" x={-7} y={-7} width={14} height={14} rx={2} />
+                      <rect className="pg-kernel-mark" x={-7} y={-7} width={14} height={14} rx={1.4} />
                       <g className="hl-only-1">
                         <text
                           className="pg-kernel-label"
