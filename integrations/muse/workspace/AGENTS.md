@@ -29,6 +29,10 @@ skill, in this order:
 6. `lean_build` until the file compiles, then `check_candidate`; iterate on its counterexamples
    until it returns `"status": "VERIFIED"`, and `verify_passport`.
 
+Each response, reasoning included, stops at 32,000 output tokens; a response cut there is lost, and
+the session ends after a few in a row. Take one step per response, a tool call or an edit, and
+write a long proof as `have` steps ending in `sorry`, checked one at a time.
+
 The tools never edit the candidate; write every change yourself. A tool the server does not offer
 is skipped. A requirement that is `sorry`, REFUTED or UNRESOLVED is not done. Work only inside this
 directory.

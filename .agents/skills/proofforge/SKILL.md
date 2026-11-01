@@ -34,6 +34,12 @@ this table is not offered by the server, skip the step that uses it.
 None of the tools edits `candidate/Solution.lean`; you write every change yourself. A tool that
 finds a proof (`try_tactics`) or proved declarations (`prior_attempts`) gives you their text.
 
+A response, its reasoning included, stops at an output limit of 32,000 tokens. A response cut
+there is lost with everything it worked out, and a session can end after a few of them in a row.
+Work out the next step only and act on it in the same response, with a tool call or an edit; write
+a long proof as `have` steps ending in `sorry` and check them one at a time, rather than working
+out the whole proof before the first call.
+
 ## Workflow
 
 1. **Start from what is known.** In a resumed run, call `prior_attempts` first. Take the

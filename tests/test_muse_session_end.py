@@ -15,6 +15,8 @@ same list of eight `sorry` theorems.
     step per response; a compiling file gets its first unproved required theorem as the next
     target, with its statement, and with the proof state from goal_at when its proof is a tactic
     block with `sorry`; the other arms' message is unchanged.
+  * the skill and AGENTS.md of the ProofForge workspace ask for one step per response, since a
+    response cut at the output limit is lost; the alone workspace has neither.
 
 With Lean (the pinned image, one container at a time; skipped with --quick): goal_state on a
 required theorem of rate-limiters-bucket-b1 whose proof is a tactic block with `sorry`.
@@ -216,6 +218,23 @@ def test_a_broken_file_and_the_other_arms_get_no_target():
     finally:
         shutil.rmtree(ws)
         shutil.rmtree(out)
+
+
+# Guidance
+
+def test_workspace_guidance_asks_for_one_step_per_response():
+    alone = muse_code.make_workspace(TASK, "alone")
+    full = muse_code.make_workspace(TASK, "proofforge-full")
+    try:
+        skill = (full / ".agents/skills/proofforge/SKILL.md").read_text()
+        agents = (full / "AGENTS.md").read_text()
+        for text in (skill, agents):
+            assert "reasoning included" in text and "32,000" in text and "`have` steps ending in `sorry`" in text
+        assert "one step per response" in agents.lower() and "Work out the next step only" in skill
+        assert not (alone / ".agents").exists() and not (alone / "AGENTS.md").exists()
+    finally:
+        shutil.rmtree(alone)
+        shutil.rmtree(full)
 
 
 # With Lean
