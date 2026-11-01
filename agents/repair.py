@@ -363,15 +363,16 @@ SNIPPET_CHARS = 6000     # characters of all messages shown for a snippet
 UNSHOWN = ("linter", "Hint:", "deprecated")   # header words of warnings Session._clean drops
 
 
-def scratch_verdict(output, offset, exit_code, linter_ok=False):
+def scratch_verdict(output, offset, exit_code):
     """(clean, messages) of a snippet compiled at line `offset` + 1 of Scratch.lean, from Lean's
     complete output and the exit status of `lean`. Messages located in the snippet are renumbered
     from 1 (`snippet:L:C`) and cleaned as Session._clean does, each shortened to MESSAGE_CHARS so
     that every header stays visible; a warning whose header Session._clean drops (a deprecation)
-    is left out whole. The snippet is clean when it has no error and no shown warning; with
-    `linter_ok` (the top-down loop) a warning raised by a linter (it names a `linter.` option) does
-    not count. A missing exit status, or a failed `lean` that reported no error at all, is not
-    clean."""
+    is left out whole. The snippet is clean when it has no error and every warning in it is raised
+    by a linter (it names a `linter.` option: an unused variable or simp argument, a style check)
+    or is a deprecation: neither makes a proof wrong, and the judge decides on errors. A `sorry`
+    warning is not clean. A missing exit status, or a failed `lean` that reported no error at all,
+    is not clean either."""
     msgs, blocking, any_error = [], False, False
     for b in re.split(r"(?m)^(?=Scratch\.lean:\d+:\d+: (?:error|warning))", output or ""):
         m = SCRATCH_HEADER.match(b)
@@ -384,7 +385,7 @@ def scratch_verdict(output, offset, exit_code, linter_ok=False):
         header = b.split("\n", 1)[0]
         if sev == "warning" and any(u in header for u in UNSHOWN):
             continue
-        if sev == "error" or not (linter_ok and re.search(r"\blinter\.\w+", b)):
+        if sev == "error" or not re.search(r"\blinter\.\w+", b):
             blocking = True
         text = Session._clean(re.sub(r"^Scratch\.lean:\d+", f"snippet:{ln}", b)).strip("\n")
         if len(text) > MESSAGE_CHARS:
@@ -722,7 +723,7 @@ class Session:
         output = path.read_text(errors="replace") if path.exists() else ""
         path.unlink(missing_ok=True)
         m = re.search(rf"{SCRATCH_EXIT}(\d+)", r["output_tail"])
-        clean, msgs = scratch_verdict(output, offset, int(m.group(1)) if m else None, linter_ok=self.topdown)
+        clean, msgs = scratch_verdict(output, offset, int(m.group(1)) if m else None)
         if judge.TIMEOUT_MARK in r["output_tail"]:   # stopped at the time limit: nothing is established
             clean = False
             msgs = msgs or [judge.TIMEOUT_MARK]

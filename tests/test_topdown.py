@@ -390,12 +390,12 @@ def test_dependency_probe_separates_direct_and_helper_sorry():
         close(s)
 
 
-def test_linter_warnings_do_not_block_a_snippet_in_topdown():
+def test_linter_warnings_do_not_block_a_snippet():
     s = session(BUCKET)
     try:
         lint = "theorem lint_a (n : Nat) (h : n = n) : n + 0 = n := by simp"
         clean, msgs, _ = s._scratch(lint)
-        assert not clean and "not explicitly referenced" in "\n".join(msgs)   # other loops: unchanged
+        assert clean and "not explicitly referenced" in "\n".join(msgs)   # every loop, the warning shown
         s.topdown = True
         assert s._scratch(lint)[0]
         assert not s._scratch("theorem lint_b (n : Nat) : n + 0 = n := by sorry")[0]
@@ -677,7 +677,7 @@ def test_compound_a1_library_reduction_reaches_verified():
 
 
 LEAN = {"test_dependency_probe_separates_direct_and_helper_sorry",
-        "test_linter_warnings_do_not_block_a_snippet_in_topdown",
+        "test_linter_warnings_do_not_block_a_snippet",
         "test_bucket_a2_skeleton_refutation_and_restructure_reach_verified",
         "test_compound_a1_library_reduction_reaches_verified"}
 

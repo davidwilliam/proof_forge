@@ -326,9 +326,9 @@ UNSHOWN = ("linter", "Hint:", "deprecated")
 def _messages(diags, text, first_line, label, last_line=None):
     """Diagnostics located in lines [first_line, last_line] of the document, as compiler-style
     lines `label:L:C: error: ...` with L counted from 1 at first_line. Returns (lines, errors,
-    warnings the compile path shows, warnings that name no linter option), following
-    Session._scratch: a snippet is clean when it has no error and no shown warning, and in the
-    top-down loop also when every warning names a linter option."""
+    warnings the compile path shows, shown warnings that name no linter option), following
+    repair.scratch_verdict: a snippet is clean when it has no error and every shown warning names
+    a linter option (`sorry` does not)."""
     lines = text.split("\n")
     out, errors, warnings, linters = [], 0, 0, 0
     for d in sorted(diags, key=lambda d: (d["range"]["start"]["line"], d["range"]["start"]["character"])):
@@ -348,8 +348,8 @@ def _messages(diags, text, first_line, label, last_line=None):
             continue
         if not any(u in msg.split("\n", 1)[0] for u in UNSHOWN):
             warnings += 1
-        if not re.search(r"\blinter\.\w+", msg):
-            linters += 1
+            if not re.search(r"\blinter\.\w+", msg):
+                linters += 1
     return out, errors, warnings, linters
 
 
@@ -373,10 +373,10 @@ def fast_snippet(s, scratch, offset, code):
         _count(s, "fast_unavailable")
         s.log(kind="lean_server", event="unavailable", error=str(e)[:300])
         return None
-    msgs, errors, warnings, topdown_warnings = _messages(diags, scratch, offset, "snippet")
+    msgs, errors, _, blocking_warnings = _messages(diags, scratch, offset, "snippet")
     ms = int((time.monotonic() - t0) * 1000)
-    # the top-down loop accepts a snippet that either rule finds clean, as Session._scratch does
-    blocking = errors or (warnings and topdown_warnings if getattr(s, "topdown", False) else warnings)
+    # linter warnings alone do not block, as in repair.scratch_verdict
+    blocking = errors or blocking_warnings
     if not blocking:
         _count(s, "fast_clean")
         return "clean", ms

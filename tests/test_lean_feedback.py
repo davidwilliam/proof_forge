@@ -72,10 +72,10 @@ def test_positions_and_messages():
               "message": "`Nat.foo` has been deprecated: use `Nat.bar` instead"},
              {"range": {"start": {"line": 0, "character": 0}}, "severity": 1, "message": "error before the snippet"}]
     doc = "a\nb\nc\n  x\ny\n"
-    msgs, errors, warnings, topdown_warnings = leanserver._messages(diags, doc, 3, "snippet")
-    # As Session._scratch decides: outside the top-down loop the `sorry` and the linter warning count
-    # (the linter's first line is shown) and the deprecation does not; in it, all but the linter's.
-    assert (errors, warnings, topdown_warnings) == (1, 2, 2), (errors, warnings, topdown_warnings)
+    msgs, errors, warnings, blocking = leanserver._messages(diags, doc, 3, "snippet")
+    # As repair.scratch_verdict decides, in every loop: the `sorry` warning blocks; the linter warning
+    # is shown (its first line) but does not block; the deprecation is neither shown nor blocking.
+    assert (errors, warnings, blocking) == (1, 2, 1), (errors, warnings, blocking)
     assert msgs[0].startswith("snippet:1:2: error: unsolved goals") and msgs[1].startswith("snippet:2:0: warning")
     assert len(msgs) == 3 and not any("deprecated" in m for m in msgs)   # left out whole
     assert leanserver._render([]) .startswith("no goals") and "goal 2 of 2" in leanserver._render(["a", "b"])
