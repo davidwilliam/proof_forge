@@ -48,7 +48,10 @@ Isolation
 
 Cost and caps (integrations/muse/meter.py)
   Muse Code's model calls go through a local metering proxy (`--base-url`). Each call is reserved
-  at its worst case and settled to the usage reported in its `response.completed` event, priced
+  at its worst case (its input tokens bounded by the request's bytes, or, for a request that
+  extends an earlier one of the same conversation, by that request's reported prompt tokens plus
+  the bytes of the new items; the same rule for every arm) and settled to the usage reported in
+  its `response.completed` event, priced
   with agents/budget.py at standard list prices; the Contributor-tier charge is tracked
   separately. Each call's output allowance is at most 32,000 tokens, as for A0, A1 and A2. A call
   that cannot fit the dollars left is refused and the run stops once the calls in flight have

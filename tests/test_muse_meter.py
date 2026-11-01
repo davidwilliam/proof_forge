@@ -1,6 +1,11 @@
 """The metering proxy for Muse Code (integrations/muse/meter.py) against a local stand-in for the
 Meta Model API. No model calls.
 
+The input bound: a request that extends an earlier settled request (same context, its items as a
+prefix) is bounded by that request's reported prompt_tokens plus the bytes of the new items and
+the overheads; a compacted or rewritten history, other instructions, or a request with no settled
+predecessor gets the byte bound; the smaller bound is used.
+
 Run: python3 tests/test_muse_meter.py
 """
 import http.client, http.server, json, pathlib, socketserver, sys, tempfile, threading
@@ -199,6 +204,103 @@ def test_wall_cap_refuses():
     port = m.start()
     status, _ = post(port, request())
     assert status == 400 and m.stopped == "wall"
+    m.stop()
+
+
+# The input bound
+
+ITEM = lambda i, n=200: {"type": "message", "role": "user", "content": f"m{i} " + "x" * n}
+CTX = {"model": MODEL, "instructions": "You are Muse Code, an agentic coding CLI", "tools": [{"type": "function", "name": "t"}],
+       "reasoning": {"effort": "medium"}, "stream": True}
+
+
+def body(items, **kw):
+    return {**CTX, **kw, "input": items, "max_output_tokens": 128000}
+
+
+def admit(m, b):
+    info = {}
+    raw = json.dumps(b).encode()
+    tok, granted = m.admit(b, len(raw), info)
+    return tok, info, len(raw)
+
+
+def settle(m, tok, prompt_tokens):
+    m.settle(tok, {"prompt_tokens": prompt_tokens, "prompt_tokens_details": {"cached_tokens": 0}, "completion_tokens": 10},
+             {"role": "main"})
+
+
+def test_prefix_extension_is_bounded_by_the_reported_prompt_plus_the_new_bytes():
+    m = meter.Meter(tempfile.mkdtemp(), usd_cap=10)
+    first = [ITEM(0, 5000), ITEM(1, 5000)]
+    tok, info, nbytes = admit(m, body(first))
+    assert info["bound"] == "bytes" and info["input_bound"] == m.budget.input_bound(nbytes, 3)
+    settle(m, tok, 1500)
+    new = [ITEM(2), ITEM(3)]
+    tok, info, nbytes = admit(m, body(first + new))
+    want = 1500 + sum(len(json.dumps(x)) for x in new) + budget.PER_MESSAGE_TOKENS * 3 + budget.FIXED_TOKENS
+    assert info == {"input_bound": want, "bound": "prefix", "prefix_items": 2}, info
+    assert want < m.budget.input_bound(nbytes, 5)
+    assert tok["worst"]["prompt_tokens"] == want                         # the reservation uses it
+    settle(m, tok, 1700)
+    # The longest settled prefix is the one used.
+    tok, info, _ = admit(m, body(first + new + [ITEM(4)]))
+    assert info["prefix_items"] == 4 and info["input_bound"] == 1700 + len(json.dumps(ITEM(4))) + 64 * 2 + 2048, info
+    settle(m, tok, 1800)
+    # The same request again (a retry) is bounded by its own earlier usage plus the overheads.
+    tok, info, _ = admit(m, body(first + new + [ITEM(4)]))
+    assert info["bound"] == "prefix" and info["input_bound"] == 1800 + 64 + 2048, info
+    assert m.summary()["input_bounds"] == {"prefix": 3, "bytes": 1}
+
+
+def test_compaction_or_a_changed_prefix_falls_back_to_the_byte_bound():
+    m = meter.Meter(tempfile.mkdtemp(), usd_cap=10)
+    first = [ITEM(0, 5000), ITEM(1, 5000)]
+    tok, _, _ = admit(m, body(first))
+    settle(m, tok, 1500)
+    cases = {
+        "compacted history": body([{"type": "message", "role": "user", "content": "summary of the session"}, ITEM(2)]),
+        "an earlier item changed": body([ITEM(0, 5000), ITEM(9, 5000), ITEM(2)]),
+        "items dropped from the start": body([ITEM(1, 5000), ITEM(2)]),
+        "other instructions": body(first + [ITEM(2)], instructions="You are a summarizer"),
+        "other tools": body(first + [ITEM(2)], tools=[]),
+        "other reasoning effort": body(first + [ITEM(2)], reasoning={"effort": "low"}),
+        "input as a string": {**CTX, "input": "hi", "max_output_tokens": 2000},
+    }
+    for why, b in cases.items():
+        _, info, nbytes = admit(m, b)
+        assert info["bound"] == "bytes", (why, info)
+        assert info["input_bound"] == m.budget.input_bound(nbytes, len(b["input"]) + 1), why   # as admit counts items
+    # A call that never settled is no prefix: its usage is unknown.
+    m = meter.Meter(tempfile.mkdtemp(), usd_cap=10)
+    tok, _, _ = admit(m, body(first))
+    m.settle(tok, None, {"role": "main"})
+    assert admit(m, body(first + [ITEM(2)]))[1]["bound"] == "bytes"
+    # The byte bound wins when it is smaller (a predecessor that reported more tokens than bytes).
+    m = meter.Meter(tempfile.mkdtemp(), usd_cap=10)
+    tok, _, _ = admit(m, body([ITEM(0, 10)]))
+    settle(m, tok, 10 ** 6)
+    _, info, nbytes = admit(m, body([ITEM(0, 10), ITEM(1, 10)]))
+    assert info["bound"] == "bytes" and info["input_bound"] == m.budget.input_bound(nbytes, 3)
+    # With the prefix bound off (the rule of results/muse-code-1) every request gets the byte bound.
+    m = meter.Meter(tempfile.mkdtemp(), usd_cap=10, prefix=False)
+    tok, _, _ = admit(m, body(first))
+    settle(m, tok, 1500)
+    assert admit(m, body(first + [ITEM(2)]))[1]["bound"] == "bytes"
+
+
+def test_proxy_records_the_bound_of_each_call():
+    up = Upstream(usage={**USAGE, "input_tokens": 500, "input_tokens_details": {"cached_tokens": 0}})
+    m = meter.Meter(tempfile.mkdtemp(), usd_cap=10, wall_cap=600, upstream=up.url)
+    port = m.start()
+    first = [ITEM(0, 3000)]
+    assert post(port, body(first))[0] == 200
+    assert post(port, body(first + [ITEM(1)]))[0] == 200
+    rec = calls(m)
+    assert [r["bound"] for r in rec] == ["bytes", "prefix"] and rec[1]["prefix_items"] == 1, rec
+    assert rec[1]["input_bound"] == 500 + len(json.dumps(ITEM(1))) + 64 * 2 + 2048
+    assert up.seen[1]["body"]["input"] == first + [ITEM(1)]               # forwarded unchanged
+    assert m.summary()["input_bounds"] == {"prefix": 1, "bytes": 1}
     m.stop()
 
 

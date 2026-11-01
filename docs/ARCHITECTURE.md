@@ -172,6 +172,14 @@ and the library:
   declarations re-checked by Lean against the current file with `ledger.carry`, their best compiling versions and
   failure notes). The tools never write the agent's candidate: Lean runs in a shadow copy of the workspace outside it.
 
+The meter reserves each call's worst case before forwarding it: every input token uncached at list price plus the
+output allowance (at most 32,000). The input bound is the request's byte count with per-item and fixed overheads,
+or, for a request that extends an earlier settled request of the same conversation (every field but `input` and
+`max_output_tokens` equal, the earlier items a prefix of its items), the earlier request's reported prompt tokens
+plus the byte length of the new items with the same overheads; the smaller of the two is used. A compacted or
+rewritten history falls back to the byte bound. `integrations/muse/meter_replay.py` replays recorded call logs under
+both bounds (`results/meter-bound-1`).
+
 `--resume-from DIR[,DIR...]` starts every arm from the prior runs' final file that compiles with the most required
 theorems proved (compiled inside the wall cap); only `proofforge-full` also gets `prior_attempts`. Every run writes
 `ledger.json` from the candidate versions Lean compiled during it (the MCP server's `--record-dir` and the runner's

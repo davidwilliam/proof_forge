@@ -10,8 +10,15 @@ its `response.completed` event.
 Budget rule (the same as agents/budget.py for the A0, A1 and A2 arms):
   - `max_output_tokens` is at most 32,000 per call (Muse Code asks for 128,000), the allowance
     the A0, A1 and A2 agents get;
-  - before a request is forwarded, its worst case (every byte of the request body counted as an
-    uncached input token at list price, plus `max_output_tokens` of output) is reserved;
+  - before a request is forwarded, its worst case (an upper bound on its input tokens, all priced
+    as uncached input at list price, plus `max_output_tokens` of output) is reserved. The bound
+    is the request's byte count (one token per byte at most, plus per-item and fixed overheads),
+    or, when the request extends an earlier request of the same conversation, a tighter one:
+    that request's reported `prompt_tokens` plus the byte length of the new items, with the same
+    overheads for them (prefix_bound). Extending means equal in every field but `input` and
+    `max_output_tokens`, and the earlier `input` items are the first items of this one, equal
+    item by item; anything else (a compacted or rewritten history, other instructions or tools)
+    gets the byte bound. The smaller of the two bounds is used;
     `max_output_tokens` is lowered so that the worst case fits the dollars left; a request whose
     worst case does not fit with at least 1,024 output tokens waits while other calls are in flight
     (their settlement frees their reservations) and is refused when none is;
@@ -27,17 +34,18 @@ contents. `calls.jsonl` records, per call: time, model, request size, requested 
 output tokens, HTTP status, latency, usage, list and charged cost, and the role of the caller
 (the main agent or one of Muse Code's helper agents, from the opening of its instructions).
 """
-import http.client, http.server, json, pathlib, socketserver, ssl, sys, threading, time, urllib.parse
+import collections, hashlib, http.client, http.server, json, pathlib, socketserver, ssl, sys, threading, time, urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "agents"))
-from budget import Budget, BudgetExceeded, list_cost, actual_cost  # noqa: E402
+from budget import Budget, BudgetExceeded, list_cost, actual_cost, PER_MESSAGE_TOKENS, FIXED_TOKENS  # noqa: E402
 
 UPSTREAM = "https://api.meta.ai/v1"
 MIN_OUTPUT = 1024
 MAX_OUTPUT = 32000   # per call, as for the A0, A1 and A2 agents (agents/repair.py Session.call)
 FORWARD_HEADERS = {"authorization", "content-type", "accept", "user-agent", "idempotency-key"}
 HOP = {"connection", "keep-alive", "transfer-encoding", "content-length", "content-encoding", "proxy-connection"}
+HISTORY = 256        # settled requests remembered for prefix_bound
 
 
 def responses_usage(u):
@@ -48,6 +56,42 @@ def responses_usage(u):
             "prompt_tokens_details": {"cached_tokens": (u.get("input_tokens_details") or {}).get("cached_tokens", 0)},
             "completion_tokens": u.get("output_tokens", 0),
             "reasoning_tokens": (u.get("output_tokens_details") or {}).get("reasoning_tokens", 0)}
+
+
+def _digest(x):
+    return hashlib.sha256(json.dumps(x, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).digest()
+
+
+def request_shape(body):
+    """(context digest, item digests, item byte lengths) of a Responses API request: the context is
+    every field but `input` and `max_output_tokens` (instructions, tools, model, reasoning, ...);
+    each `input` item is hashed and measured on its own. An item's length is that of its JSON with
+    non-ASCII characters escaped, at least the UTF-8 bytes of the text it carries. None when
+    `input` is not a list of items."""
+    items = body.get("input")
+    if not isinstance(items, list):
+        return None
+    ctx = _digest({k: v for k, v in body.items() if k not in ("input", "max_output_tokens")})
+    return ctx, tuple(_digest(x) for x in items), tuple(len(json.dumps(x)) for x in items)
+
+
+def prefix_bound(shape, history):
+    """Upper bound on the input tokens of a request that extends an earlier one: the earlier
+    request's reported prompt_tokens, plus one token per byte of the new items, plus the
+    per-item and fixed overheads of the byte bound. The earlier request is the one in `history`
+    ([(context, item digests, prompt_tokens)]) with the same context whose items are the longest
+    prefix of this request's. Returns (tokens, prefix items) or None."""
+    if shape is None:
+        return None
+    ctx, items, lens = shape
+    best = None
+    for c, its, pt in history:
+        if c == ctx and len(its) <= len(items) and items[:len(its)] == its and (best is None or len(its) > len(best[0])):
+            best = (its, pt)
+    if best is None:
+        return None
+    k = len(best[0])
+    return best[1] + sum(lens[k:]) + PER_MESSAGE_TOKENS * (len(items) - k + 1) + FIXED_TOKENS, k
 
 
 def caller_role(body):
@@ -65,7 +109,7 @@ class Meter:
     """Proxy state: the budget, the call log and the stop flag. Thread-safe."""
 
     def __init__(self, out_dir, usd_cap=None, wall_cap=None, upstream=UPSTREAM, model_override=None,
-                 max_output=MAX_OUTPUT):
+                 max_output=MAX_OUTPUT, prefix=True):
         self.out = pathlib.Path(out_dir)
         self.out.mkdir(parents=True, exist_ok=True)
         self.budget = Budget(usd_cap, wall_cap)
@@ -73,24 +117,42 @@ class Meter:
         self.model_override = model_override
         self.max_output = max_output
         self.lock = threading.Lock()
+        self.history = collections.deque(maxlen=HISTORY)   # (context, item digests, reported prompt_tokens)
+        self.prefix = prefix   # False: the byte bound only (the rule of results/muse-code-1; replays)
+        self.bounds = {"prefix": 0, "bytes": 0}
         self.stopped = None
         self.calls = 0
         self.by_role = {}
         self.server = None
 
     # -- accounting ------------------------------------------------------------------------
-    def admit(self, body, nbytes):
+    def input_bound(self, body, nbytes, shape=None):
+        """(upper bound on the request's input tokens, how it was found, prefix items): the
+        prefix bound when it applies and is smaller, else the byte bound. Called with the lock held."""
+        n_items = len(body.get("input") or []) + 1
+        by_bytes = self.budget.input_bound(nbytes, n_items)
+        pb = prefix_bound(shape if shape is not None else request_shape(body), self.history) if self.prefix else None
+        if pb is not None and pb[0] < by_bytes:
+            return pb[0], "prefix", pb[1]
+        return by_bytes, "bytes", 0
+
+    def admit(self, body, nbytes, info=None):
         """Reserve the worst case and return (token, granted max_output_tokens); raises
-        BudgetExceeded when the request cannot fit."""
+        BudgetExceeded when the request cannot fit. `info` (a dict) receives the input bound used."""
         model = body.get("model") or ""
         n_items = len(body.get("input") or []) + 1
         want = min(int(body.get("max_output_tokens") or self.max_output), self.max_output)
+        shape = request_shape(body)
         while True:
             with self.lock:
                 if self.stopped:
                     raise BudgetExceeded(self.stopped)
+                bound, kind, k = self.input_bound(body, nbytes, shape)
+                if info is not None:
+                    info.update(input_bound=bound, bound=kind, prefix_items=k)
                 try:
-                    mt, _ = self.budget.call_limits(model, nbytes, n_items, want, 3600, min_tokens=MIN_OUTPUT)
+                    mt, _ = self.budget.call_limits(model, nbytes, n_items, want, 3600, min_tokens=MIN_OUTPUT,
+                                                    input_tokens=bound)
                 except BudgetExceeded as e:
                     # A call that does not fit beside the worst cases of calls still in flight waits
                     # for them to settle; the run stops only when it does not fit with none open.
@@ -100,7 +162,9 @@ class Meter:
                         self.stopped = str(e)
                         raise
                 else:
-                    tok = self.budget.reserve(model, nbytes, n_items, mt)
+                    tok = self.budget.reserve(model, nbytes, n_items, mt, input_tokens=bound)
+                    tok["shape"] = shape
+                    self.bounds[kind] += 1
                     return tok, mt
             time.sleep(0.5)
 
@@ -108,6 +172,9 @@ class Meter:
         with self.lock:
             if usage:
                 self.budget.settle(tok, usage)
+                if tok.get("shape") is not None and usage.get("prompt_tokens"):
+                    ctx, items, _ = tok["shape"]
+                    self.history.append((ctx, items, usage["prompt_tokens"]))
             else:
                 self.budget.lost(tok)
             self.calls += 1
@@ -135,6 +202,7 @@ class Meter:
             s = self.budget.summary()
             s["stop"] = self.stopped or s.get("stop")
             s["calls"] = self.calls
+            s["input_bounds"] = dict(self.bounds)   # reservations by the prefix bound and by the byte bound
             s["by_role"] = {k: {**v, "usd_list": round(v["usd_list"], 4), "usd_actual": round(v["usd_actual"], 4)}
                             for k, v in self.by_role.items()}
             return s
@@ -207,7 +275,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                    "max_output_tokens_requested": body.get("max_output_tokens"),
                    "effort": (body.get("reasoning") or {}).get("effort")}
             try:
-                tok, granted = m.admit(body, len(raw))
+                tok, granted = m.admit(body, len(raw), rec)
             except BudgetExceeded as e:
                 rec.update(refused=str(e))
                 with (m.out / "calls.jsonl").open("a") as f:
