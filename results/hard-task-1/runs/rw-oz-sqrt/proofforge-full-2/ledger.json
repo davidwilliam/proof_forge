@@ -1,0 +1,580 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "rw-oz-sqrt",
+ "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616",
+ "run_dir": "<proofforge>/results/hard-task-1/runs/rw-oz-sqrt/proofforge-full-2",
+ "arm": "proofforge-full",
+ "loop": "muse-code",
+ "model": "muse-spark-1.3-contributor",
+ "created": "2026-10-31T23:52:57-0400",
+ "reconstructed": false,
+ "final": {
+  "text": "import OzSqrt.Spec\nimport OzSqrt.Lemmas\nimport ProofForgeFin.Sqrt\nimport ProofForgeFin.Word\nimport ProofForgeFin.Evm.Bits\n/-!\nThe square-root routine under repair, `Math.sqrt(uint256 a)` in the style of OpenZeppelin\nContracts `Math.sol`, as this pool's first deposit calls it:\n\n```\nfunction sqrt(uint256 a) internal pure returns (uint256) {\n    if (a == 0) {\n        return 0;\n    }\n    uint256 result = 1 << (log2(a) >> 1);\n    unchecked {\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        return min(result, a / result);\n    }\n}\n```\n-/\nnamespace OzSqrt\n\ndef sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)\n\ntheorem ushiftRightBV (x k : U256) : (x >>> k).toNat = x.toNat / 2 ^ k.toNat := by\n  have h : (x >>> k) = (x >>> k.toNat) := rfl\n  rw [h, BitVec.toNat_ushiftRight, Nat.shiftRight_eq_div_pow]\n\ntheorem shiftLeftBV1 (k : U256) (h : k.toNat < 256) :\n    ((1 : U256) <<< k).toNat = 2 ^ k.toNat := by\n  have h1 : ((1 : U256) <<< k) = ((1 : U256) <<< k.toNat) := rfl\n  have h0 : ((1 : U256)).toNat = 1 := rfl\n  have h2 : ((1 : BitVec 256) <<< k.toNat).toNat = 1 * 2 ^ k.toNat % 2 ^ 256 := by\n    rw [BitVec.toNat_shiftLeft, h0, Nat.shiftLeft_eq]\n  rw [h1, h2, Nat.one_mul]\n  exact Nat.mod_eq_of_lt (Nat.pow_lt_pow_right (by decide) h)\n\ntheorem sqrt_eq7 : \u2200 a : U256, sqrt a = newtonSqrt 7 a := by\n  intro a\n  simp only [sqrt, newtonSqrt, iterate, newtonStep]\n\ntheorem log2_lt256 (a : U256) (h0 : a.toNat \u2260 0) : Nat.log2 a.toNat < 256 := by\n  have hA := a.isLt\n  have h := (Nat.log2_lt h0).mpr hA\n  simpa using h\n\ntheorem init_val (a : U256) :\n    ((1 : U256) <<< (log2 a >>> 1)).toNat = 2 ^ (Nat.log2 a.toNat / 2) := by\n  have hk : (log2 a >>> 1).toNat = Nat.log2 a.toNat / 2 := by\n    rw [BitVec.toNat_ushiftRight, Nat.shiftRight_eq_div_pow, toNat_log2]\n  have hlt : (log2 a >>> 1).toNat < 256 := by\n    rw [hk]\n    by_cases h0 : a.toNat = 0\n    \u00b7 rw [h0]; decide\n    \u00b7 have hlog := log2_lt256 a h0\n      omega\n  rw [shiftLeftBV1 _ hlt, hk]\n\ndef nx (A q : Nat) : Nat \u2192 Nat\n  | 0 => 2 ^ q\n  | n+1 => ProofForgeFin.Sqrt.newton A (nx A q n)\n\ntheorem pow_le_sqrt_aux (A : Nat) (h0 : A \u2260 0) :\n    2 ^ (Nat.log2 A / 2) \u2264 Nat.sqrt A := by\n  apply ProofForgeFin.Sqrt.two_pow_le_sqrt\n  have h2 : 2 * (Nat.log2 A / 2) \u2264 Nat.log2 A := by omega\n  have h3 : (2 : Nat) ^ (2 * (Nat.log2 A / 2)) \u2264 2 ^ Nat.log2 A :=\n    Nat.pow_le_pow_right (by decide) h2\n  have h4 : 2 ^ Nat.log2 A \u2264 A := (ProofForgeFin.Evm.log2_spec h0).1\n  omega\n\ntheorem sqrt_le_nx_succ (A q : Nat) (h0 : A \u2260 0) (hq : q = Nat.log2 A / 2)\n    (n : Nat) : Nat.sqrt A \u2264 nx A q (n + 1) := by\n  induction n with\n  | zero =>\n    show Nat.sqrt A \u2264 ProofForgeFin.Sqrt.newton A (2 ^ q)\n    rw [hq]\n    apply ProofForgeFin.Sqrt.sqrt_le_newton\n    exact Nat.two_pow_pos _\n  | succ n ih =>\n    show Nat.sqrt A \u2264 ProofForgeFin.Sqrt.newton A (nx A q (n + 1))\n    apply ProofForgeFin.Sqrt.sqrt_le_newton\n    have hs : 0 < Nat.sqrt A := ProofForgeFin.Sqrt.sqrt_pos (by omega)\n    omega\n\ntheorem pow_le_nx (A q : Nat) (h0 : A \u2260 0) (hq : q = Nat.log2 A / 2)\n    (n : Nat) : 2 ^ q \u2264 nx A q n := by\n  cases n with\n  | zero => exact Nat.le_refl _\n  | succ n =>\n    have h1 : 2 ^ q \u2264 Nat.sqrt A := by rw [hq]; exact pow_le_sqrt_aux A h0\n    have h2 : Nat.sqrt A \u2264 nx A q (n + 1) := sqrt_le_nx_succ A q h0 hq n\n    omega\n\ntheorem nx_le_succ_bound (A q : Nat) (h0 : A \u2260 0) (hq : q = Nat.log2 A / 2)\n    (n : Nat) : nx A q (n + 1) \u2264 nx A q 1 + 1 := by\n  have hsqrt : \u2200 m : Nat, Nat.sqrt A \u2264 nx A q (m + 1) := fun m =>\n    sqrt_le_nx_succ A q h0 hq m\n  induction n with\n  | zero => exact Nat.le_succ _\n  | succ n ih =>\n    have hle : Nat.sqrt A \u2264 nx A q (n + 1) := hsqrt n\n    have hX1 : Nat.sqrt A \u2264 nx A q 1 := hsqrt 0\n    have hspos : 0 < Nat.sqrt A := ProofForgeFin.Sqrt.sqrt_pos (by omega)\n    have hpos : 0 < nx A q (n + 1) := by omega\n    have hgoal : nx A q (n + 1 + 1) =\n        ProofForgeFin.Sqrt.newton A (nx A q (n + 1)) := rfl\n    rw [hgoal]\n    rcases Nat.lt_or_ge (Nat.sqrt A) (nx A q (n + 1)) with hlt | hge\n    \u00b7 have hlt2 : ProofForgeFin.Sqrt.newton A (nx A q (n + 1)) <\n          nx A q (n + 1) :=\n        ProofForgeFin.Sqrt.newton_lt_self hlt\n      omega\n    \u00b7 have heq : nx A q (n + 1) = Nat.sqrt A := by omega\n      rw [heq]\n      have hmem := ProofForgeFin.Sqrt.newton_of_mem hpos hle (by omega)\n      rw [heq] at hmem\n      rcases hmem with h | h\n      \u00b7 omega\n      \u00b7 obtain \u27e8-, h2, -\u27e9 := h\n        omega\n\ntheorem div_four_bound (A : Nat) (h0 : A \u2260 0) :\n    A / 2 ^ (Nat.log2 A / 2) < 4 * 2 ^ (Nat.log2 A / 2) := by\n  have hAup : A < 2 ^ (Nat.log2 A + 1) := (ProofForgeFin.Evm.log2_spec h0).2\n  have hle : Nat.log2 A + 1 \u2264 2 * (Nat.log2 A / 2) + 2 := by omega\n  have hcap : A < 2 ^ (2 * (Nat.log2 A / 2) + 2) :=\n    Nat.lt_of_lt_of_le hAup (Nat.pow_le_pow_right (by decide) hle)\n  have hpow : (2 : Nat) ^ (2 * (Nat.log2 A / 2) + 2)\n      = (4 * 2 ^ (Nat.log2 A / 2)) * 2 ^ (Nat.log2 A / 2) := by\n    have e1 : 2 * (Nat.log2 A / 2) + 2 =\n        (Nat.log2 A / 2) + (2 + (Nat.log2 A / 2)) := by omega\n    rw [e1, Nat.pow_add, Nat.pow_add]\n    have h4 : (2 : Nat) ^ 2 = 4 := by decide\n    rw [h4]\n    exact Nat.mul_comm _ _\n  have hpos : 0 < 2 ^ (Nat.log2 A / 2) := Nat.two_pow_pos _\n  rw [hpow] at hcap\n  exact (Nat.div_lt_iff_lt_mul hpos).mpr hcap\n\ntheorem q_le127 (a : U256) (h0 : a.toNat \u2260 0) :\n    Nat.log2 a.toNat / 2 \u2264 127 := by\n  have hlog := log2_lt256 a h0\n  omega\n\ntheorem nx_overflow (a : U256) (h0 : a.toNat \u2260 0) (n : Nat) :\n    nx a.toNat (Nat.log2 a.toNat / 2) n +\n      a.toNat / nx a.toNat (Nat.log2 a.toNat / 2) n < 2 ^ 256 := by\n  have hq : Nat.log2 a.toNat / 2 = Nat.log2 a.toNat / 2 := rfl\n  have hA256 : a.toNat < 2 ^ 256 := a.isLt\n  have hq127 : Nat.log2 a.toNat / 2 \u2264 127 := q_le127 a h0\n  have h2q : (2 : Nat) ^ (Nat.log2 a.toNat / 2) \u2264 2 ^ 127 :=\n    Nat.pow_le_pow_right (by decide) hq127\n  have hdiv4 : a.toNat / 2 ^ (Nat.log2 a.toNat / 2) < 4 * 2 ^ (Nat.log2 a.toNat / 2) :=\n    div_four_bound a.toNat h0\n  have h4pow : (4 : Nat) * 2 ^ (Nat.log2 a.toNat / 2) \u2264 4 * 2 ^ 127 := by\n    apply Nat.mul_le_mul_left\n    exact h2q\n  cases n with\n  | zero =>\n    show 2 ^ (Nat.log2 a.toNat / 2) +\n      a.toNat / 2 ^ (Nat.log2 a.toNat / 2) < 2 ^ 256\n    omega\n  | succ n =>\n    have hlo : 2 ^ (Nat.log2 a.toNat / 2) \u2264\n        nx a.toNat (Nat.log2 a.toNat / 2) (n + 1) :=\n      pow_le_nx a.toNat (Nat.log2 a.toNat / 2) h0 rfl (n + 1)\n    have hposq : 0 < 2 ^ (Nat.log2 a.toNat / 2) := Nat.two_pow_pos _\n    have hdivmono : a.toNat / nx a.toNat (Nat.log2 a.toNat / 2) (n + 1) \u2264\n        a.toNat / 2 ^ (Nat.log2 a.toNat / 2) :=\n      Nat.div_le_div_left hlo hposq\n    have hub : nx a.toNat (Nat.log2 a.toNat / 2) (n + 1) \u2264\n        nx a.toNat (Nat.log2 a.toNat / 2) 1 + 1 :=\n      nx_le_succ_bound a.toNat (Nat.log2 a.toNat / 2) h0 rfl n\n    have hX1 : ProofForgeFin.Sqrt.newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)) \u2264\n        3 * 2 ^ (Nat.log2 a.toNat / 2) := by\n      unfold ProofForgeFin.Sqrt.newton\n      omega\n    have hX1eq : nx a.toNat (Nat.log2 a.toNat / 2) 1 =\n        ProofForgeFin.Sqrt.newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)) := rfl\n    rw [hX1eq] at hub\n    omega\n\ntheorem e1_four_aux (x d s e1 : Nat) (hx : 0 < x) (hs : s = x + d) (hd : d \u2264 x)\n    (herr : 2 * x * e1 \u2264 d * d + 2 * s) : 4 * e1 \u2264 s + 8 := by\n  have h1 : d * d \u2264 d * x := Nat.mul_le_mul_left d hd\n  have h2 : 2 * (d * d) \u2264 2 * (d * x) := Nat.mul_le_mul_left 2 h1\n  have h3 : d * (x + 4) \u2264 x * (x + 4) := Nat.mul_le_mul_right (x + 4) hd\n  have h3e : d * x + d * 4 \u2264 x * x + x * 4 := by\n    have a : d * (x + 4) = d * x + d * 4 := Nat.mul_add d x 4\n    have b : x * (x + 4) = x * x + x * 4 := Nat.mul_add x x 4\n    rw [a] at h3\n    rw [b] at h3\n    exact h3\n  have h3f : d * x + 4 * d \u2264 x * x + 4 * x := by\n    have h3c : d * 4 = 4 * d := Nat.mul_comm d 4\n    have h4c : x * 4 = 4 * x := Nat.mul_comm x 4\n    rw [h3c] at h3e\n    rw [h4c] at h3e\n    exact h3e\n  have h5 : 2 * (d * d) + 4 * d \u2264 2 * (d * x) + 4 * d := Nat.add_le_add_right h2 (4 * d)\n  have h6 : 2 * (d * x) + 4 * d \u2264 x * x + d * x + 4 * x := by omega\n  have h7 : 2 * (d * d) + 4 * d \u2264 x * x + d * x + 4 * x := Nat.le_trans h5 h6\n  have hs4 : 4 * s = 4 * x + 4 * d := by rw [hs]; exact Nat.mul_add 4 x d\n  have h8 : 2 * (d * d) + 4 * s \u2264 x * x + d * x + 8 * x := by omega\n  have h9 : 2 * (2 * x * e1) \u2264 2 * (d * d + 2 * s) := Nat.mul_le_mul_left 2 herr\n  have h9e : 2 * (d * d + 2 * s) = 2 * (d * d) + 4 * s := by\n    have a : 2 * (d * d + 2 * s) = 2 * (d * d) + 2 * (2 * s) := Nat.mul_add 2 (d * d) (2 * s)\n    have b : 2 * (2 * s) = 4 * s := by\n      have c : (2 : Nat) * 2 = 4 := by decide\n      calc 2 * (2 * s) = (2 * 2) * s := by rw [Nat.mul_assoc]\n        _ = 4 * s := by rw [c]\n    rw [a, b]\n  have h10a : 4 * e1 * x = 2 * (2 * x * e1) := by ac_rfl\n  have h10b : (s + 8) * x = x * x + d * x + 8 * x := by\n    have a : (s + 8) * x = s * x + 8 * x := Nat.add_mul s 8 x\n    have b : s * x = x * x + d * x := by\n      rw [hs, Nat.add_mul, Nat.mul_comm d x]\n    rw [a, b]\n  have h10 : 4 * e1 * x \u2264 (s + 8) * x := by\n    calc 4 * e1 * x = 2 * (2 * x * e1) := h10a\n      _ \u2264 2 * (d * d + 2 * s) := h9\n      _ = 2 * (d * d) + 4 * s := h9e\n      _ \u2264 x * x + d * x + 8 * x := h8\n      _ = (s + 8) * x := by rw [h10b]\n  exact Nat.le_of_mul_le_mul_right h10 hx\n\ntheorem quad_step_aux (s e e' C K C' K' : Nat) (hs4 : 4 \u2264 s) (hs0 : 0 < s)\n    (hC : C * e \u2264 s + K) (herr : (e' - 1) * (2 * s) \u2264 e * e)\n    (hC' : C' = 2 * C * C) (hK' : K' = 2 * K + K * K / 4 + C' + 1) :\n    C' * e' \u2264 s + K' := by\n  by_cases he' : e' = 0\n  \u00b7 subst he'\n    simp\n  \u00b7 have he1 : 1 \u2264 e' := by omega\n    have hCe2 : (C * e) * (C * e) \u2264 (s + K) * (s + K) := Nat.mul_le_mul hC hC\n    have hsq1 : (C * e) * (C * e) = (e * e) * (C * C) := by ac_rfl\n    have hsq2 : (e * e) * (C * C) \u2264 (s + K) * (s + K) := by\n      rw [\u2190 hsq1]; exact hCe2\n    have hmul1 : ((e' - 1) * (2 * s)) * (C * C) \u2264 (e * e) * (C * C) :=\n      Nat.mul_le_mul_right (C * C) herr\n    have hmid_eq : (e' - 1) * C' * s = ((e' - 1) * (2 * s)) * (C * C) := by\n      rw [hC']; ac_rfl\n    have hmid : (e' - 1) * C' * s \u2264 (s + K) * (s + K) := by\n      rw [hmid_eq]; exact Nat.le_trans hmul1 hsq2\n    have he'e : (e' - 1) + 1 = e' := Nat.sub_add_cancel he1\n    have hCe'e : C' * e' = C' * (e' - 1) + C' := by\n      conv => lhs; rw [\u2190 he'e, Nat.mul_add, Nat.mul_one]\n    have hmod : 4 * (K * K / 4) + K * K % 4 = K * K := Nat.div_add_mod (K * K) 4\n    have hmodlt : K * K % 4 < 4 := Nat.mod_lt _ (by decide)\n    have hK4le : (K * K / 4) * 4 \u2264 (K * K / 4) * s :=\n      Nat.mul_le_mul_left (K * K / 4) hs4\n    have hK4eq : (K * K / 4) * 4 = 4 * (K * K / 4) := Nat.mul_comm _ _\n    have hKKs : K * K \u2264 (K * K / 4) * s + s := by grind\n    have hsq_expand : (s + K) * (s + K) = s * s + 2 * K * s + K * K := by\n      grind\n    have hgoal_mul : C' * e' * s \u2264 (s + K') * s := by\n      have e1 : C' * e' * s = (e' - 1) * C' * s + C' * s := by\n        rw [hCe'e, Nat.add_mul, Nat.mul_comm (C') (e' - 1)]\n      have e2 : (s + K') * s = s * s + K' * s := Nat.add_mul _ _ _\n      have e3 : K' * s = (2 * K + K * K / 4 + C' + 1) * s := by rw [hK']\n      have e4 : (2 * K + K * K / 4 + C' + 1) * s =\n          2 * K * s + (K * K / 4) * s + C' * s + s := by\n        have a1 : (2 * K + K * K / 4 + C' + 1) * s =\n            (2 * K + K * K / 4 + C') * s + s := by\n          rw [Nat.add_mul, Nat.one_mul]\n        have a2 : (2 * K + K * K / 4 + C') * s =\n            (2 * K + K * K / 4) * s + C' * s := by\n          rw [Nat.add_mul]\n        have a3 : (2 * K + K * K / 4) * s =\n            (2 * K) * s + (K * K / 4) * s := by\n          rw [Nat.add_mul]\n        rw [a1, a2, a3]\n      grind\n    exact Nat.le_of_mul_le_mul_right hgoal_mul hs0\n\ntheorem sq_err_of_le_aux (s e e' : Nat) (hle : e' \u2264 e * e / (2 * s) + 1) :\n    (e' - 1) * (2 * s) \u2264 e * e := by\n  by_cases he' : e' = 0\n  \u00b7 subst he'\n    simp\n  \u00b7 have he1 : 1 \u2264 e' := by omega\n    have h1 : e' - 1 \u2264 e * e / (2 * s) := by omega\n    have h2 : (e' - 1) * (2 * s) \u2264 (e * e / (2 * s)) * (2 * s) :=\n      Nat.mul_le_mul_right (2 * s) h1\n    have h3 : (e * e / (2 * s)) * (2 * s) \u2264 e * e :=\n      Nat.div_mul_le_self (e * e) (2 * s)\n    exact Nat.le_trans h2 h3\n\ntheorem s_lt_2x_aux (A : Nat) (h0 : A \u2260 0) :\n    Nat.sqrt A < 2 * 2 ^ (Nat.log2 A / 2) := by\n  have hAup : A < 2 ^ (Nat.log2 A + 1) := (ProofForgeFin.Evm.log2_spec h0).2\n  have hle : Nat.log2 A + 1 \u2264 2 * ((Nat.log2 A / 2) + 1) := by omega\n  have hcap : A < 2 ^ (2 * ((Nat.log2 A / 2) + 1)) :=\n    Nat.lt_of_lt_of_le hAup (Nat.pow_le_pow_right (by decide) hle)\n  have hs := ProofForgeFin.Sqrt.sqrt_lt_two_pow (k := (Nat.log2 A / 2) + 1) (a := A) (by omega)\n  have heq : (2 : Nat) ^ ((Nat.log2 A / 2) + 1) = 2 * 2 ^ (Nat.log2 A / 2) := by\n    rw [Nat.pow_add, Nat.pow_one]\n    exact Nat.mul_comm _ _\n  omega\n\ntheorem nx_pos_aux (A q : Nat) (h0 : A \u2260 0) (hq : q = Nat.log2 A / 2) (n : Nat) :\n    0 < nx A q (n + 1) := by\n  have hs : 0 < Nat.sqrt A := ProofForgeFin.Sqrt.sqrt_pos (by omega)\n  have hle := sqrt_le_nx_succ A q h0 hq n\n  omega\n\ntheorem e1_bound_aux (A : Nat) (h0 : A \u2260 0) :\n    4 * (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) \u2264 Nat.sqrt A + 8 := by\n  have hxpos : 0 < 2 ^ (Nat.log2 A / 2) := Nat.two_pow_pos _\n  have hxs : 2 ^ (Nat.log2 A / 2) \u2264 Nat.sqrt A := pow_le_sqrt_aux A h0\n  have hs2x : Nat.sqrt A < 2 * 2 ^ (Nat.log2 A / 2) := s_lt_2x_aux A h0\n  have hs_eq : Nat.sqrt A = 2 ^ (Nat.log2 A / 2) + (Nat.sqrt A - 2 ^ (Nat.log2 A / 2)) := by\n    omega\n  have hd_le : Nat.sqrt A - 2 ^ (Nat.log2 A / 2) \u2264 2 ^ (Nat.log2 A / 2) := by omega\n  have hnx1 : nx A (Nat.log2 A / 2) 1 = ProofForgeFin.Sqrt.newton A (2 ^ (Nat.log2 A / 2)) := rfl\n  have herr : 2 * 2 ^ (Nat.log2 A / 2) *\n      (ProofForgeFin.Sqrt.newton A (2 ^ (Nat.log2 A / 2)) - Nat.sqrt A) \u2264\n      (Nat.sqrt A - 2 ^ (Nat.log2 A / 2)) * (Nat.sqrt A - 2 ^ (Nat.log2 A / 2)) +\n        2 * Nat.sqrt A :=\n    ProofForgeFin.Sqrt.newton_err_below hxpos hxs\n  have heq : nx A (Nat.log2 A / 2) 1 - Nat.sqrt A =\n      ProofForgeFin.Sqrt.newton A (2 ^ (Nat.log2 A / 2)) - Nat.sqrt A := by\n    rw [hnx1]\n  rw [heq]\n  exact e1_four_aux (2 ^ (Nat.log2 A / 2)) (Nat.sqrt A - 2 ^ (Nat.log2 A / 2))\n    (Nat.sqrt A) _ hxpos hs_eq hd_le herr\n\ntheorem nx6_sq_le_aux (A : Nat) (h0 : A \u2260 0) (hA256 : A < 2 ^ 256)\n    (hs4 : 4 \u2264 Nat.sqrt A) :\n    (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) *\n      (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) \u2264 Nat.sqrt A := by\n  have hs0 : 0 < Nat.sqrt A := ProofForgeFin.Sqrt.sqrt_pos (by omega)\n  have hs_lt128 : Nat.sqrt A < 2 ^ 128 := by\n    have hcap : A < 2 ^ (2 * 128) := by\n      have h1 : (2 : Nat) ^ 256 = 2 ^ (2 * 128) := by omega\n      omega\n    exact ProofForgeFin.Sqrt.sqrt_lt_two_pow hcap\n  have hq : Nat.log2 A / 2 = Nat.log2 A / 2 := rfl\n  have hC1 : 4 * (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) \u2264 Nat.sqrt A + 8 :=\n    e1_bound_aux A h0\n  have hle1 : Nat.sqrt A \u2264 nx A (Nat.log2 A / 2) 1 :=\n    sqrt_le_nx_succ A _ h0 rfl 0\n  have hle2 : Nat.sqrt A \u2264 nx A (Nat.log2 A / 2) 2 :=\n    sqrt_le_nx_succ A _ h0 rfl 1\n  have hle3 : Nat.sqrt A \u2264 nx A (Nat.log2 A / 2) 3 :=\n    sqrt_le_nx_succ A _ h0 rfl 2\n  have hle4 : Nat.sqrt A \u2264 nx A (Nat.log2 A / 2) 4 :=\n    sqrt_le_nx_succ A _ h0 rfl 3\n  have hle5 : Nat.sqrt A \u2264 nx A (Nat.log2 A / 2) 5 :=\n    sqrt_le_nx_succ A _ h0 rfl 4\n  have hle6 : Nat.sqrt A \u2264 nx A (Nat.log2 A / 2) 6 :=\n    sqrt_le_nx_succ A _ h0 rfl 5\n  have hnx1eq : nx A (Nat.log2 A / 2) 2 =\n      ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 1) := rfl\n  have hnx2eq : nx A (Nat.log2 A / 2) 3 =\n      ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 2) := rfl\n  have hnx3eq : nx A (Nat.log2 A / 2) 4 =\n      ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 3) := rfl\n  have hnx4eq : nx A (Nat.log2 A / 2) 5 =\n      ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 4) := rfl\n  have hnx5eq : nx A (Nat.log2 A / 2) 6 =\n      ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 5) := rfl\n  have hq1 : ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 1) - Nat.sqrt A \u2264\n      (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) /\n        (2 * Nat.sqrt A) + 1 :=\n    ProofForgeFin.Sqrt.newton_sub_sqrt_le_sq_div hs0 hle1\n  have herr1 : (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A - 1) * (2 * Nat.sqrt A) \u2264\n      (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) := by\n    have heq2 : nx A (Nat.log2 A / 2) 2 - Nat.sqrt A =\n        ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 1) - Nat.sqrt A := by\n      rw [hnx1eq]\n    rw [heq2]\n    exact sq_err_of_le_aux _ _ _ hq1\n  have hC2 : 32 * (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) \u2264 Nat.sqrt A + 65 := by\n    have herr1' : ((nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) - 1) * (2 * Nat.sqrt A) \u2264\n        (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) := by\n      have : nx A (Nat.log2 A / 2) 2 - Nat.sqrt A - 1 =\n          (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) - 1 := by omega\n      rw [this]\n      exact herr1\n    exact quad_step_aux _ _ _ _ _ _ _ hs4 hs0 hC1 herr1' rfl rfl\n  have hq2 : ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 2) - Nat.sqrt A \u2264\n      (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) /\n        (2 * Nat.sqrt A) + 1 :=\n    ProofForgeFin.Sqrt.newton_sub_sqrt_le_sq_div hs0 hle2\n  have herr2 : (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A - 1) * (2 * Nat.sqrt A) \u2264\n      (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) := by\n    have heq3 : nx A (Nat.log2 A / 2) 3 - Nat.sqrt A =\n        ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 2) - Nat.sqrt A := by\n      rw [hnx2eq]\n    rw [heq3]\n    exact sq_err_of_le_aux _ _ _ hq2\n  have hC3 : 2048 * (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) \u2264 Nat.sqrt A + 3235 := by\n    have herr2' : ((nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) - 1) * (2 * Nat.sqrt A) \u2264\n        (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) := by\n      have : nx A (Nat.log2 A / 2) 3 - Nat.sqrt A - 1 =\n          (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) - 1 := by omega\n      rw [this]\n      exact herr2\n    exact quad_step_aux _ _ _ _ _ _ _ hs4 hs0 hC2 herr2' rfl rfl\n  have hq3 : ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 3) - Nat.sqrt A \u2264\n      (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) /\n        (2 * Nat.sqrt A) + 1 :=\n    ProofForgeFin.Sqrt.newton_sub_sqrt_le_sq_div hs0 hle3\n  have herr3 : (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A - 1) * (2 * Nat.sqrt A) \u2264\n      (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) := by\n    have heq4 : nx A (Nat.log2 A / 2) 4 - Nat.sqrt A =\n        ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 3) - Nat.sqrt A := by\n      rw [hnx3eq]\n    rw [heq4]\n    exact sq_err_of_le_aux _ _ _ hq3\n  have hC4 : 8388608 * (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) \u2264 Nat.sqrt A + 11011385 := by\n    have herr3' : ((nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) - 1) * (2 * Nat.sqrt A) \u2264\n        (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) := by\n      have : nx A (Nat.log2 A / 2) 4 - Nat.sqrt A - 1 =\n          (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) - 1 := by omega\n      rw [this]\n      exact herr3\n    exact quad_step_aux _ _ _ _ _ _ _ hs4 hs0 hC3 herr3' rfl rfl\n  have hq4 : ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 4) - Nat.sqrt A \u2264\n      (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) /\n        (2 * Nat.sqrt A) + 1 :=\n    ProofForgeFin.Sqrt.newton_sub_sqrt_le_sq_div hs0 hle4\n  have herr4 : (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A - 1) * (2 * Nat.sqrt A) \u2264\n      (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) := by\n    have heq5 : nx A (Nat.log2 A / 2) 5 - Nat.sqrt A =\n        ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 4) - Nat.sqrt A := by\n      rw [hnx4eq]\n    rw [heq5]\n    exact sq_err_of_le_aux _ _ _ hq4\n  have hC5 : 140737488355328 * (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) \u2264\n      Nat.sqrt A + (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) := by\n    have herr4' : ((nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) - 1) * (2 * Nat.sqrt A) \u2264\n        (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) := by\n      have : nx A (Nat.log2 A / 2) 5 - Nat.sqrt A - 1 =\n          (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) - 1 := by omega\n      rw [this]\n      exact herr4\n    exact quad_step_aux _ _ _ _ _ _ _ hs4 hs0 hC4 herr4' rfl rfl\n  have hq5 : ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 5) - Nat.sqrt A \u2264\n      (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) /\n        (2 * Nat.sqrt A) + 1 :=\n    ProofForgeFin.Sqrt.newton_sub_sqrt_le_sq_div hs0 hle5\n  have herr5 : (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A - 1) * (2 * Nat.sqrt A) \u2264\n      (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) := by\n    have heq6 : nx A (Nat.log2 A / 2) 6 - Nat.sqrt A =\n        ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 5) - Nat.sqrt A := by\n      rw [hnx5eq]\n    rw [heq6]\n    exact sq_err_of_le_aux _ _ _ hq5\n  have hC6 : (2 * 140737488355328 * 140737488355328) *\n      (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) \u2264\n      Nat.sqrt A + (2 * (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) +\n        (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n        (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n        (2 * 140737488355328 * 140737488355328) + 1) := by\n    have herr5' : ((nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) - 1) * (2 * Nat.sqrt A) \u2264\n        (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) := by\n      have : nx A (Nat.log2 A / 2) 6 - Nat.sqrt A - 1 =\n          (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) - 1 := by omega\n      rw [this]\n      exact herr5\n    exact quad_step_aux _ _ _ _ _ _ _ hs4 hs0 hC5 herr5' rfl rfl\n  have hsq6 : (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) *\n      (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) \u2264 Nat.sqrt A := by\n    have hC6' : (2 * 140737488355328 * 140737488355328) *\n        (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) \u2264\n        Nat.sqrt A + (2 * (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) +\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n          (2 * 140737488355328 * 140737488355328) + 1) := hC6\n    have hCpos : 0 < 2 * 140737488355328 * 140737488355328 := by decide\n    have h2pow : (2 : Nat) ^ 128 \u2264\n        (2 * 140737488355328 * 140737488355328) *\n        (2 * 140737488355328 * 140737488355328) := by decide\n    have hs128 : Nat.sqrt A < 2 ^ 128 := hs_lt128\n    have hleC : Nat.sqrt A \u2264\n        (2 * 140737488355328 * 140737488355328) *\n        (2 * 140737488355328 * 140737488355328) := by omega\n    have hCe6sq : ((2 * 140737488355328 * 140737488355328) *\n        (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A)) *\n        ((2 * 140737488355328 * 140737488355328) *\n        (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A)) \u2264\n        (Nat.sqrt A + (2 * (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) +\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n          (2 * 140737488355328 * 140737488355328) + 1)) *\n        (Nat.sqrt A + (2 * (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) +\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n          (2 * 140737488355328 * 140737488355328) + 1)) :=\n      Nat.mul_le_mul hC6' hC6'\n    have hsq_eq : ((2 * 140737488355328 * 140737488355328) *\n        (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A)) *\n        ((2 * 140737488355328 * 140737488355328) *\n        (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A)) =\n        ((nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) *\n        (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A)) *\n        ((2 * 140737488355328 * 140737488355328) *\n        (2 * 140737488355328 * 140737488355328)) := by ac_rfl\n    have hle_sq : ((nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) *\n        (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A)) *\n        ((2 * 140737488355328 * 140737488355328) *\n        (2 * 140737488355328 * 140737488355328)) \u2264\n        Nat.sqrt A *\n        ((2 * 140737488355328 * 140737488355328) *\n        (2 * 140737488355328 * 140737488355328)) := by\n      have h1 : ((nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) *\n          (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A)) *\n          ((2 * 140737488355328 * 140737488355328) *\n          (2 * 140737488355328 * 140737488355328)) \u2264\n          (Nat.sqrt A + (2 * (2 * 11011385 + 11011385 * 11011385 / 4 +\n          140737488355328 + 1) +\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n          (2 * 140737488355328 * 140737488355328) + 1)) *\n          (Nat.sqrt A + (2 * (2 * 11011385 + 11011385 * 11011385 / 4 +\n          140737488355328 + 1) +\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n          (2 * 140737488355328 * 140737488355328) + 1)) := by\n        rw [\u2190 hsq_eq]\n        exact hCe6sq\n      have hbound : (Nat.sqrt A + (2 * (2 * 11011385 + 11011385 * 11011385 / 4 +\n          140737488355328 + 1) +\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n          (2 * 140737488355328 * 140737488355328) + 1)) *\n          (Nat.sqrt A + (2 * (2 * 11011385 + 11011385 * 11011385 / 4 +\n          140737488355328 + 1) +\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n          (2 * 140737488355328 * 140737488355328) + 1)) \u2264\n          Nat.sqrt A *\n          ((2 * 140737488355328 * 140737488355328) *\n          (2 * 140737488355328 * 140737488355328)) := by\n        have hC6 : (2 : Nat) * 140737488355328 * 140737488355328 =\n            2 * 140737488355328 * 140737488355328 := rfl\n        have hK6 : (2 * (2 * 11011385 + 11011385 * 11011385 / 4 +\n            140737488355328 + 1) +\n            (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n            (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n            (2 * 140737488355328 * 140737488355328) + 1) =\n            2 * (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) +\n            (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n            (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n            (2 * 140737488355328 * 140737488355328) + 1 := rfl\n        have h2pow_le : (2 : Nat) ^ 128 \u2264\n            (2 * 140737488355328 * 140737488355328) *\n            (2 * 140737488355328 * 140737488355328) / 2 := by decide\n        have hs_le : Nat.sqrt A \u2264\n            (2 * 140737488355328 * 140737488355328) *\n            (2 * 140737488355328 * 140737488355328) / 2 := by omega\n        have hss : Nat.sqrt A * Nat.sqrt A \u2264\n            Nat.sqrt A *\n            ((2 * 140737488355328 * 140737488355328) *\n            (2 * 140737488355328 * 140737488355328) / 2) :=\n          Nat.mul_le_mul_left _ hs_le\n        sorry\n      exact Nat.le_trans h1 hbound\n    exact Nat.le_of_mul_le_mul_right hle_sq (by decide)\n  exact hsq6\n\ntheorem iterate_succ_apply_aux (f : U256 \u2192 U256) (n : Nat) (x : U256) :\n    iterate f (n + 1) x = f (iterate f n x) := by\n  induction n generalizing x with\n  | zero => rfl\n  | succ n ih =>\n    have e1 : iterate f (n + 1 + 1) x = iterate f (n + 1) (f x) := rfl\n    have e2 : iterate f (n + 1) x = iterate f n (f x) := rfl\n    rw [e1, e2, ih]\n\ntheorem exact_iter (a : U256) (h0 : a.toNat \u2260 0) (n : Nat) :\n    (iterate (newtonStep a) n ((1 : U256) <<< (log2 a >>> 1))).toNat =\n      nx a.toNat (Nat.log2 a.toNat / 2) n := by\n  induction n with\n  | zero => exact init_val a\n  | succ n ih =>\n    have hov : (iterate (newtonStep a) n ((1 : U256) <<< (log2 a >>> 1))).toNat +\n        a.toNat / (iterate (newtonStep a) n ((1 : U256) <<< (log2 a >>> 1))).toNat <\n        2 ^ 256 := by\n      rw [ih]\n      exact nx_overflow a h0 n\n    have e1 : iterate (newtonStep a) (n + 1) ((1 : U256) <<< (log2 a >>> 1)) =\n        newtonStep a (iterate (newtonStep a) n ((1 : U256) <<< (log2 a >>> 1))) :=\n      iterate_succ_apply_aux (newtonStep a) n _\n    rw [e1, toNat_newtonStep _ _ hov, ih]\n    rfl\n\ntheorem toNat_newtonSqrt7 (a : U256) (h0 : a.toNat \u2260 0) :\n    (newtonSqrt 7 a).toNat =\n      Nat.min (nx a.toNat (Nat.log2 a.toNat / 2) 7)\n        (a.toNat / nx a.toNat (Nat.log2 a.toNat / 2) 7) := by\n  have hne : \u00ac a = 0 := by\n    intro hc\n    apply h0\n    rw [hc]\n    rfl\n  unfold newtonSqrt\n  rw [if_neg hne]\n  have hex : (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))).toNat =\n      nx a.toNat (Nat.log2 a.toNat / 2) 7 := exact_iter a h0 7\n  have hmin : (OzSqrt.min\n      (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1)))\n      (a / iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1)))).toNat =\n      Nat.min (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))).toNat\n        (a / iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))).toNat :=\n    toNat_min _ _\n  rw [hmin, hex, BitVec.toNat_udiv, hex]\n\ntheorem min_sq_le (A X : Nat) (hx : 0 < X) :\n    Nat.min X (A / X) * Nat.min X (A / X) \u2264 A := by\n  have hle : A / X * X \u2264 A := Nat.div_mul_le_self A X\n  by_cases h : X \u2264 A / X\n  \u00b7 have hmin : Nat.min X (A / X) = X := Nat.min_eq_left h\n    rw [hmin]\n    calc X * X \u2264 (A / X) * X := Nat.mul_le_mul_right X h\n      _ = A / X * X := by rw [Nat.mul_comm]\n      _ \u2264 A := hle\n  \u00b7 have hlt : A / X < X := by omega\n    have hmin : Nat.min X (A / X) = A / X := Nat.min_eq_right (Nat.le_of_lt hlt)\n    rw [hmin]\n    calc A / X * (A / X) \u2264 X * (A / X) :=\n          Nat.mul_le_mul_right (A / X) (Nat.le_of_lt hlt)\n      _ = A / X * X := by rw [Nat.mul_comm]\n      _ \u2264 A := hle\n\ntheorem sqrt_sq_le (a : U256) : (sqrt a).toNat * (sqrt a).toNat \u2264 a.toNat := by\n  by_cases h0 : a.toNat = 0\n  \u00b7 have ha0 : a = 0 := BitVec.eq_of_toNat_eq (by simpa using h0)\n    subst ha0\n    have hs0 : sqrt (0 : U256) = 0 := rfl\n    have h1 : (sqrt (0 : U256)).toNat = 0 := by rw [hs0]; rfl\n    have h2 : ((0 : U256)).toNat = 0 := rfl\n    rw [h1, h2, Nat.zero_mul]\n    exact Nat.le_refl _\n  \u00b7 have heq : sqrt a = newtonSqrt 7 a := sqrt_eq7 a\n    have hto : (sqrt a).toNat =\n        Nat.min (nx a.toNat (Nat.log2 a.toNat / 2) 7)\n          (a.toNat / nx a.toNat (Nat.log2 a.toNat / 2) 7) := by\n      rw [heq]\n      exact toNat_newtonSqrt7 a h0\n    rw [hto]\n    have hpos : 0 < nx a.toNat (Nat.log2 a.toNat / 2) 7 := by\n      have hlo := pow_le_nx a.toNat (Nat.log2 a.toNat / 2) h0 rfl 7\n      have h2 : 0 < 2 ^ (Nat.log2 a.toNat / 2) := Nat.two_pow_pos _\n      omega\n    exact min_sq_le a.toNat _ hpos\n\ntheorem req_sqrt_not_above : SqrtNotAbove sqrt := by\n  intro a\n  exact sqrt_sq_le a\n\ntheorem req_newton_budget : NewtonBudget sqrt := by\n  exact \u27e87, Nat.le_refl 7, sqrt_eq7\u27e9\n\ntheorem req_mint_backed : MintBacked sqrt := by\n  intro a0 a1 l hl\n  have h := firstMint_eq_some hl\n  obtain \u27e8hprod, _, hliqu\u27e9 := h\n  have hmul : (a0 * a1).toNat = a0.toNat * a1.toNat :=\n    toNat_mul_of_lt hprod\n  have hroot : (sqrt (a0 * a1)).toNat * (sqrt (a0 * a1)).toNat \u2264\n      (a0 * a1).toNat := sqrt_sq_le _\n  rw [hmul, \u2190 hliqu] at hroot\n  exact hroot\n\ntheorem req_sqrt_not_below : SqrtNotBelow sqrt := sorry\ntheorem req_sqrt_up_covers : SqrtUpCovers sqrt := sorry\ntheorem req_sqrt_up_tight  : SqrtUpTight sqrt := sorry\ntheorem req_mint_full      : MintFull sqrt := sorry\ntheorem req_mint_live      : MintLive sqrt := sorry\n\nend OzSqrt\n",
+  "sha256": "2b017172d6a6bcbf79406ee24a5afb3e706b10bc4f89398a9aded234ecf19037",
+  "proved_required": [
+   "req_mint_backed",
+   "req_newton_budget",
+   "req_sqrt_not_above"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_mint_backed",
+   "req_newton_budget",
+   "req_sqrt_not_above"
+  ],
+  "text": "import OzSqrt.Spec\nimport OzSqrt.Lemmas\nimport ProofForgeFin.Sqrt\nimport ProofForgeFin.Word\nimport ProofForgeFin.Evm.Bits\n/-!\nThe square-root routine under repair, `Math.sqrt(uint256 a)` in the style of OpenZeppelin\nContracts `Math.sol`, as this pool's first deposit calls it:\n\n```\nfunction sqrt(uint256 a) internal pure returns (uint256) {\n    if (a == 0) {\n        return 0;\n    }\n    uint256 result = 1 << (log2(a) >> 1);\n    unchecked {\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        return min(result, a / result);\n    }\n}\n```\n-/\nnamespace OzSqrt\n\ndef sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)\n\ntheorem ushiftRightBV (x k : U256) : (x >>> k).toNat = x.toNat / 2 ^ k.toNat := by\n  have h : (x >>> k) = (x >>> k.toNat) := rfl\n  rw [h, BitVec.toNat_ushiftRight, Nat.shiftRight_eq_div_pow]\n\ntheorem shiftLeftBV1 (k : U256) (h : k.toNat < 256) :\n    ((1 : U256) <<< k).toNat = 2 ^ k.toNat := by\n  have h1 : ((1 : U256) <<< k) = ((1 : U256) <<< k.toNat) := rfl\n  have h0 : ((1 : U256)).toNat = 1 := rfl\n  have h2 : ((1 : BitVec 256) <<< k.toNat).toNat = 1 * 2 ^ k.toNat % 2 ^ 256 := by\n    rw [BitVec.toNat_shiftLeft, h0, Nat.shiftLeft_eq]\n  rw [h1, h2, Nat.one_mul]\n  exact Nat.mod_eq_of_lt (Nat.pow_lt_pow_right (by decide) h)\n\ntheorem sqrt_eq7 : \u2200 a : U256, sqrt a = newtonSqrt 7 a := by\n  intro a\n  simp only [sqrt, newtonSqrt, iterate, newtonStep]\n\ntheorem log2_lt256 (a : U256) (h0 : a.toNat \u2260 0) : Nat.log2 a.toNat < 256 := by\n  have hA := a.isLt\n  have h := (Nat.log2_lt h0).mpr hA\n  simpa using h\n\ntheorem init_val (a : U256) :\n    ((1 : U256) <<< (log2 a >>> 1)).toNat = 2 ^ (Nat.log2 a.toNat / 2) := by\n  have hk : (log2 a >>> 1).toNat = Nat.log2 a.toNat / 2 := by\n    rw [BitVec.toNat_ushiftRight, Nat.shiftRight_eq_div_pow, toNat_log2]\n  have hlt : (log2 a >>> 1).toNat < 256 := by\n    rw [hk]\n    by_cases h0 : a.toNat = 0\n    \u00b7 rw [h0]; decide\n    \u00b7 have hlog := log2_lt256 a h0\n      omega\n  rw [shiftLeftBV1 _ hlt, hk]\n\ndef nx (A q : Nat) : Nat \u2192 Nat\n  | 0 => 2 ^ q\n  | n+1 => ProofForgeFin.Sqrt.newton A (nx A q n)\n\ntheorem pow_le_sqrt_aux (A : Nat) (h0 : A \u2260 0) :\n    2 ^ (Nat.log2 A / 2) \u2264 Nat.sqrt A := by\n  apply ProofForgeFin.Sqrt.two_pow_le_sqrt\n  have h2 : 2 * (Nat.log2 A / 2) \u2264 Nat.log2 A := by omega\n  have h3 : (2 : Nat) ^ (2 * (Nat.log2 A / 2)) \u2264 2 ^ Nat.log2 A :=\n    Nat.pow_le_pow_right (by decide) h2\n  have h4 : 2 ^ Nat.log2 A \u2264 A := (ProofForgeFin.Evm.log2_spec h0).1\n  omega\n\ntheorem sqrt_le_nx_succ (A q : Nat) (h0 : A \u2260 0) (hq : q = Nat.log2 A / 2)\n    (n : Nat) : Nat.sqrt A \u2264 nx A q (n + 1) := by\n  induction n with\n  | zero =>\n    show Nat.sqrt A \u2264 ProofForgeFin.Sqrt.newton A (2 ^ q)\n    rw [hq]\n    apply ProofForgeFin.Sqrt.sqrt_le_newton\n    exact Nat.two_pow_pos _\n  | succ n ih =>\n    show Nat.sqrt A \u2264 ProofForgeFin.Sqrt.newton A (nx A q (n + 1))\n    apply ProofForgeFin.Sqrt.sqrt_le_newton\n    have hs : 0 < Nat.sqrt A := ProofForgeFin.Sqrt.sqrt_pos (by omega)\n    omega\n\ntheorem pow_le_nx (A q : Nat) (h0 : A \u2260 0) (hq : q = Nat.log2 A / 2)\n    (n : Nat) : 2 ^ q \u2264 nx A q n := by\n  cases n with\n  | zero => exact Nat.le_refl _\n  | succ n =>\n    have h1 : 2 ^ q \u2264 Nat.sqrt A := by rw [hq]; exact pow_le_sqrt_aux A h0\n    have h2 : Nat.sqrt A \u2264 nx A q (n + 1) := sqrt_le_nx_succ A q h0 hq n\n    omega\n\ntheorem nx_le_succ_bound (A q : Nat) (h0 : A \u2260 0) (hq : q = Nat.log2 A / 2)\n    (n : Nat) : nx A q (n + 1) \u2264 nx A q 1 + 1 := by\n  have hsqrt : \u2200 m : Nat, Nat.sqrt A \u2264 nx A q (m + 1) := fun m =>\n    sqrt_le_nx_succ A q h0 hq m\n  induction n with\n  | zero => exact Nat.le_succ _\n  | succ n ih =>\n    have hle : Nat.sqrt A \u2264 nx A q (n + 1) := hsqrt n\n    have hX1 : Nat.sqrt A \u2264 nx A q 1 := hsqrt 0\n    have hspos : 0 < Nat.sqrt A := ProofForgeFin.Sqrt.sqrt_pos (by omega)\n    have hpos : 0 < nx A q (n + 1) := by omega\n    have hgoal : nx A q (n + 1 + 1) =\n        ProofForgeFin.Sqrt.newton A (nx A q (n + 1)) := rfl\n    rw [hgoal]\n    rcases Nat.lt_or_ge (Nat.sqrt A) (nx A q (n + 1)) with hlt | hge\n    \u00b7 have hlt2 : ProofForgeFin.Sqrt.newton A (nx A q (n + 1)) <\n          nx A q (n + 1) :=\n        ProofForgeFin.Sqrt.newton_lt_self hlt\n      omega\n    \u00b7 have heq : nx A q (n + 1) = Nat.sqrt A := by omega\n      rw [heq]\n      have hmem := ProofForgeFin.Sqrt.newton_of_mem hpos hle (by omega)\n      rw [heq] at hmem\n      rcases hmem with h | h\n      \u00b7 omega\n      \u00b7 obtain \u27e8-, h2, -\u27e9 := h\n        omega\n\ntheorem div_four_bound (A : Nat) (h0 : A \u2260 0) :\n    A / 2 ^ (Nat.log2 A / 2) < 4 * 2 ^ (Nat.log2 A / 2) := by\n  have hAup : A < 2 ^ (Nat.log2 A + 1) := (ProofForgeFin.Evm.log2_spec h0).2\n  have hle : Nat.log2 A + 1 \u2264 2 * (Nat.log2 A / 2) + 2 := by omega\n  have hcap : A < 2 ^ (2 * (Nat.log2 A / 2) + 2) :=\n    Nat.lt_of_lt_of_le hAup (Nat.pow_le_pow_right (by decide) hle)\n  have hpow : (2 : Nat) ^ (2 * (Nat.log2 A / 2) + 2)\n      = (4 * 2 ^ (Nat.log2 A / 2)) * 2 ^ (Nat.log2 A / 2) := by\n    have e1 : 2 * (Nat.log2 A / 2) + 2 =\n        (Nat.log2 A / 2) + (2 + (Nat.log2 A / 2)) := by omega\n    rw [e1, Nat.pow_add, Nat.pow_add]\n    have h4 : (2 : Nat) ^ 2 = 4 := by decide\n    rw [h4]\n    exact Nat.mul_comm _ _\n  have hpos : 0 < 2 ^ (Nat.log2 A / 2) := Nat.two_pow_pos _\n  rw [hpow] at hcap\n  exact (Nat.div_lt_iff_lt_mul hpos).mpr hcap\n\ntheorem q_le127 (a : U256) (h0 : a.toNat \u2260 0) :\n    Nat.log2 a.toNat / 2 \u2264 127 := by\n  have hlog := log2_lt256 a h0\n  omega\n\ntheorem nx_overflow (a : U256) (h0 : a.toNat \u2260 0) (n : Nat) :\n    nx a.toNat (Nat.log2 a.toNat / 2) n +\n      a.toNat / nx a.toNat (Nat.log2 a.toNat / 2) n < 2 ^ 256 := by\n  have hq : Nat.log2 a.toNat / 2 = Nat.log2 a.toNat / 2 := rfl\n  have hA256 : a.toNat < 2 ^ 256 := a.isLt\n  have hq127 : Nat.log2 a.toNat / 2 \u2264 127 := q_le127 a h0\n  have h2q : (2 : Nat) ^ (Nat.log2 a.toNat / 2) \u2264 2 ^ 127 :=\n    Nat.pow_le_pow_right (by decide) hq127\n  have hdiv4 : a.toNat / 2 ^ (Nat.log2 a.toNat / 2) < 4 * 2 ^ (Nat.log2 a.toNat / 2) :=\n    div_four_bound a.toNat h0\n  have h4pow : (4 : Nat) * 2 ^ (Nat.log2 a.toNat / 2) \u2264 4 * 2 ^ 127 := by\n    apply Nat.mul_le_mul_left\n    exact h2q\n  cases n with\n  | zero =>\n    show 2 ^ (Nat.log2 a.toNat / 2) +\n      a.toNat / 2 ^ (Nat.log2 a.toNat / 2) < 2 ^ 256\n    omega\n  | succ n =>\n    have hlo : 2 ^ (Nat.log2 a.toNat / 2) \u2264\n        nx a.toNat (Nat.log2 a.toNat / 2) (n + 1) :=\n      pow_le_nx a.toNat (Nat.log2 a.toNat / 2) h0 rfl (n + 1)\n    have hposq : 0 < 2 ^ (Nat.log2 a.toNat / 2) := Nat.two_pow_pos _\n    have hdivmono : a.toNat / nx a.toNat (Nat.log2 a.toNat / 2) (n + 1) \u2264\n        a.toNat / 2 ^ (Nat.log2 a.toNat / 2) :=\n      Nat.div_le_div_left hlo hposq\n    have hub : nx a.toNat (Nat.log2 a.toNat / 2) (n + 1) \u2264\n        nx a.toNat (Nat.log2 a.toNat / 2) 1 + 1 :=\n      nx_le_succ_bound a.toNat (Nat.log2 a.toNat / 2) h0 rfl n\n    have hX1 : ProofForgeFin.Sqrt.newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)) \u2264\n        3 * 2 ^ (Nat.log2 a.toNat / 2) := by\n      unfold ProofForgeFin.Sqrt.newton\n      omega\n    have hX1eq : nx a.toNat (Nat.log2 a.toNat / 2) 1 =\n        ProofForgeFin.Sqrt.newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)) := rfl\n    rw [hX1eq] at hub\n    omega\n\ntheorem e1_four_aux (x d s e1 : Nat) (hx : 0 < x) (hs : s = x + d) (hd : d \u2264 x)\n    (herr : 2 * x * e1 \u2264 d * d + 2 * s) : 4 * e1 \u2264 s + 8 := by\n  have h1 : d * d \u2264 d * x := Nat.mul_le_mul_left d hd\n  have h2 : 2 * (d * d) \u2264 2 * (d * x) := Nat.mul_le_mul_left 2 h1\n  have h3 : d * (x + 4) \u2264 x * (x + 4) := Nat.mul_le_mul_right (x + 4) hd\n  have h3e : d * x + d * 4 \u2264 x * x + x * 4 := by\n    have a : d * (x + 4) = d * x + d * 4 := Nat.mul_add d x 4\n    have b : x * (x + 4) = x * x + x * 4 := Nat.mul_add x x 4\n    rw [a] at h3\n    rw [b] at h3\n    exact h3\n  have h3f : d * x + 4 * d \u2264 x * x + 4 * x := by\n    have h3c : d * 4 = 4 * d := Nat.mul_comm d 4\n    have h4c : x * 4 = 4 * x := Nat.mul_comm x 4\n    rw [h3c] at h3e\n    rw [h4c] at h3e\n    exact h3e\n  have h5 : 2 * (d * d) + 4 * d \u2264 2 * (d * x) + 4 * d := Nat.add_le_add_right h2 (4 * d)\n  have h6 : 2 * (d * x) + 4 * d \u2264 x * x + d * x + 4 * x := by omega\n  have h7 : 2 * (d * d) + 4 * d \u2264 x * x + d * x + 4 * x := Nat.le_trans h5 h6\n  have hs4 : 4 * s = 4 * x + 4 * d := by rw [hs]; exact Nat.mul_add 4 x d\n  have h8 : 2 * (d * d) + 4 * s \u2264 x * x + d * x + 8 * x := by omega\n  have h9 : 2 * (2 * x * e1) \u2264 2 * (d * d + 2 * s) := Nat.mul_le_mul_left 2 herr\n  have h9e : 2 * (d * d + 2 * s) = 2 * (d * d) + 4 * s := by\n    have a : 2 * (d * d + 2 * s) = 2 * (d * d) + 2 * (2 * s) := Nat.mul_add 2 (d * d) (2 * s)\n    have b : 2 * (2 * s) = 4 * s := by\n      have c : (2 : Nat) * 2 = 4 := by decide\n      calc 2 * (2 * s) = (2 * 2) * s := by rw [Nat.mul_assoc]\n        _ = 4 * s := by rw [c]\n    rw [a, b]\n  have h10a : 4 * e1 * x = 2 * (2 * x * e1) := by ac_rfl\n  have h10b : (s + 8) * x = x * x + d * x + 8 * x := by\n    have a : (s + 8) * x = s * x + 8 * x := Nat.add_mul s 8 x\n    have b : s * x = x * x + d * x := by\n      rw [hs, Nat.add_mul, Nat.mul_comm d x]\n    rw [a, b]\n  have h10 : 4 * e1 * x \u2264 (s + 8) * x := by\n    calc 4 * e1 * x = 2 * (2 * x * e1) := h10a\n      _ \u2264 2 * (d * d + 2 * s) := h9\n      _ = 2 * (d * d) + 4 * s := h9e\n      _ \u2264 x * x + d * x + 8 * x := h8\n      _ = (s + 8) * x := by rw [h10b]\n  exact Nat.le_of_mul_le_mul_right h10 hx\n\ntheorem quad_step_aux (s e e' C K C' K' : Nat) (hs4 : 4 \u2264 s) (hs0 : 0 < s)\n    (hC : C * e \u2264 s + K) (herr : (e' - 1) * (2 * s) \u2264 e * e)\n    (hC' : C' = 2 * C * C) (hK' : K' = 2 * K + K * K / 4 + C' + 1) :\n    C' * e' \u2264 s + K' := by\n  by_cases he' : e' = 0\n  \u00b7 subst he'\n    simp\n  \u00b7 have he1 : 1 \u2264 e' := by omega\n    have hCe2 : (C * e) * (C * e) \u2264 (s + K) * (s + K) := Nat.mul_le_mul hC hC\n    have hsq1 : (C * e) * (C * e) = (e * e) * (C * C) := by ac_rfl\n    have hsq2 : (e * e) * (C * C) \u2264 (s + K) * (s + K) := by\n      rw [\u2190 hsq1]; exact hCe2\n    have hmul1 : ((e' - 1) * (2 * s)) * (C * C) \u2264 (e * e) * (C * C) :=\n      Nat.mul_le_mul_right (C * C) herr\n    have hmid_eq : (e' - 1) * C' * s = ((e' - 1) * (2 * s)) * (C * C) := by\n      rw [hC']; ac_rfl\n    have hmid : (e' - 1) * C' * s \u2264 (s + K) * (s + K) := by\n      rw [hmid_eq]; exact Nat.le_trans hmul1 hsq2\n    have he'e : (e' - 1) + 1 = e' := Nat.sub_add_cancel he1\n    have hCe'e : C' * e' = C' * (e' - 1) + C' := by\n      conv => lhs; rw [\u2190 he'e, Nat.mul_add, Nat.mul_one]\n    have hmod : 4 * (K * K / 4) + K * K % 4 = K * K := Nat.div_add_mod (K * K) 4\n    have hmodlt : K * K % 4 < 4 := Nat.mod_lt _ (by decide)\n    have hK4le : (K * K / 4) * 4 \u2264 (K * K / 4) * s :=\n      Nat.mul_le_mul_left (K * K / 4) hs4\n    have hK4eq : (K * K / 4) * 4 = 4 * (K * K / 4) := Nat.mul_comm _ _\n    have hKKs : K * K \u2264 (K * K / 4) * s + s := by grind\n    have hsq_expand : (s + K) * (s + K) = s * s + 2 * K * s + K * K := by\n      grind\n    have hgoal_mul : C' * e' * s \u2264 (s + K') * s := by\n      have e1 : C' * e' * s = (e' - 1) * C' * s + C' * s := by\n        rw [hCe'e, Nat.add_mul, Nat.mul_comm (C') (e' - 1)]\n      have e2 : (s + K') * s = s * s + K' * s := Nat.add_mul _ _ _\n      have e3 : K' * s = (2 * K + K * K / 4 + C' + 1) * s := by rw [hK']\n      have e4 : (2 * K + K * K / 4 + C' + 1) * s =\n          2 * K * s + (K * K / 4) * s + C' * s + s := by\n        have a1 : (2 * K + K * K / 4 + C' + 1) * s =\n            (2 * K + K * K / 4 + C') * s + s := by\n          rw [Nat.add_mul, Nat.one_mul]\n        have a2 : (2 * K + K * K / 4 + C') * s =\n            (2 * K + K * K / 4) * s + C' * s := by\n          rw [Nat.add_mul]\n        have a3 : (2 * K + K * K / 4) * s =\n            (2 * K) * s + (K * K / 4) * s := by\n          rw [Nat.add_mul]\n        rw [a1, a2, a3]\n      grind\n    exact Nat.le_of_mul_le_mul_right hgoal_mul hs0\n\ntheorem sq_err_of_le_aux (s e e' : Nat) (hle : e' \u2264 e * e / (2 * s) + 1) :\n    (e' - 1) * (2 * s) \u2264 e * e := by\n  by_cases he' : e' = 0\n  \u00b7 subst he'\n    simp\n  \u00b7 have he1 : 1 \u2264 e' := by omega\n    have h1 : e' - 1 \u2264 e * e / (2 * s) := by omega\n    have h2 : (e' - 1) * (2 * s) \u2264 (e * e / (2 * s)) * (2 * s) :=\n      Nat.mul_le_mul_right (2 * s) h1\n    have h3 : (e * e / (2 * s)) * (2 * s) \u2264 e * e :=\n      Nat.div_mul_le_self (e * e) (2 * s)\n    exact Nat.le_trans h2 h3\n\ntheorem s_lt_2x_aux (A : Nat) (h0 : A \u2260 0) :\n    Nat.sqrt A < 2 * 2 ^ (Nat.log2 A / 2) := by\n  have hAup : A < 2 ^ (Nat.log2 A + 1) := (ProofForgeFin.Evm.log2_spec h0).2\n  have hle : Nat.log2 A + 1 \u2264 2 * ((Nat.log2 A / 2) + 1) := by omega\n  have hcap : A < 2 ^ (2 * ((Nat.log2 A / 2) + 1)) :=\n    Nat.lt_of_lt_of_le hAup (Nat.pow_le_pow_right (by decide) hle)\n  have hs := ProofForgeFin.Sqrt.sqrt_lt_two_pow (k := (Nat.log2 A / 2) + 1) (a := A) (by omega)\n  have heq : (2 : Nat) ^ ((Nat.log2 A / 2) + 1) = 2 * 2 ^ (Nat.log2 A / 2) := by\n    rw [Nat.pow_add, Nat.pow_one]\n    exact Nat.mul_comm _ _\n  omega\n\ntheorem nx_pos_aux (A q : Nat) (h0 : A \u2260 0) (hq : q = Nat.log2 A / 2) (n : Nat) :\n    0 < nx A q (n + 1) := by\n  have hs : 0 < Nat.sqrt A := ProofForgeFin.Sqrt.sqrt_pos (by omega)\n  have hle := sqrt_le_nx_succ A q h0 hq n\n  omega\n\ntheorem e1_bound_aux (A : Nat) (h0 : A \u2260 0) :\n    4 * (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) \u2264 Nat.sqrt A + 8 := by\n  have hxpos : 0 < 2 ^ (Nat.log2 A / 2) := Nat.two_pow_pos _\n  have hxs : 2 ^ (Nat.log2 A / 2) \u2264 Nat.sqrt A := pow_le_sqrt_aux A h0\n  have hs2x : Nat.sqrt A < 2 * 2 ^ (Nat.log2 A / 2) := s_lt_2x_aux A h0\n  have hs_eq : Nat.sqrt A = 2 ^ (Nat.log2 A / 2) + (Nat.sqrt A - 2 ^ (Nat.log2 A / 2)) := by\n    omega\n  have hd_le : Nat.sqrt A - 2 ^ (Nat.log2 A / 2) \u2264 2 ^ (Nat.log2 A / 2) := by omega\n  have hnx1 : nx A (Nat.log2 A / 2) 1 = ProofForgeFin.Sqrt.newton A (2 ^ (Nat.log2 A / 2)) := rfl\n  have herr : 2 * 2 ^ (Nat.log2 A / 2) *\n      (ProofForgeFin.Sqrt.newton A (2 ^ (Nat.log2 A / 2)) - Nat.sqrt A) \u2264\n      (Nat.sqrt A - 2 ^ (Nat.log2 A / 2)) * (Nat.sqrt A - 2 ^ (Nat.log2 A / 2)) +\n        2 * Nat.sqrt A :=\n    ProofForgeFin.Sqrt.newton_err_below hxpos hxs\n  have heq : nx A (Nat.log2 A / 2) 1 - Nat.sqrt A =\n      ProofForgeFin.Sqrt.newton A (2 ^ (Nat.log2 A / 2)) - Nat.sqrt A := by\n    rw [hnx1]\n  rw [heq]\n  exact e1_four_aux (2 ^ (Nat.log2 A / 2)) (Nat.sqrt A - 2 ^ (Nat.log2 A / 2))\n    (Nat.sqrt A) _ hxpos hs_eq hd_le herr\n\ntheorem nx6_sq_le_aux (A : Nat) (h0 : A \u2260 0) (hA256 : A < 2 ^ 256)\n    (hs4 : 4 \u2264 Nat.sqrt A) :\n    (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) *\n      (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) \u2264 Nat.sqrt A := by\n  have hs0 : 0 < Nat.sqrt A := ProofForgeFin.Sqrt.sqrt_pos (by omega)\n  have hs_lt128 : Nat.sqrt A < 2 ^ 128 := by\n    have hcap : A < 2 ^ (2 * 128) := by\n      have h1 : (2 : Nat) ^ 256 = 2 ^ (2 * 128) := by omega\n      omega\n    exact ProofForgeFin.Sqrt.sqrt_lt_two_pow hcap\n  have hq : Nat.log2 A / 2 = Nat.log2 A / 2 := rfl\n  have hC1 : 4 * (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) \u2264 Nat.sqrt A + 8 :=\n    e1_bound_aux A h0\n  have hle1 : Nat.sqrt A \u2264 nx A (Nat.log2 A / 2) 1 :=\n    sqrt_le_nx_succ A _ h0 rfl 0\n  have hle2 : Nat.sqrt A \u2264 nx A (Nat.log2 A / 2) 2 :=\n    sqrt_le_nx_succ A _ h0 rfl 1\n  have hle3 : Nat.sqrt A \u2264 nx A (Nat.log2 A / 2) 3 :=\n    sqrt_le_nx_succ A _ h0 rfl 2\n  have hle4 : Nat.sqrt A \u2264 nx A (Nat.log2 A / 2) 4 :=\n    sqrt_le_nx_succ A _ h0 rfl 3\n  have hle5 : Nat.sqrt A \u2264 nx A (Nat.log2 A / 2) 5 :=\n    sqrt_le_nx_succ A _ h0 rfl 4\n  have hle6 : Nat.sqrt A \u2264 nx A (Nat.log2 A / 2) 6 :=\n    sqrt_le_nx_succ A _ h0 rfl 5\n  have hnx1eq : nx A (Nat.log2 A / 2) 2 =\n      ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 1) := rfl\n  have hnx2eq : nx A (Nat.log2 A / 2) 3 =\n      ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 2) := rfl\n  have hnx3eq : nx A (Nat.log2 A / 2) 4 =\n      ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 3) := rfl\n  have hnx4eq : nx A (Nat.log2 A / 2) 5 =\n      ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 4) := rfl\n  have hnx5eq : nx A (Nat.log2 A / 2) 6 =\n      ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 5) := rfl\n  have hq1 : ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 1) - Nat.sqrt A \u2264\n      (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) /\n        (2 * Nat.sqrt A) + 1 :=\n    ProofForgeFin.Sqrt.newton_sub_sqrt_le_sq_div hs0 hle1\n  have herr1 : (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A - 1) * (2 * Nat.sqrt A) \u2264\n      (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) := by\n    have heq2 : nx A (Nat.log2 A / 2) 2 - Nat.sqrt A =\n        ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 1) - Nat.sqrt A := by\n      rw [hnx1eq]\n    rw [heq2]\n    exact sq_err_of_le_aux _ _ _ hq1\n  have hC2 : 32 * (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) \u2264 Nat.sqrt A + 65 := by\n    have herr1' : ((nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) - 1) * (2 * Nat.sqrt A) \u2264\n        (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) := by\n      have : nx A (Nat.log2 A / 2) 2 - Nat.sqrt A - 1 =\n          (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) - 1 := by omega\n      rw [this]\n      exact herr1\n    exact quad_step_aux _ _ _ _ _ _ _ hs4 hs0 hC1 herr1' rfl rfl\n  have hq2 : ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 2) - Nat.sqrt A \u2264\n      (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) /\n        (2 * Nat.sqrt A) + 1 :=\n    ProofForgeFin.Sqrt.newton_sub_sqrt_le_sq_div hs0 hle2\n  have herr2 : (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A - 1) * (2 * Nat.sqrt A) \u2264\n      (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) := by\n    have heq3 : nx A (Nat.log2 A / 2) 3 - Nat.sqrt A =\n        ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 2) - Nat.sqrt A := by\n      rw [hnx2eq]\n    rw [heq3]\n    exact sq_err_of_le_aux _ _ _ hq2\n  have hC3 : 2048 * (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) \u2264 Nat.sqrt A + 3235 := by\n    have herr2' : ((nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) - 1) * (2 * Nat.sqrt A) \u2264\n        (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 2 - Nat.sqrt A) := by\n      have : nx A (Nat.log2 A / 2) 3 - Nat.sqrt A - 1 =\n          (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) - 1 := by omega\n      rw [this]\n      exact herr2\n    exact quad_step_aux _ _ _ _ _ _ _ hs4 hs0 hC2 herr2' rfl rfl\n  have hq3 : ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 3) - Nat.sqrt A \u2264\n      (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) /\n        (2 * Nat.sqrt A) + 1 :=\n    ProofForgeFin.Sqrt.newton_sub_sqrt_le_sq_div hs0 hle3\n  have herr3 : (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A - 1) * (2 * Nat.sqrt A) \u2264\n      (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) := by\n    have heq4 : nx A (Nat.log2 A / 2) 4 - Nat.sqrt A =\n        ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 3) - Nat.sqrt A := by\n      rw [hnx3eq]\n    rw [heq4]\n    exact sq_err_of_le_aux _ _ _ hq3\n  have hC4 : 8388608 * (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) \u2264 Nat.sqrt A + 11011385 := by\n    have herr3' : ((nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) - 1) * (2 * Nat.sqrt A) \u2264\n        (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 3 - Nat.sqrt A) := by\n      have : nx A (Nat.log2 A / 2) 4 - Nat.sqrt A - 1 =\n          (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) - 1 := by omega\n      rw [this]\n      exact herr3\n    exact quad_step_aux _ _ _ _ _ _ _ hs4 hs0 hC3 herr3' rfl rfl\n  have hq4 : ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 4) - Nat.sqrt A \u2264\n      (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) /\n        (2 * Nat.sqrt A) + 1 :=\n    ProofForgeFin.Sqrt.newton_sub_sqrt_le_sq_div hs0 hle4\n  have herr4 : (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A - 1) * (2 * Nat.sqrt A) \u2264\n      (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) := by\n    have heq5 : nx A (Nat.log2 A / 2) 5 - Nat.sqrt A =\n        ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 4) - Nat.sqrt A := by\n      rw [hnx4eq]\n    rw [heq5]\n    exact sq_err_of_le_aux _ _ _ hq4\n  have hC5 : 140737488355328 * (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) \u2264\n      Nat.sqrt A + (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) := by\n    have herr4' : ((nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) - 1) * (2 * Nat.sqrt A) \u2264\n        (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 4 - Nat.sqrt A) := by\n      have : nx A (Nat.log2 A / 2) 5 - Nat.sqrt A - 1 =\n          (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) - 1 := by omega\n      rw [this]\n      exact herr4\n    exact quad_step_aux _ _ _ _ _ _ _ hs4 hs0 hC4 herr4' rfl rfl\n  have hq5 : ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 5) - Nat.sqrt A \u2264\n      (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) /\n        (2 * Nat.sqrt A) + 1 :=\n    ProofForgeFin.Sqrt.newton_sub_sqrt_le_sq_div hs0 hle5\n  have herr5 : (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A - 1) * (2 * Nat.sqrt A) \u2264\n      (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) := by\n    have heq6 : nx A (Nat.log2 A / 2) 6 - Nat.sqrt A =\n        ProofForgeFin.Sqrt.newton A (nx A (Nat.log2 A / 2) 5) - Nat.sqrt A := by\n      rw [hnx5eq]\n    rw [heq6]\n    exact sq_err_of_le_aux _ _ _ hq5\n  have hC6 : (2 * 140737488355328 * 140737488355328) *\n      (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) \u2264\n      Nat.sqrt A + (2 * (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) +\n        (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n        (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n        (2 * 140737488355328 * 140737488355328) + 1) := by\n    have herr5' : ((nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) - 1) * (2 * Nat.sqrt A) \u2264\n        (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) * (nx A (Nat.log2 A / 2) 5 - Nat.sqrt A) := by\n      have : nx A (Nat.log2 A / 2) 6 - Nat.sqrt A - 1 =\n          (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) - 1 := by omega\n      rw [this]\n      exact herr5\n    exact quad_step_aux _ _ _ _ _ _ _ hs4 hs0 hC5 herr5' rfl rfl\n  have hsq6 : (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) *\n      (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) \u2264 Nat.sqrt A := by\n    have hC6' : (2 * 140737488355328 * 140737488355328) *\n        (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) \u2264\n        Nat.sqrt A + (2 * (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) +\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n          (2 * 140737488355328 * 140737488355328) + 1) := hC6\n    have hCpos : 0 < 2 * 140737488355328 * 140737488355328 := by decide\n    have h2pow : (2 : Nat) ^ 128 \u2264\n        (2 * 140737488355328 * 140737488355328) *\n        (2 * 140737488355328 * 140737488355328) := by decide\n    have hs128 : Nat.sqrt A < 2 ^ 128 := hs_lt128\n    have hleC : Nat.sqrt A \u2264\n        (2 * 140737488355328 * 140737488355328) *\n        (2 * 140737488355328 * 140737488355328) := by omega\n    have hCe6sq : ((2 * 140737488355328 * 140737488355328) *\n        (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A)) *\n        ((2 * 140737488355328 * 140737488355328) *\n        (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A)) \u2264\n        (Nat.sqrt A + (2 * (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) +\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n          (2 * 140737488355328 * 140737488355328) + 1)) *\n        (Nat.sqrt A + (2 * (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) +\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n          (2 * 140737488355328 * 140737488355328) + 1)) :=\n      Nat.mul_le_mul hC6' hC6'\n    have hsq_eq : ((2 * 140737488355328 * 140737488355328) *\n        (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A)) *\n        ((2 * 140737488355328 * 140737488355328) *\n        (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A)) =\n        ((nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) *\n        (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A)) *\n        ((2 * 140737488355328 * 140737488355328) *\n        (2 * 140737488355328 * 140737488355328)) := by ac_rfl\n    have hle_sq : ((nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) *\n        (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A)) *\n        ((2 * 140737488355328 * 140737488355328) *\n        (2 * 140737488355328 * 140737488355328)) \u2264\n        Nat.sqrt A *\n        ((2 * 140737488355328 * 140737488355328) *\n        (2 * 140737488355328 * 140737488355328)) := by\n      have h1 : ((nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) *\n          (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A)) *\n          ((2 * 140737488355328 * 140737488355328) *\n          (2 * 140737488355328 * 140737488355328)) \u2264\n          (Nat.sqrt A + (2 * (2 * 11011385 + 11011385 * 11011385 / 4 +\n          140737488355328 + 1) +\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n          (2 * 140737488355328 * 140737488355328) + 1)) *\n          (Nat.sqrt A + (2 * (2 * 11011385 + 11011385 * 11011385 / 4 +\n          140737488355328 + 1) +\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n          (2 * 140737488355328 * 140737488355328) + 1)) := by\n        rw [\u2190 hsq_eq]\n        exact hCe6sq\n      have hbound : (Nat.sqrt A + (2 * (2 * 11011385 + 11011385 * 11011385 / 4 +\n          140737488355328 + 1) +\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n          (2 * 140737488355328 * 140737488355328) + 1)) *\n          (Nat.sqrt A + (2 * (2 * 11011385 + 11011385 * 11011385 / 4 +\n          140737488355328 + 1) +\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n          (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n          (2 * 140737488355328 * 140737488355328) + 1)) \u2264\n          Nat.sqrt A *\n          ((2 * 140737488355328 * 140737488355328) *\n          (2 * 140737488355328 * 140737488355328)) := by\n        have hC6 : (2 : Nat) * 140737488355328 * 140737488355328 =\n            2 * 140737488355328 * 140737488355328 := rfl\n        have hK6 : (2 * (2 * 11011385 + 11011385 * 11011385 / 4 +\n            140737488355328 + 1) +\n            (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n            (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n            (2 * 140737488355328 * 140737488355328) + 1) =\n            2 * (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) +\n            (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) *\n            (2 * 11011385 + 11011385 * 11011385 / 4 + 140737488355328 + 1) / 4 +\n            (2 * 140737488355328 * 140737488355328) + 1 := rfl\n        have h2pow_le : (2 : Nat) ^ 128 \u2264\n            (2 * 140737488355328 * 140737488355328) *\n            (2 * 140737488355328 * 140737488355328) / 2 := by decide\n        have hs_le : Nat.sqrt A \u2264\n            (2 * 140737488355328 * 140737488355328) *\n            (2 * 140737488355328 * 140737488355328) / 2 := by omega\n        have hss : Nat.sqrt A * Nat.sqrt A \u2264\n            Nat.sqrt A *\n            ((2 * 140737488355328 * 140737488355328) *\n            (2 * 140737488355328 * 140737488355328) / 2) :=\n          Nat.mul_le_mul_left _ hs_le\n        sorry\n      exact Nat.le_trans h1 hbound\n    exact Nat.le_of_mul_le_mul_right hle_sq (by decide)\n  exact hsq6\n\ntheorem iterate_succ_apply_aux (f : U256 \u2192 U256) (n : Nat) (x : U256) :\n    iterate f (n + 1) x = f (iterate f n x) := by\n  induction n generalizing x with\n  | zero => rfl\n  | succ n ih =>\n    have e1 : iterate f (n + 1 + 1) x = iterate f (n + 1) (f x) := rfl\n    have e2 : iterate f (n + 1) x = iterate f n (f x) := rfl\n    rw [e1, e2, ih]\n\ntheorem exact_iter (a : U256) (h0 : a.toNat \u2260 0) (n : Nat) :\n    (iterate (newtonStep a) n ((1 : U256) <<< (log2 a >>> 1))).toNat =\n      nx a.toNat (Nat.log2 a.toNat / 2) n := by\n  induction n with\n  | zero => exact init_val a\n  | succ n ih =>\n    have hov : (iterate (newtonStep a) n ((1 : U256) <<< (log2 a >>> 1))).toNat +\n        a.toNat / (iterate (newtonStep a) n ((1 : U256) <<< (log2 a >>> 1))).toNat <\n        2 ^ 256 := by\n      rw [ih]\n      exact nx_overflow a h0 n\n    have e1 : iterate (newtonStep a) (n + 1) ((1 : U256) <<< (log2 a >>> 1)) =\n        newtonStep a (iterate (newtonStep a) n ((1 : U256) <<< (log2 a >>> 1))) :=\n      iterate_succ_apply_aux (newtonStep a) n _\n    rw [e1, toNat_newtonStep _ _ hov, ih]\n    rfl\n\ntheorem toNat_newtonSqrt7 (a : U256) (h0 : a.toNat \u2260 0) :\n    (newtonSqrt 7 a).toNat =\n      Nat.min (nx a.toNat (Nat.log2 a.toNat / 2) 7)\n        (a.toNat / nx a.toNat (Nat.log2 a.toNat / 2) 7) := by\n  have hne : \u00ac a = 0 := by\n    intro hc\n    apply h0\n    rw [hc]\n    rfl\n  unfold newtonSqrt\n  rw [if_neg hne]\n  have hex : (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))).toNat =\n      nx a.toNat (Nat.log2 a.toNat / 2) 7 := exact_iter a h0 7\n  have hmin : (OzSqrt.min\n      (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1)))\n      (a / iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1)))).toNat =\n      Nat.min (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))).toNat\n        (a / iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))).toNat :=\n    toNat_min _ _\n  rw [hmin, hex, BitVec.toNat_udiv, hex]\n\ntheorem min_sq_le (A X : Nat) (hx : 0 < X) :\n    Nat.min X (A / X) * Nat.min X (A / X) \u2264 A := by\n  have hle : A / X * X \u2264 A := Nat.div_mul_le_self A X\n  by_cases h : X \u2264 A / X\n  \u00b7 have hmin : Nat.min X (A / X) = X := Nat.min_eq_left h\n    rw [hmin]\n    calc X * X \u2264 (A / X) * X := Nat.mul_le_mul_right X h\n      _ = A / X * X := by rw [Nat.mul_comm]\n      _ \u2264 A := hle\n  \u00b7 have hlt : A / X < X := by omega\n    have hmin : Nat.min X (A / X) = A / X := Nat.min_eq_right (Nat.le_of_lt hlt)\n    rw [hmin]\n    calc A / X * (A / X) \u2264 X * (A / X) :=\n          Nat.mul_le_mul_right (A / X) (Nat.le_of_lt hlt)\n      _ = A / X * X := by rw [Nat.mul_comm]\n      _ \u2264 A := hle\n\ntheorem sqrt_sq_le (a : U256) : (sqrt a).toNat * (sqrt a).toNat \u2264 a.toNat := by\n  by_cases h0 : a.toNat = 0\n  \u00b7 have ha0 : a = 0 := BitVec.eq_of_toNat_eq (by simpa using h0)\n    subst ha0\n    have hs0 : sqrt (0 : U256) = 0 := rfl\n    have h1 : (sqrt (0 : U256)).toNat = 0 := by rw [hs0]; rfl\n    have h2 : ((0 : U256)).toNat = 0 := rfl\n    rw [h1, h2, Nat.zero_mul]\n    exact Nat.le_refl _\n  \u00b7 have heq : sqrt a = newtonSqrt 7 a := sqrt_eq7 a\n    have hto : (sqrt a).toNat =\n        Nat.min (nx a.toNat (Nat.log2 a.toNat / 2) 7)\n          (a.toNat / nx a.toNat (Nat.log2 a.toNat / 2) 7) := by\n      rw [heq]\n      exact toNat_newtonSqrt7 a h0\n    rw [hto]\n    have hpos : 0 < nx a.toNat (Nat.log2 a.toNat / 2) 7 := by\n      have hlo := pow_le_nx a.toNat (Nat.log2 a.toNat / 2) h0 rfl 7\n      have h2 : 0 < 2 ^ (Nat.log2 a.toNat / 2) := Nat.two_pow_pos _\n      omega\n    exact min_sq_le a.toNat _ hpos\n\ntheorem req_sqrt_not_above : SqrtNotAbove sqrt := by\n  intro a\n  exact sqrt_sq_le a\n\ntheorem req_newton_budget : NewtonBudget sqrt := by\n  exact \u27e87, Nat.le_refl 7, sqrt_eq7\u27e9\n\ntheorem req_mint_backed : MintBacked sqrt := by\n  intro a0 a1 l hl\n  have h := firstMint_eq_some hl\n  obtain \u27e8hprod, _, hliqu\u27e9 := h\n  have hmul : (a0 * a1).toNat = a0.toNat * a1.toNat :=\n    toNat_mul_of_lt hprod\n  have hroot : (sqrt (a0 * a1)).toNat * (sqrt (a0 * a1)).toNat \u2264\n      (a0 * a1).toNat := sqrt_sq_le _\n  rw [hmul, \u2190 hliqu] at hroot\n  exact hroot\n\ntheorem req_sqrt_not_below : SqrtNotBelow sqrt := sorry\ntheorem req_sqrt_up_covers : SqrtUpCovers sqrt := sorry\ntheorem req_sqrt_up_tight  : SqrtUpTight sqrt := sorry\ntheorem req_mint_full      : MintFull sqrt := sorry\ntheorem req_mint_live      : MintLive sqrt := sorry\n\nend OzSqrt\n"
+ },
+ "proved": [
+  {
+   "name": "sqrt",
+   "kind": "def",
+   "text": "def sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)",
+   "deps": [],
+   "statement": "def sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sqrt",
+   "kind": "def",
+   "text": "def sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)",
+   "deps": [],
+   "statement": "def sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "init_val",
+   "kind": "theorem",
+   "text": "theorem init_val (a : U256) :\n    ((1 : U256) <<< (log2 a >>> 1)).toNat = 2 ^ (Nat.log2 a.toNat / 2) := by\n  have hk : (log2 a >>> 1).toNat = Nat.log2 a.toNat / 2 := by\n    rw [BitVec.toNat_ushiftRight, Nat.shiftRight_eq_div_pow, toNat_log2]\n  have hlt : (log2 a >>> 1).toNat < 256 := by\n    rw [hk]\n    by_cases h0 : a.toNat = 0\n    \u00b7 rw [h0]; decide\n    \u00b7 have hlog := log2_lt256 a h0\n      omega\n  rw [shiftLeftBV1 _ hlt, hk]",
+   "deps": [
+    "log2_lt256",
+    "shiftLeftBV1"
+   ],
+   "statement": "theorem init_val (a : U256) :\n    ((1 : U256) <<< (log2 a >>> 1)).toNat = 2 ^ (Nat.log2 a.toNat / 2)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "log2_lt256",
+   "kind": "theorem",
+   "text": "theorem log2_lt256 (a : U256) (h0 : a.toNat \u2260 0) : Nat.log2 a.toNat < 256 := by\n  have hA := a.isLt\n  have h := (Nat.log2_lt h0).mpr hA\n  simpa using h",
+   "deps": [],
+   "statement": "theorem log2_lt256 (a : U256) (h0 : a.toNat \u2260 0) : Nat.log2 a.toNat < 256",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sqrt_eq7",
+   "kind": "theorem",
+   "text": "theorem sqrt_eq7 : \u2200 a : U256, sqrt a = newtonSqrt 7 a := by\n  intro a\n  simp only [sqrt, newtonSqrt, iterate, newtonStep]",
+   "deps": [
+    "sqrt"
+   ],
+   "statement": "theorem sqrt_eq7 : \u2200 a : U256, sqrt a = newtonSqrt 7 a",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "shiftLeftBV1",
+   "kind": "theorem",
+   "text": "theorem shiftLeftBV1 (k : U256) (h : k.toNat < 256) :\n    ((1 : U256) <<< k).toNat = 2 ^ k.toNat := by\n  have h1 : ((1 : U256) <<< k) = ((1 : U256) <<< k.toNat) := rfl\n  have h0 : ((1 : U256)).toNat = 1 := rfl\n  have h2 : ((1 : BitVec 256) <<< k.toNat).toNat = 1 * 2 ^ k.toNat % 2 ^ 256 := by\n    rw [BitVec.toNat_shiftLeft, h0, Nat.shiftLeft_eq]\n  rw [h1, h2, Nat.one_mul]\n  exact Nat.mod_eq_of_lt (Nat.pow_lt_pow_right (by decide) h)",
+   "deps": [],
+   "statement": "theorem shiftLeftBV1 (k : U256) (h : k.toNat < 256) :\n    ((1 : U256) <<< k).toNat = 2 ^ k.toNat",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "ushiftRightBV",
+   "kind": "theorem",
+   "text": "theorem ushiftRightBV (x k : U256) : (x >>> k).toNat = x.toNat / 2 ^ k.toNat := by\n  have h : (x >>> k) = (x >>> k.toNat) := rfl\n  rw [h, BitVec.toNat_ushiftRight, Nat.shiftRight_eq_div_pow]",
+   "deps": [],
+   "statement": "theorem ushiftRightBV (x k : U256) : (x >>> k).toNat = x.toNat / 2 ^ k.toNat",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "exact_iter",
+   "kind": "theorem",
+   "text": "theorem exact_iter (a : U256) (h0 : a.toNat \u2260 0) (n : Nat) :\n    (iterate (newtonStep a) n ((1 : U256) <<< (log2 a >>> 1))).toNat =\n      nx a.toNat (Nat.log2 a.toNat / 2) n := by\n  induction n with\n  | zero => exact init_val a\n  | succ n ih =>\n    have hov : (iterate (newtonStep a) n ((1 : U256) <<< (log2 a >>> 1))).toNat +\n        a.toNat / (iterate (newtonStep a) n ((1 : U256) <<< (log2 a >>> 1))).toNat <\n        2 ^ 256 := by\n      rw [ih]\n      exact nx_overflow a h0 n\n    have e1 : iterate (newtonStep a) (n + 1) ((1 : U256) <<< (log2 a >>> 1)) =\n        newtonStep a (iterate (newtonStep a) n ((1 : U256) <<< (log2 a >>> 1))) :=\n      iterate_succ_apply_aux (newtonStep a) n _\n    rw [e1, toNat_newtonStep _ _ hov, ih]\n    rfl",
+   "deps": [
+    "div_four_bound",
+    "init_val",
+    "iterate_succ_apply_aux",
+    "log2_lt256",
+    "nx",
+    "nx_le_succ_bound",
+    "nx_overflow",
+    "pow_le_nx",
+    "pow_le_sqrt_aux",
+    "q_le127",
+    "shiftLeftBV1",
+    "sqrt",
+    "sqrt_le_nx_succ"
+   ],
+   "statement": "theorem exact_iter (a : U256) (h0 : a.toNat \u2260 0) (n : Nat) :\n    (iterate (newtonStep a) n ((1 : U256) <<< (log2 a >>> 1))).toNat =\n      nx a.toNat (Nat.log2 a.toNat / 2) n",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "iterate_succ_apply_aux",
+   "kind": "theorem",
+   "text": "theorem iterate_succ_apply_aux (f : U256 \u2192 U256) (n : Nat) (x : U256) :\n    iterate f (n + 1) x = f (iterate f n x) := by\n  induction n generalizing x with\n  | zero => rfl\n  | succ n ih =>\n    have e1 : iterate f (n + 1 + 1) x = iterate f (n + 1) (f x) := rfl\n    have e2 : iterate f (n + 1) x = iterate f n (f x) := rfl\n    rw [e1, e2, ih]",
+   "deps": [],
+   "statement": "theorem iterate_succ_apply_aux (f : U256 \u2192 U256) (n : Nat) (x : U256) :\n    iterate f (n + 1) x = f (iterate f n x)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "nx_overflow",
+   "kind": "theorem",
+   "text": "theorem nx_overflow (a : U256) (h0 : a.toNat \u2260 0) (n : Nat) :\n    nx a.toNat (Nat.log2 a.toNat / 2) n +\n      a.toNat / nx a.toNat (Nat.log2 a.toNat / 2) n < 2 ^ 256 := by\n  have hq : Nat.log2 a.toNat / 2 = Nat.log2 a.toNat / 2 := rfl\n  have hA256 : a.toNat < 2 ^ 256 := a.isLt\n  have hq127 : Nat.log2 a.toNat / 2 \u2264 127 := q_le127 a h0\n  have h2q : (2 : Nat) ^ (Nat.log2 a.toNat / 2) \u2264 2 ^ 127 :=\n    Nat.pow_le_pow_right (by decide) hq127\n  have hdiv4 : a.toNat / 2 ^ (Nat.log2 a.toNat / 2) < 4 * 2 ^ (Nat.log2 a.toNat / 2) :=\n    div_four_bound a.toNat h0\n  have h4pow : (4 : Nat) * 2 ^ (Nat.log2 a.toNat / 2) \u2264 4 * 2 ^ 127 := by\n    apply Nat.mul_le_mul_left\n    exact h2q\n  cases n with\n  | zero =>\n    show 2 ^ (Nat.log2 a.toNat / 2) +\n      a.toNat / 2 ^ (Nat.log2 a.toNat / 2) < 2 ^ 256\n    omega\n  | succ n =>\n    have hlo : 2 ^ (Nat.log2 a.toNat / 2) \u2264\n        nx a.toNat (Nat.log2 a.toNat / 2) (n + 1) :=\n      pow_le_nx a.toNat (Nat.log2 a.toNat / 2) h0 rfl (n + 1)\n    have hposq : 0 < 2 ^ (Nat.log2 a.toNat / 2) := Nat.two_pow_pos _\n    have hdivmono : a.toNat / nx a.toNat (Nat.log2 a.toNat / 2) (n + 1) \u2264\n        a.toNat / 2 ^ (Nat.log2 a.toNat / 2) :=\n      Nat.div_le_div_left hlo hposq\n    have hub : nx a.toNat (Nat.log2 a.toNat / 2) (n + 1) \u2264\n        nx a.toNat (Nat.log2 a.toNat / 2) 1 + 1 :=\n      nx_le_succ_bound a.toNat (Nat.log2 a.toNat / 2) h0 rfl n\n    have hX1 : ProofForgeFin.Sqrt.newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)) \u2264\n        3 * 2 ^ (Nat.log2 a.toNat / 2) := by\n      unfold ProofForgeFin.Sqrt.newton\n      omega\n    have hX1eq : nx a.toNat (Nat.log2 a.toNat / 2) 1 =\n        ProofForgeFin.Sqrt.newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)) := rfl\n    rw [hX1eq] at hub\n    omega",
+   "deps": [
+    "div_four_bound",
+    "log2_lt256",
+    "nx",
+    "nx_le_succ_bound",
+    "pow_le_nx",
+    "pow_le_sqrt_aux",
+    "q_le127",
+    "sqrt",
+    "sqrt_le_nx_succ"
+   ],
+   "statement": "theorem nx_overflow (a : U256) (h0 : a.toNat \u2260 0) (n : Nat) :\n    nx a.toNat (Nat.log2 a.toNat / 2) n +\n      a.toNat / nx a.toNat (Nat.log2 a.toNat / 2) n < 2 ^ 256",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "q_le127",
+   "kind": "theorem",
+   "text": "theorem q_le127 (a : U256) (h0 : a.toNat \u2260 0) :\n    Nat.log2 a.toNat / 2 \u2264 127 := by\n  have hlog := log2_lt256 a h0\n  omega",
+   "deps": [
+    "log2_lt256"
+   ],
+   "statement": "theorem q_le127 (a : U256) (h0 : a.toNat \u2260 0) :\n    Nat.log2 a.toNat / 2 \u2264 127",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "div_four_bound",
+   "kind": "theorem",
+   "text": "theorem div_four_bound (A : Nat) (h0 : A \u2260 0) :\n    A / 2 ^ (Nat.log2 A / 2) < 4 * 2 ^ (Nat.log2 A / 2) := by\n  have hAup : A < 2 ^ (Nat.log2 A + 1) := (ProofForgeFin.Evm.log2_spec h0).2\n  have hle : Nat.log2 A + 1 \u2264 2 * (Nat.log2 A / 2) + 2 := by omega\n  have hcap : A < 2 ^ (2 * (Nat.log2 A / 2) + 2) :=\n    Nat.lt_of_lt_of_le hAup (Nat.pow_le_pow_right (by decide) hle)\n  have hpow : (2 : Nat) ^ (2 * (Nat.log2 A / 2) + 2)\n      = (4 * 2 ^ (Nat.log2 A / 2)) * 2 ^ (Nat.log2 A / 2) := by\n    have e1 : 2 * (Nat.log2 A / 2) + 2 =\n        (Nat.log2 A / 2) + (2 + (Nat.log2 A / 2)) := by omega\n    rw [e1, Nat.pow_add, Nat.pow_add]\n    have h4 : (2 : Nat) ^ 2 = 4 := by decide\n    rw [h4]\n    exact Nat.mul_comm _ _\n  have hpos : 0 < 2 ^ (Nat.log2 A / 2) := Nat.two_pow_pos _\n  rw [hpow] at hcap\n  exact (Nat.div_lt_iff_lt_mul hpos).mpr hcap",
+   "deps": [],
+   "statement": "theorem div_four_bound (A : Nat) (h0 : A \u2260 0) :\n    A / 2 ^ (Nat.log2 A / 2) < 4 * 2 ^ (Nat.log2 A / 2)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "nx_le_succ_bound",
+   "kind": "theorem",
+   "text": "theorem nx_le_succ_bound (A q : Nat) (h0 : A \u2260 0) (hq : q = Nat.log2 A / 2)\n    (n : Nat) : nx A q (n + 1) \u2264 nx A q 1 + 1 := by\n  have hsqrt : \u2200 m : Nat, Nat.sqrt A \u2264 nx A q (m + 1) := fun m =>\n    sqrt_le_nx_succ A q h0 hq m\n  induction n with\n  | zero => exact Nat.le_succ _\n  | succ n ih =>\n    have hle : Nat.sqrt A \u2264 nx A q (n + 1) := hsqrt n\n    have hX1 : Nat.sqrt A \u2264 nx A q 1 := hsqrt 0\n    have hspos : 0 < Nat.sqrt A := ProofForgeFin.Sqrt.sqrt_pos (by omega)\n    have hpos : 0 < nx A q (n + 1) := by omega\n    have hgoal : nx A q (n + 1 + 1) =\n        ProofForgeFin.Sqrt.newton A (nx A q (n + 1)) := rfl\n    rw [hgoal]\n    rcases Nat.lt_or_ge (Nat.sqrt A) (nx A q (n + 1)) with hlt | hge\n    \u00b7 have hlt2 : ProofForgeFin.Sqrt.newton A (nx A q (n + 1)) <\n          nx A q (n + 1) :=\n        ProofForgeFin.Sqrt.newton_lt_self hlt\n      omega\n    \u00b7 have heq : nx A q (n + 1) = Nat.sqrt A := by omega\n      rw [heq]\n      have hmem := ProofForgeFin.Sqrt.newton_of_mem hpos hle (by omega)\n      rw [heq] at hmem\n      rcases hmem with h | h\n      \u00b7 omega\n      \u00b7 obtain \u27e8-, h2, -\u27e9 := h\n        omega",
+   "deps": [
+    "nx",
+    "sqrt",
+    "sqrt_le_nx_succ"
+   ],
+   "statement": "theorem nx_le_succ_bound (A q : Nat) (h0 : A \u2260 0) (hq : q = Nat.log2 A / 2)\n    (n : Nat) : nx A q (n + 1) \u2264 nx A q 1 + 1",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "pow_le_nx",
+   "kind": "theorem",
+   "text": "theorem pow_le_nx (A q : Nat) (h0 : A \u2260 0) (hq : q = Nat.log2 A / 2)\n    (n : Nat) : 2 ^ q \u2264 nx A q n := by\n  cases n with\n  | zero => exact Nat.le_refl _\n  | succ n =>\n    have h1 : 2 ^ q \u2264 Nat.sqrt A := by rw [hq]; exact pow_le_sqrt_aux A h0\n    have h2 : Nat.sqrt A \u2264 nx A q (n + 1) := sqrt_le_nx_succ A q h0 hq n\n    omega",
+   "deps": [
+    "nx",
+    "pow_le_sqrt_aux",
+    "sqrt",
+    "sqrt_le_nx_succ"
+   ],
+   "statement": "theorem pow_le_nx (A q : Nat) (h0 : A \u2260 0) (hq : q = Nat.log2 A / 2)\n    (n : Nat) : 2 ^ q \u2264 nx A q n",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sqrt_le_nx_succ",
+   "kind": "theorem",
+   "text": "theorem sqrt_le_nx_succ (A q : Nat) (h0 : A \u2260 0) (hq : q = Nat.log2 A / 2)\n    (n : Nat) : Nat.sqrt A \u2264 nx A q (n + 1) := by\n  induction n with\n  | zero =>\n    show Nat.sqrt A \u2264 ProofForgeFin.Sqrt.newton A (2 ^ q)\n    rw [hq]\n    apply ProofForgeFin.Sqrt.sqrt_le_newton\n    exact Nat.two_pow_pos _\n  | succ n ih =>\n    show Nat.sqrt A \u2264 ProofForgeFin.Sqrt.newton A (nx A q (n + 1))\n    apply ProofForgeFin.Sqrt.sqrt_le_newton\n    have hs : 0 < Nat.sqrt A := ProofForgeFin.Sqrt.sqrt_pos (by omega)\n    omega",
+   "deps": [
+    "nx",
+    "sqrt"
+   ],
+   "statement": "theorem sqrt_le_nx_succ (A q : Nat) (h0 : A \u2260 0) (hq : q = Nat.log2 A / 2)\n    (n : Nat) : Nat.sqrt A \u2264 nx A q (n + 1)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "pow_le_sqrt_aux",
+   "kind": "theorem",
+   "text": "theorem pow_le_sqrt_aux (A : Nat) (h0 : A \u2260 0) :\n    2 ^ (Nat.log2 A / 2) \u2264 Nat.sqrt A := by\n  apply ProofForgeFin.Sqrt.two_pow_le_sqrt\n  have h2 : 2 * (Nat.log2 A / 2) \u2264 Nat.log2 A := by omega\n  have h3 : (2 : Nat) ^ (2 * (Nat.log2 A / 2)) \u2264 2 ^ Nat.log2 A :=\n    Nat.pow_le_pow_right (by decide) h2\n  have h4 : 2 ^ Nat.log2 A \u2264 A := (ProofForgeFin.Evm.log2_spec h0).1\n  omega",
+   "deps": [
+    "sqrt"
+   ],
+   "statement": "theorem pow_le_sqrt_aux (A : Nat) (h0 : A \u2260 0) :\n    2 ^ (Nat.log2 A / 2) \u2264 Nat.sqrt A",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "nx",
+   "kind": "def",
+   "text": "def nx (A q : Nat) : Nat \u2192 Nat\n  | 0 => 2 ^ q\n  | n+1 => ProofForgeFin.Sqrt.newton A (nx A q n)",
+   "deps": [],
+   "statement": "def nx (A q : Nat) : Nat \u2192 Nat\n  | 0 => 2 ^ q\n  | n+1 => ProofForgeFin.Sqrt.newton A (nx A q n)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "req_mint_backed",
+   "kind": "theorem",
+   "text": "theorem req_mint_backed : MintBacked sqrt := by\n  intro a0 a1 l hl\n  have h := firstMint_eq_some hl\n  obtain \u27e8hprod, _, hliqu\u27e9 := h\n  have hmul : (a0 * a1).toNat = a0.toNat * a1.toNat :=\n    toNat_mul_of_lt hprod\n  have hroot : (sqrt (a0 * a1)).toNat * (sqrt (a0 * a1)).toNat \u2264\n      (a0 * a1).toNat := sqrt_sq_le _\n  rw [hmul, \u2190 hliqu] at hroot\n  exact hroot",
+   "deps": [
+    "div_four_bound",
+    "exact_iter",
+    "init_val",
+    "iterate_succ_apply_aux",
+    "log2_lt256",
+    "min_sq_le",
+    "nx",
+    "nx_le_succ_bound",
+    "nx_overflow",
+    "pow_le_nx",
+    "pow_le_sqrt_aux",
+    "q_le127",
+    "shiftLeftBV1",
+    "sqrt",
+    "sqrt_eq7",
+    "sqrt_le_nx_succ",
+    "sqrt_sq_le",
+    "toNat_newtonSqrt7"
+   ],
+   "statement": "theorem req_mint_backed : MintBacked sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "req_newton_budget",
+   "kind": "theorem",
+   "text": "theorem req_newton_budget : NewtonBudget sqrt := by\n  exact \u27e87, Nat.le_refl 7, sqrt_eq7\u27e9",
+   "deps": [
+    "sqrt",
+    "sqrt_eq7"
+   ],
+   "statement": "theorem req_newton_budget : NewtonBudget sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "req_sqrt_not_above",
+   "kind": "theorem",
+   "text": "theorem req_sqrt_not_above : SqrtNotAbove sqrt := by\n  intro a\n  exact sqrt_sq_le a",
+   "deps": [
+    "div_four_bound",
+    "exact_iter",
+    "init_val",
+    "iterate_succ_apply_aux",
+    "log2_lt256",
+    "min_sq_le",
+    "nx",
+    "nx_le_succ_bound",
+    "nx_overflow",
+    "pow_le_nx",
+    "pow_le_sqrt_aux",
+    "q_le127",
+    "shiftLeftBV1",
+    "sqrt",
+    "sqrt_eq7",
+    "sqrt_le_nx_succ",
+    "sqrt_sq_le",
+    "toNat_newtonSqrt7"
+   ],
+   "statement": "theorem req_sqrt_not_above : SqrtNotAbove sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sqrt_sq_le",
+   "kind": "theorem",
+   "text": "theorem sqrt_sq_le (a : U256) : (sqrt a).toNat * (sqrt a).toNat \u2264 a.toNat := by\n  by_cases h0 : a.toNat = 0\n  \u00b7 have ha0 : a = 0 := BitVec.eq_of_toNat_eq (by simpa using h0)\n    subst ha0\n    have hs0 : sqrt (0 : U256) = 0 := rfl\n    have h1 : (sqrt (0 : U256)).toNat = 0 := by rw [hs0]; rfl\n    have h2 : ((0 : U256)).toNat = 0 := rfl\n    rw [h1, h2, Nat.zero_mul]\n    exact Nat.le_refl _\n  \u00b7 have heq : sqrt a = newtonSqrt 7 a := sqrt_eq7 a\n    have hto : (sqrt a).toNat =\n        Nat.min (nx a.toNat (Nat.log2 a.toNat / 2) 7)\n          (a.toNat / nx a.toNat (Nat.log2 a.toNat / 2) 7) := by\n      rw [heq]\n      exact toNat_newtonSqrt7 a h0\n    rw [hto]\n    have hpos : 0 < nx a.toNat (Nat.log2 a.toNat / 2) 7 := by\n      have hlo := pow_le_nx a.toNat (Nat.log2 a.toNat / 2) h0 rfl 7\n      have h2 : 0 < 2 ^ (Nat.log2 a.toNat / 2) := Nat.two_pow_pos _\n      omega\n    exact min_sq_le a.toNat _ hpos",
+   "deps": [
+    "div_four_bound",
+    "exact_iter",
+    "init_val",
+    "iterate_succ_apply_aux",
+    "log2_lt256",
+    "min_sq_le",
+    "nx",
+    "nx_le_succ_bound",
+    "nx_overflow",
+    "pow_le_nx",
+    "pow_le_sqrt_aux",
+    "q_le127",
+    "shiftLeftBV1",
+    "sqrt",
+    "sqrt_eq7",
+    "sqrt_le_nx_succ",
+    "toNat_newtonSqrt7"
+   ],
+   "statement": "theorem sqrt_sq_le (a : U256) : (sqrt a).toNat * (sqrt a).toNat \u2264 a.toNat",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "min_sq_le",
+   "kind": "theorem",
+   "text": "theorem min_sq_le (A X : Nat) (hx : 0 < X) :\n    Nat.min X (A / X) * Nat.min X (A / X) \u2264 A := by\n  have hle : A / X * X \u2264 A := Nat.div_mul_le_self A X\n  by_cases h : X \u2264 A / X\n  \u00b7 have hmin : Nat.min X (A / X) = X := Nat.min_eq_left h\n    rw [hmin]\n    calc X * X \u2264 (A / X) * X := Nat.mul_le_mul_right X h\n      _ = A / X * X := by rw [Nat.mul_comm]\n      _ \u2264 A := hle\n  \u00b7 have hlt : A / X < X := by omega\n    have hmin : Nat.min X (A / X) = A / X := Nat.min_eq_right (Nat.le_of_lt hlt)\n    rw [hmin]\n    calc A / X * (A / X) \u2264 X * (A / X) :=\n          Nat.mul_le_mul_right (A / X) (Nat.le_of_lt hlt)\n      _ = A / X * X := by rw [Nat.mul_comm]\n      _ \u2264 A := hle",
+   "deps": [],
+   "statement": "theorem min_sq_le (A X : Nat) (hx : 0 < X) :\n    Nat.min X (A / X) * Nat.min X (A / X) \u2264 A",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "toNat_newtonSqrt7",
+   "kind": "theorem",
+   "text": "theorem toNat_newtonSqrt7 (a : U256) (h0 : a.toNat \u2260 0) :\n    (newtonSqrt 7 a).toNat =\n      Nat.min (nx a.toNat (Nat.log2 a.toNat / 2) 7)\n        (a.toNat / nx a.toNat (Nat.log2 a.toNat / 2) 7) := by\n  have hne : \u00ac a = 0 := by\n    intro hc\n    apply h0\n    rw [hc]\n    rfl\n  unfold newtonSqrt\n  rw [if_neg hne]\n  have hex : (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))).toNat =\n      nx a.toNat (Nat.log2 a.toNat / 2) 7 := exact_iter a h0 7\n  have hmin : (OzSqrt.min\n      (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1)))\n      (a / iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1)))).toNat =\n      Nat.min (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))).toNat\n        (a / iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))).toNat :=\n    toNat_min _ _\n  rw [hmin, hex, BitVec.toNat_udiv, hex]",
+   "deps": [
+    "div_four_bound",
+    "exact_iter",
+    "init_val",
+    "iterate_succ_apply_aux",
+    "log2_lt256",
+    "nx",
+    "nx_le_succ_bound",
+    "nx_overflow",
+    "pow_le_nx",
+    "pow_le_sqrt_aux",
+    "q_le127",
+    "shiftLeftBV1",
+    "sqrt",
+    "sqrt_le_nx_succ"
+   ],
+   "statement": "theorem toNat_newtonSqrt7 (a : U256) (h0 : a.toNat \u2260 0) :\n    (newtonSqrt 7 a).toNat =\n      Nat.min (nx a.toNat (Nat.log2 a.toNat / 2) 7)\n        (a.toNat / nx a.toNat (Nat.log2 a.toNat / 2) 7)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "e1_four_aux",
+   "kind": "theorem",
+   "text": "theorem e1_four_aux (x d s e1 : Nat) (hx : 0 < x) (hs : s = x + d) (hd : d \u2264 x)\n    (herr : 2 * x * e1 \u2264 d * d + 2 * s) : 4 * e1 \u2264 s + 8 := by\n  have h1 : d * d \u2264 d * x := Nat.mul_le_mul_left d hd\n  have h2 : 2 * (d * d) \u2264 2 * (d * x) := Nat.mul_le_mul_left 2 h1\n  have h3 : d * (x + 4) \u2264 x * (x + 4) := Nat.mul_le_mul_right (x + 4) hd\n  have h3e : d * x + d * 4 \u2264 x * x + x * 4 := by\n    have a : d * (x + 4) = d * x + d * 4 := Nat.mul_add d x 4\n    have b : x * (x + 4) = x * x + x * 4 := Nat.mul_add x x 4\n    rw [a] at h3\n    rw [b] at h3\n    exact h3\n  have h3f : d * x + 4 * d \u2264 x * x + 4 * x := by\n    have h3c : d * 4 = 4 * d := Nat.mul_comm d 4\n    have h4c : x * 4 = 4 * x := Nat.mul_comm x 4\n    rw [h3c] at h3e\n    rw [h4c] at h3e\n    exact h3e\n  have h5 : 2 * (d * d) + 4 * d \u2264 2 * (d * x) + 4 * d := Nat.add_le_add_right h2 (4 * d)\n  have h6 : 2 * (d * x) + 4 * d \u2264 x * x + d * x + 4 * x := by omega\n  have h7 : 2 * (d * d) + 4 * d \u2264 x * x + d * x + 4 * x := Nat.le_trans h5 h6\n  have hs4 : 4 * s = 4 * x + 4 * d := by rw [hs]; exact Nat.mul_add 4 x d\n  have h8 : 2 * (d * d) + 4 * s \u2264 x * x + d * x + 8 * x := by omega\n  have h9 : 2 * (2 * x * e1) \u2264 2 * (d * d + 2 * s) := Nat.mul_le_mul_left 2 herr\n  have h9e : 2 * (d * d + 2 * s) = 2 * (d * d) + 4 * s := by\n    have a : 2 * (d * d + 2 * s) = 2 * (d * d) + 2 * (2 * s) := Nat.mul_add 2 (d * d) (2 * s)\n    have b : 2 * (2 * s) = 4 * s := by\n      have c : (2 : Nat) * 2 = 4 := by decide\n      calc 2 * (2 * s) = (2 * 2) * s := by rw [Nat.mul_assoc]\n        _ = 4 * s := by rw [c]\n    rw [a, b]\n  have h10a : 4 * e1 * x = 2 * (2 * x * e1) := by ac_rfl\n  have h10b : (s + 8) * x = x * x + d * x + 8 * x := by\n    have a : (s + 8) * x = s * x + 8 * x := Nat.add_mul s 8 x\n    have b : s * x = x * x + d * x := by\n      rw [hs, Nat.add_mul, Nat.mul_comm d x]\n    rw [a, b]\n  have h10 : 4 * e1 * x \u2264 (s + 8) * x := by\n    calc 4 * e1 * x = 2 * (2 * x * e1) := h10a\n      _ \u2264 2 * (d * d + 2 * s) := h9\n      _ = 2 * (d * d) + 4 * s := h9e\n      _ \u2264 x * x + d * x + 8 * x := h8\n      _ = (s + 8) * x := by rw [h10b]\n  exact Nat.le_of_mul_le_mul_right h10 hx",
+   "deps": [],
+   "statement": "theorem e1_four_aux (x d s e1 : Nat) (hx : 0 < x) (hs : s = x + d) (hd : d \u2264 x)\n    (herr : 2 * x * e1 \u2264 d * d + 2 * s) : 4 * e1 \u2264 s + 8",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "quad_step_aux",
+   "kind": "theorem",
+   "text": "theorem quad_step_aux (s e e' C K C' K' : Nat) (hs4 : 4 \u2264 s) (hs0 : 0 < s)\n    (hC : C * e \u2264 s + K) (herr : (e' - 1) * (2 * s) \u2264 e * e)\n    (hC' : C' = 2 * C * C) (hK' : K' = 2 * K + K * K / 4 + C' + 1) :\n    C' * e' \u2264 s + K' := by\n  by_cases he' : e' = 0\n  \u00b7 subst he'\n    simp\n  \u00b7 have he1 : 1 \u2264 e' := by omega\n    have hCe2 : (C * e) * (C * e) \u2264 (s + K) * (s + K) := Nat.mul_le_mul hC hC\n    have hsq1 : (C * e) * (C * e) = (e * e) * (C * C) := by ac_rfl\n    have hsq2 : (e * e) * (C * C) \u2264 (s + K) * (s + K) := by\n      rw [\u2190 hsq1]; exact hCe2\n    have hmul1 : ((e' - 1) * (2 * s)) * (C * C) \u2264 (e * e) * (C * C) :=\n      Nat.mul_le_mul_right (C * C) herr\n    have hmid_eq : (e' - 1) * C' * s = ((e' - 1) * (2 * s)) * (C * C) := by\n      rw [hC']; ac_rfl\n    have hmid : (e' - 1) * C' * s \u2264 (s + K) * (s + K) := by\n      rw [hmid_eq]; exact Nat.le_trans hmul1 hsq2\n    have he'e : (e' - 1) + 1 = e' := Nat.sub_add_cancel he1\n    have hCe'e : C' * e' = C' * (e' - 1) + C' := by\n      conv => lhs; rw [\u2190 he'e, Nat.mul_add, Nat.mul_one]\n    have hmod : 4 * (K * K / 4) + K * K % 4 = K * K := Nat.div_add_mod (K * K) 4\n    have hmodlt : K * K % 4 < 4 := Nat.mod_lt _ (by decide)\n    have hK4le : (K * K / 4) * 4 \u2264 (K * K / 4) * s :=\n      Nat.mul_le_mul_left (K * K / 4) hs4\n    have hK4eq : (K * K / 4) * 4 = 4 * (K * K / 4) := Nat.mul_comm _ _\n    have hKKs : K * K \u2264 (K * K / 4) * s + s := by grind\n    have hsq_expand : (s + K) * (s + K) = s * s + 2 * K * s + K * K := by\n      grind\n    have hgoal_mul : C' * e' * s \u2264 (s + K') * s := by\n      have e1 : C' * e' * s = (e' - 1) * C' * s + C' * s := by\n        rw [hCe'e, Nat.add_mul, Nat.mul_comm (C') (e' - 1)]\n      have e2 : (s + K') * s = s * s + K' * s := Nat.add_mul _ _ _\n      have e3 : K' * s = (2 * K + K * K / 4 + C' + 1) * s := by rw [hK']\n      have e4 : (2 * K + K * K / 4 + C' + 1) * s =\n          2 * K * s + (K * K / 4) * s + C' * s + s := by\n        have a1 : (2 * K + K * K / 4 + C' + 1) * s =\n            (2 * K + K * K / 4 + C') * s + s := by\n          rw [Nat.add_mul, Nat.one_mul]\n        have a2 : (2 * K + K * K / 4 + C') * s =\n            (2 * K + K * K / 4) * s + C' * s := by\n          rw [Nat.add_mul]\n        have a3 : (2 * K + K * K / 4) * s =\n            (2 * K) * s + (K * K / 4) * s := by\n          rw [Nat.add_mul]\n        rw [a1, a2, a3]\n      grind\n    exact Nat.le_of_mul_le_mul_right hgoal_mul hs0",
+   "deps": [],
+   "statement": "theorem quad_step_aux (s e e' C K C' K' : Nat) (hs4 : 4 \u2264 s) (hs0 : 0 < s)\n    (hC : C * e \u2264 s + K) (herr : (e' - 1) * (2 * s) \u2264 e * e)\n    (hC' : C' = 2 * C * C) (hK' : K' = 2 * K + K * K / 4 + C' + 1) :\n    C' * e' \u2264 s + K'",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sq_err_of_le_aux",
+   "kind": "theorem",
+   "text": "theorem sq_err_of_le_aux (s e e' : Nat) (hle : e' \u2264 e * e / (2 * s) + 1) :\n    (e' - 1) * (2 * s) \u2264 e * e := by\n  by_cases he' : e' = 0\n  \u00b7 subst he'\n    simp\n  \u00b7 have he1 : 1 \u2264 e' := by omega\n    have h1 : e' - 1 \u2264 e * e / (2 * s) := by omega\n    have h2 : (e' - 1) * (2 * s) \u2264 (e * e / (2 * s)) * (2 * s) :=\n      Nat.mul_le_mul_right (2 * s) h1\n    have h3 : (e * e / (2 * s)) * (2 * s) \u2264 e * e :=\n      Nat.div_mul_le_self (e * e) (2 * s)\n    exact Nat.le_trans h2 h3",
+   "deps": [],
+   "statement": "theorem sq_err_of_le_aux (s e e' : Nat) (hle : e' \u2264 e * e / (2 * s) + 1) :\n    (e' - 1) * (2 * s) \u2264 e * e",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "s_lt_2x_aux",
+   "kind": "theorem",
+   "text": "theorem s_lt_2x_aux (A : Nat) (h0 : A \u2260 0) :\n    Nat.sqrt A < 2 * 2 ^ (Nat.log2 A / 2) := by\n  have hAup : A < 2 ^ (Nat.log2 A + 1) := (ProofForgeFin.Evm.log2_spec h0).2\n  have hle : Nat.log2 A + 1 \u2264 2 * ((Nat.log2 A / 2) + 1) := by omega\n  have hcap : A < 2 ^ (2 * ((Nat.log2 A / 2) + 1)) :=\n    Nat.lt_of_lt_of_le hAup (Nat.pow_le_pow_right (by decide) hle)\n  have hs := ProofForgeFin.Sqrt.sqrt_lt_two_pow (k := (Nat.log2 A / 2) + 1) (a := A) (by omega)\n  have heq : (2 : Nat) ^ ((Nat.log2 A / 2) + 1) = 2 * 2 ^ (Nat.log2 A / 2) := by\n    rw [Nat.pow_add, Nat.pow_one]\n    exact Nat.mul_comm _ _\n  omega",
+   "deps": [
+    "sqrt"
+   ],
+   "statement": "theorem s_lt_2x_aux (A : Nat) (h0 : A \u2260 0) :\n    Nat.sqrt A < 2 * 2 ^ (Nat.log2 A / 2)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "e1_bound_aux",
+   "kind": "theorem",
+   "text": "theorem e1_bound_aux (A : Nat) (h0 : A \u2260 0) :\n    4 * (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) \u2264 Nat.sqrt A + 8 := by\n  have hxpos : 0 < 2 ^ (Nat.log2 A / 2) := Nat.two_pow_pos _\n  have hxs : 2 ^ (Nat.log2 A / 2) \u2264 Nat.sqrt A := pow_le_sqrt_aux A h0\n  have hs2x : Nat.sqrt A < 2 * 2 ^ (Nat.log2 A / 2) := s_lt_2x_aux A h0\n  have hs_eq : Nat.sqrt A = 2 ^ (Nat.log2 A / 2) + (Nat.sqrt A - 2 ^ (Nat.log2 A / 2)) := by\n    omega\n  have hd_le : Nat.sqrt A - 2 ^ (Nat.log2 A / 2) \u2264 2 ^ (Nat.log2 A / 2) := by omega\n  have hnx1 : nx A (Nat.log2 A / 2) 1 = ProofForgeFin.Sqrt.newton A (2 ^ (Nat.log2 A / 2)) := rfl\n  have herr : 2 * 2 ^ (Nat.log2 A / 2) *\n      (ProofForgeFin.Sqrt.newton A (2 ^ (Nat.log2 A / 2)) - Nat.sqrt A) \u2264\n      (Nat.sqrt A - 2 ^ (Nat.log2 A / 2)) * (Nat.sqrt A - 2 ^ (Nat.log2 A / 2)) +\n        2 * Nat.sqrt A :=\n    ProofForgeFin.Sqrt.newton_err_below hxpos hxs\n  have heq : nx A (Nat.log2 A / 2) 1 - Nat.sqrt A =\n      ProofForgeFin.Sqrt.newton A (2 ^ (Nat.log2 A / 2)) - Nat.sqrt A := by\n    rw [hnx1]\n  rw [heq]\n  exact e1_four_aux (2 ^ (Nat.log2 A / 2)) (Nat.sqrt A - 2 ^ (Nat.log2 A / 2))\n    (Nat.sqrt A) _ hxpos hs_eq hd_le herr",
+   "deps": [
+    "e1_four_aux",
+    "nx",
+    "pow_le_sqrt_aux",
+    "s_lt_2x_aux",
+    "sqrt"
+   ],
+   "statement": "theorem e1_bound_aux (A : Nat) (h0 : A \u2260 0) :\n    4 * (nx A (Nat.log2 A / 2) 1 - Nat.sqrt A) \u2264 Nat.sqrt A + 8",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "nx_pos_aux",
+   "kind": "theorem",
+   "text": "theorem nx_pos_aux (A q : Nat) (h0 : A \u2260 0) (hq : q = Nat.log2 A / 2) (n : Nat) :\n    0 < nx A q (n + 1) := by\n  have hs : 0 < Nat.sqrt A := ProofForgeFin.Sqrt.sqrt_pos (by omega)\n  have hle := sqrt_le_nx_succ A q h0 hq n\n  omega",
+   "deps": [
+    "nx",
+    "sqrt",
+    "sqrt_le_nx_succ"
+   ],
+   "statement": "theorem nx_pos_aux (A q : Nat) (h0 : A \u2260 0) (hq : q = Nat.log2 A / 2) (n : Nat) :\n    0 < nx A q (n + 1)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [
+  {
+   "name": "nx6_sq_le_aux",
+   "required": false,
+   "statement": "theorem nx6_sq_le_aux (A : Nat) (h0 : A \u2260 0) (hA256 : A < 2 ^ 256)\n    (hs4 : 4 \u2264 Nat.sqrt A) :\n    (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) *\n      (nx A (Nat.log2 A / 2) 6 - Nat.sqrt A) \u2264 Nat.sqrt A",
+   "scope": "goal",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 0.0,
+   "tried": [],
+   "last_lean": "",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_sqrt_not_below",
+   "required": true,
+   "statement": "theorem req_sqrt_not_below : SqrtNotBelow sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 9.615,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_above (sorry), req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry), req_newton_budget (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_sqrt_up_covers",
+   "required": true,
+   "statement": "theorem req_sqrt_up_covers : SqrtUpCovers sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 9.615,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_above (sorry), req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry), req_newton_budget (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_sqrt_up_tight",
+   "required": true,
+   "statement": "theorem req_sqrt_up_tight  : SqrtUpTight sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 9.615,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_above (sorry), req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry), req_newton_budget (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_mint_full",
+   "required": true,
+   "statement": "theorem req_mint_full      : MintFull sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 9.615,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_above (sorry), req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry), req_newton_budget (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_mint_live",
+   "required": true,
+   "statement": "theorem req_mint_live      : MintLive sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 9.615,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_above (sorry), req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry), req_newton_budget (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  }
+ ],
+ "budget": {
+  "usd_list": 9.615,
+  "elapsed_s": 4758.7
+ },
+ "resumed_from": []
+}

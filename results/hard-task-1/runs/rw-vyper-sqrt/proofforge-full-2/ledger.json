@@ -1,0 +1,543 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "rw-vyper-sqrt",
+ "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1",
+ "run_dir": "<proofforge>/results/hard-task-1/runs/rw-vyper-sqrt/proofforge-full-2",
+ "arm": "proofforge-full",
+ "loop": "muse-code",
+ "model": "muse-spark-1.3-contributor",
+ "created": "2026-11-01T00:28:21-0400",
+ "reconstructed": false,
+ "final": {
+  "text": "import VyperSqrt.Spec\nimport VyperSqrt.Lemmas\nimport ProofForgeFin\n\nnamespace VyperSqrt\n\nopen ProofForgeFin.Sqrt (newton sqrt_le_sqrt le_sqrt_of_mul_self_le sqrt_lt_of_lt_mul_self\n  sqrt_eq_of_bounds newton_sub_sqrt_le_half sqrt_le_newton newton_lt_self\n  eq_sqrt_of_newton_eq_self newton_le_sqrt_add_one newton_of_mem min_newton_eq_sqrt\n  sqrt_lt_two_pow)\nopen ProofForgeFin (div_anti_right div_mono_left div_div)\n\n/-- The fixed routine: the deployed loop followed by the smaller of the last two iterates\n(PR 4486: `if y < z: z = y`). -/\ndef sqrt : SqrtFn := vyperSqrtWith (fun y z => if y < z then y else z)\n\n/-- Scale: raw input `a` stands for `a / 10^10`; the integer under the root is `a * 10^10`. -/\ndef Aval (a : Nat) : Nat := a * 10 ^ 10\n\n/-- The seed `x / 2.0 + 0.5` on raw values: `a / 2 + 5 * 10^9`. -/\ndef seedN (a : Nat) : Nat := a / 2 + 5 * 10 ^ 9\n\n/-- Ghost Newton sequence: `t 0 = seed`, `t (i+1) = newton A (t i)`. -/\ndef gseq (a : Nat) : Nat \u2192 Nat\n  | 0 => seedN a\n  | n + 1 => newton (Aval a) (gseq a n)\n\n/-- Natural-number mirror of `loop`: no failure, values are `Nat`s. -/\ndef mloop (A : Nat) (n y z : Nat) : Nat \u00d7 Nat :=\n  match n with\n  | 0 => (y, z)\n  | n + 1 => if z = y then (y, z) else mloop A n z (newton A z)\n\n/-- The seed square strictly exceeds the scaled input: the root is below the seed. -/\ntheorem sq_seed : \u2200 a : Nat, Aval a < (seedN a + 1) * (seedN a + 1) := by\n  intro a\n  have hQM : 2 * (a / 2) + a % 2 = a := Nat.div_add_mod a 2\n  have hM : a % 2 < 2 := Nat.mod_lt a (by decide)\n  have eA : Aval a = 2 * (a / 2) * 10 ^ 10 + (a % 2) * 10 ^ 10 := by\n    unfold Aval\n    have eA' : a * 10 ^ 10 = (2 * (a / 2) + a % 2) * 10 ^ 10 := by rw [hQM]\n    rw [eA', Nat.add_mul]\n  have h5 : (5 : Nat) * 10 ^ 9 = 5000000000 := by decide\n  have eS : seedN a + 1 = (a / 2) + 5000000001 := by\n    unfold seedN; rw [h5]\n  have key : \u2200 q \u03bc : Int, 0 \u2264 \u03bc \u2192 \u03bc \u2264 1 \u2192\n      2 * q * 10000000000 + \u03bc * 10000000000\n        < (q + 5000000001) * (q + 5000000001) := by\n    intro q \u03bc h0 h1\n    have e1 : (q + 5000000001) * (q + 5000000001)\n        = q * q + 2 * 5000000001 * q + 5000000001 * 5000000001 := by grind\n    have e2 : (q - 4999999999) * (q - 4999999999)\n        = q * q - 2 * 4999999999 * q + 4999999999 * 4999999999 := by grind\n    have hsq : 0 \u2264 (q - 4999999999) * (q - 4999999999) := by\n      by_cases h : q < 4999999999\n      \u00b7 exact Int.mul_nonneg_of_nonpos_of_nonpos (by omega) (by omega)\n      \u00b7 exact Int.mul_nonneg (by omega) (by omega)\n    rw [e1]; rw [e2] at hsq; omega\n  rw [eA, eS]\n  have hM1 : a % 2 \u2264 1 := Nat.le_of_lt_succ hM\n  have h0 : (0 : Int) \u2264 ((a % 2 : Nat) : Int) := by omega\n  have h1 : ((a % 2 : Nat) : Int) \u2264 1 := by omega\n  have hK := key ((a / 2 : Nat) : Int) ((a % 2 : Nat) : Int) h0 h1\n  have hde : (((a / 2 : Nat) : Int) + 5000000001) * (((a / 2 : Nat) : Int) + 5000000001)\n      = ((a / 2 + 5000000001 : Nat) : Int) * ((a / 2 + 5000000001 : Nat) : Int) := by\n    rw [Int.natCast_add]; rfl\n  have hK' : ((2 * (a / 2) * 10 ^ 10 + (a % 2) * 10 ^ 10 : Nat) : Int)\n      < ((((a / 2) + 5000000001) * ((a / 2) + 5000000001) : Nat) : Int) := by\n    omega\n  exact Int.ofNat_lt.mp hK'\n\n/-- The seed is at least the root. -/\ntheorem seed_ge : \u2200 a : Nat, 0 < a \u2192 Nat.sqrt (Aval a) \u2264 seedN a := by\n  intro a ha\n  have h := sq_seed a\n  have hlt : Nat.sqrt (Aval a) < seedN a + 1 := sqrt_lt_of_lt_mul_self h\n  omega\n\n/-- The scaled input is positive. -/\ntheorem Aval_pos : \u2200 a : Nat, 0 < a \u2192 0 < Aval a := by\n  intro a ha; unfold Aval; omega\n\n/-- The root of a positive scaled input is at least `10^5`. -/\ntheorem s_ge100k : \u2200 a : Nat, 0 < a \u2192 100000 \u2264 Nat.sqrt (Aval a) := by\n  intro a ha\n  have hA : (100000 : Nat) * 100000 \u2264 Aval a := by\n    unfold Aval\n    have h1 : (1 : Nat) * 10 ^ 10 \u2264 a * 10 ^ 10 := Nat.mul_le_mul_right _ ha\n    have h2 : (100000 : Nat) * 100000 = 10 ^ 10 := by decide\n    omega\n  exact le_sqrt_of_mul_self_le hA\n\n/-- Every ghost iterate is positive and at least the root. -/\ntheorem gseq_bounds : \u2200 (a n : Nat), 0 < a \u2192\n    0 < gseq a n \u2227 Nat.sqrt (Aval a) \u2264 gseq a n := by\n  intro a n ha; induction n with\n  | zero =>\n    refine \u27e8?_, seed_ge a ha\u27e9\n    unfold gseq seedN; omega\n  | succ n ih =>\n    obtain \u27e8hpos, hle\u27e9 := ih\n    have hnew := sqrt_le_newton (a := Aval a) (x := gseq a n) hpos\n    have h1 : 1 \u2264 Nat.sqrt (Aval a) := by\n      have := s_ge100k a ha; omega\n    have hpos' : 0 < newton (Aval a) (gseq a n) := by omega\n    show 0 < newton (Aval a) (gseq a n) \u2227 _\n    exact \u27e8hpos', hnew\u27e9\n\n/-- Every ghost iterate is at most one past the seed. -/\ntheorem gseq_upper : \u2200 (a n : Nat), 0 < a \u2192 gseq a n \u2264 seedN a + 1 := by\n  intro a n ha; induction n with\n  | zero => exact Nat.le_succ _\n  | succ n ih =>\n    have \u27e8hpos, hle\u27e9 := gseq_bounds a n ha\n    have e : gseq a (n + 1) = newton (Aval a) (gseq a n) := rfl\n    rw [e]\n    rcases Nat.lt_or_ge (Nat.sqrt (Aval a)) (gseq a n) with h | h\n    \u00b7 exact Nat.le_trans (Nat.le_of_lt (newton_lt_self (a := Aval a) h)) ih\n    \u00b7 have hxs : gseq a n = Nat.sqrt (Aval a) := Nat.le_antisymm h hle\n      have h1 : newton (Aval a) (gseq a n) \u2264 Nat.sqrt (Aval a) + 1 := by\n        apply newton_le_sqrt_add_one hpos hle\n        rw [hxs, Nat.sub_self]; exact Nat.zero_le _\n      exact Nat.le_trans h1 (Nat.add_le_add_right (seed_ge a ha) _)\n\n/-- The root is below `2^101`: the scaled input is below `2^202`. -/\ntheorem s_lt_pow : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    Nat.sqrt (Aval a) < 2 ^ 101 := by\n  intro a ha hle\n  apply sqrt_lt_two_pow (k := 101)\n  have h10 : (10 : Nat) ^ 10 \u2264 2 ^ 34 := by decide\n  have e1 : Aval a \u2264 (2 ^ 167 - 1) * 10 ^ 10 := Nat.mul_le_mul_right _ hle\n  have e2 : (2 ^ 167 - 1) * 10 ^ 10 \u2264 (2 ^ 167 - 1) * 2 ^ 34 :=\n    Nat.mul_le_mul_left _ h10\n  have h2 : ((2 ^ 167 - 1) + 1) * 2 ^ 34 = (2 ^ 167 - 1) * 2 ^ 34 + 2 ^ 34 :=\n    Nat.add_mul _ _ _\n  have hsub : (2 ^ 167 - 1) + 1 = 2 ^ 167 :=\n    Nat.sub_add_cancel (by decide : (1 : Nat) \u2264 2 ^ 167)\n  have e3' : (2 ^ 167 - 1) * 2 ^ 34 + 2 ^ 34 = 2 ^ 167 * 2 ^ 34 := by\n    rw [\u2190 h2, hsub]\n  have h34 : 0 < (2 : Nat) ^ 34 := by decide\n  have e3 : (2 ^ 167 - 1) * 2 ^ 34 < 2 ^ 167 * 2 ^ 34 := by\n    rw [\u2190 e3']; exact Nat.lt_add_of_pos_right h34\n  have e4 : (2 : Nat) ^ 167 * 2 ^ 34 = 2 ^ 201 := by decide\n  have e5 : (2 : Nat) ^ 201 < 2 ^ 202 := by decide\n  have hfin : (2 : Nat) ^ (2 * 101) = 2 ^ 202 := by decide\n  have e6 : (2 : Nat) ^ 167 * 2 ^ 34 < 2 ^ 202 := by\n    rw [e4]; exact e5\n  rw [hfin]\n  exact Nat.lt_of_le_of_lt (Nat.le_trans e1 e2) (Nat.lt_trans e3 e6)\n\n/-- The Newton quotient stays near the root. -/\ntheorem quot_le : \u2200 (a i : Nat), 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    Aval a / gseq a i \u2264 Nat.sqrt (Aval a) + 2 := by\n  intro a i ha hle\n  have \u27e8hpos, hle2\u27e9 := gseq_bounds a i ha\n  have hspos : 0 < Nat.sqrt (Aval a) := by\n    have := s_ge100k a ha; omega\n  have hup := Nat.lt_succ_sqrt (Aval a)\n  simp only [Nat.succ_eq_add_one] at hup\n  have hexp : (Nat.sqrt (Aval a) + 1) * (Nat.sqrt (Aval a) + 1)\n      = Nat.sqrt (Aval a) * Nat.sqrt (Aval a)\n        + (Nat.sqrt (Aval a) + Nat.sqrt (Aval a)) + 1 := by grind\n  have h2 : Aval a\n      \u2264 Nat.sqrt (Aval a) * Nat.sqrt (Aval a)\n        + (Nat.sqrt (Aval a) + Nat.sqrt (Aval a)) := by omega\n  have h1 : Aval a / gseq a i \u2264 Aval a / Nat.sqrt (Aval a) :=\n    div_anti_right _ hspos hle2\n  have hmul : Nat.sqrt (Aval a) * (Nat.sqrt (Aval a) + 2)\n      = Nat.sqrt (Aval a) * Nat.sqrt (Aval a)\n        + (Nat.sqrt (Aval a) + Nat.sqrt (Aval a)) := by grind\n  rw [\u2190 hmul] at h2\n  have h3 : Aval a / Nat.sqrt (Aval a) \u2264 Nat.sqrt (Aval a) + 2 := by\n    have h3' : Aval a / Nat.sqrt (Aval a)\n        \u2264 (Nat.sqrt (Aval a) * (Nat.sqrt (Aval a) + 2)) / Nat.sqrt (Aval a) :=\n      Nat.div_le_div_right h2\n    have h4 : Nat.sqrt (Aval a) * (Nat.sqrt (Aval a) + 2) / Nat.sqrt (Aval a)\n        = Nat.sqrt (Aval a) + 2 := by\n      rw [Nat.mul_comm]\n      exact Nat.mul_div_cancel _ hspos\n    rw [h4] at h3'; exact h3'\n  exact Nat.le_trans h1 h3\n\n/-- Every Newton step stays in decimal range. -/\ntheorem range_ok : \u2200 (a i : Nat), 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    Aval a / gseq a i + gseq a i \u2264 2 ^ 167 - 1 := by\n  intro a i ha hle\n  have hq := quot_le a i ha hle\n  have hup := gseq_upper a i ha\n  have hs := s_lt_pow a ha hle\n  have h1 : Aval a / gseq a i + gseq a i\n      \u2264 (Nat.sqrt (Aval a) + 2) + (seedN a + 1) := Nat.add_le_add hq hup\n  have hseed : seedN a \u2264 (2 ^ 167 - 1) / 2 + 5 * 10 ^ 9 := by\n    unfold seedN\n    exact Nat.add_le_add_right (Nat.div_le_div_right hle) _\n  have hhalf : (2 ^ 167 - 1) / 2 = 2 ^ 166 - 1 := by decide\n  have hseed2 : seedN a \u2264 (2 ^ 166 - 1) + 5 * 10 ^ 9 := by\n    rw [\u2190 hhalf]; exact hseed\n  have key : 2 ^ 101 + 2 + ((2 ^ 166 - 1) + 5 * 10 ^ 9 + 1) \u2264 2 ^ 167 - 1 := by\n    decide\n  have h2 : (Nat.sqrt (Aval a) + 2) + (seedN a + 1)\n      \u2264 (2 ^ 101 + 2) + ((2 ^ 166 - 1) + 5 * 10 ^ 9 + 1) := by\n    have g1 : Nat.sqrt (Aval a) + 2 \u2264 2 ^ 101 + 2 :=\n      Nat.add_le_add_right (Nat.le_of_lt hs) _\n    have g2 : seedN a + 1 \u2264 ((2 ^ 166 - 1) + 5 * 10 ^ 9) + 1 :=\n      Nat.add_le_add_right hseed2 _\n    exact Nat.add_le_add g1 g2\n  exact Nat.le_trans h1 (Nat.le_trans h2 key)\n\n/-- Halving bound with an explicit closed form. -/\ntheorem err_bound : \u2200 (a k : Nat), 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    gseq a k - Nat.sqrt (Aval a)\n      \u2264 (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ k + 2 := by\n  intro a k ha hle; induction k with\n  | zero =>\n    rw [Nat.pow_zero, Nat.div_one]; exact Nat.le_add_right _ _\n  | succ k ih =>\n    have \u27e8hpos, hle2\u27e9 := gseq_bounds a k ha\n    have hstep : gseq a (k + 1) - Nat.sqrt (Aval a)\n        \u2264 (gseq a k - Nat.sqrt (Aval a)) / 2 + 1 := by\n      have h := newton_sub_sqrt_le_half (a := Aval a) (x := gseq a k) hpos hle2\n      show newton (Aval a) (gseq a k) - _ \u2264 _\n      exact h\n    have key : (gseq a k - Nat.sqrt (Aval a)) / 2 + 1\n        \u2264 ((gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ k + 2) / 2 + 1 :=\n      Nat.add_le_add_right (Nat.div_le_div_right ih) _\n    have hdd : ((gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ k) / 2\n        = (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ (k + 1) := by\n      rw [div_div, Nat.pow_succ]\n    have hfin : ((gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ k + 2) / 2 + 1\n        = (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ (k + 1) + 2 := by\n      revert hdd\n      generalize (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ k = U\n      generalize (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ (k + 1) = U'\n      intro hdd\n      omega\n    rw [\u2190 hfin]\n    exact Nat.le_trans hstep key\n\n/-- After 254 steps the error is at most 2. -/\ntheorem err254 : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    gseq a 254 - Nat.sqrt (Aval a) \u2264 2 := by\n  intro a ha hle\n  have h := err_bound a 254 ha hle\n  have hE : gseq a 0 - Nat.sqrt (Aval a) \u2264 (2 ^ 166 - 1) + 5 * 10 ^ 9 := by\n    have h1 : gseq a 0 - Nat.sqrt (Aval a) \u2264 gseq a 0 := Nat.sub_le _ _\n    have h2 : gseq a 0 \u2264 (2 ^ 166 - 1) + 5 * 10 ^ 9 := by\n      have ha2 : a / 2 \u2264 2 ^ 166 - 1 := by\n        have h1 : a / 2 \u2264 (2 ^ 167 - 1) / 2 := Nat.div_le_div_right hle\n        have h2 : (2 ^ 167 - 1) / 2 = 2 ^ 166 - 1 := by decide\n        rw [h2] at h1; exact h1\n      show seedN a \u2264 _\n      unfold seedN\n      exact Nat.add_le_add_right ha2 _\n    exact Nat.le_trans h1 h2\n  have h0 : (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ 254 = 0 := by\n    apply Nat.div_eq_of_lt\n    have key : (2 ^ 166 - 1) + 5 * 10 ^ 9 < 2 ^ 254 := by decide\n    omega\n  rw [h0] at h\n  omega\n\n/-- Step 255 lands within one of the root. -/\ntheorem close255 : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    gseq a 255 \u2264 Nat.sqrt (Aval a) + 1 := by\n  intro a ha hle\n  have \u27e8hpos254, hle254\u27e9 := gseq_bounds a 254 ha\n  have he := err254 a ha hle\n  have hs2 : 2 \u2264 Nat.sqrt (Aval a) := by\n    have := s_ge100k a ha; omega\n  have hsq : (gseq a 254 - Nat.sqrt (Aval a)) * (gseq a 254 - Nat.sqrt (Aval a))\n      \u2264 2 * Nat.sqrt (Aval a) := by\n    have h1 : (gseq a 254 - Nat.sqrt (Aval a)) * (gseq a 254 - Nat.sqrt (Aval a))\n        \u2264 2 * 2 := Nat.mul_le_mul he he\n    omega\n  have hle255 : newton (Aval a) (gseq a 254) \u2264 Nat.sqrt (Aval a) + 1 :=\n    newton_le_sqrt_add_one hpos254 hle254 hsq\n  have e255 : gseq a 255 = newton (Aval a) (gseq a 254) := rfl\n  rw [e255]; exact hle255\n\n/-- The Nat mirror follows the ghost sequence. -/\ntheorem mloop_pair : \u2200 (a i n : Nat), \u2203 k, k \u2264 n\n    \u2227 (i + k = i + n \u2228 gseq a (i + k + 1) = gseq a (i + k))\n    \u2227 mloop (Aval a) n (gseq a i) (gseq a (i + 1))\n      = (gseq a (i + k), gseq a (i + k + 1)) := by\n  intro a i n; induction n generalizing i with\n  | zero => exact \u27e80, Nat.le_refl _, Or.inl rfl, rfl\u27e9\n  | succ n ih =>\n    have e : mloop (Aval a) (n + 1) (gseq a i) (gseq a (i + 1))\n        = (if gseq a (i + 1) = gseq a i then (gseq a i, gseq a (i + 1))\n          else mloop (Aval a) n (gseq a (i + 1))\n            (newton (Aval a) (gseq a (i + 1)))) := rfl\n    by_cases h : gseq a (i + 1) = gseq a i\n    \u00b7 refine \u27e80, Nat.zero_le _, Or.inr h, ?_\u27e9\n      rw [e, if_pos h]\n      rfl\n    \u00b7 obtain \u27e8k', hk', hdisj, heq\u27e9 := ih (i + 1)\n      refine \u27e8k' + 1, Nat.succ_le_succ hk', ?_, ?_\u27e9\n      \u00b7 have e1 : i + (k' + 1) = (i + 1) + k' := by omega\n        have e2 : i + (k' + 1) + 1 = ((i + 1) + k') + 1 := by omega\n        rcases hdisj with hfin | hfix\n        \u00b7 left; omega\n        \u00b7 right; rw [e2, e1]; exact hfix\n      \u00b7 have e1 : i + (k' + 1) = (i + 1) + k' := by omega\n        have e2 : i + (k' + 1) + 1 = ((i + 1) + k') + 1 := by omega\n        have e3 : newton (Aval a) (gseq a (i + 1)) = gseq a ((i + 1) + 1) := rfl\n        rw [e, if_neg h, e3, e2, e1]\n        exact heq\n\n/-- The deployed loop follows the ghost sequence. -/\ntheorem loop_ghost : \u2200 (a n i : Nat), 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192 i + n \u2264 256 \u2192\n    \u2203 k, k \u2264 n \u2227 (i + k = i + n \u2228 gseq a (i + k + 1) = gseq a (i + k))\n      \u2227 loop (a : Int) n ((gseq a i : Nat) : Int) ((gseq a (i + 1) : Nat) : Int)\n        = some (((gseq a (i + k) : Nat) : Int), (((gseq a (i + k + 1) : Nat)) : Int)) := by\n  intro a n i ha hle hin; induction n generalizing i with\n  | zero =>\n    refine \u27e80, Nat.le_refl _, Or.inl rfl, rfl\u27e9\n  | succ n ih =>\n    by_cases h : ((gseq a (i + 1) : Nat) : Int) = ((gseq a i : Nat) : Int)\n    \u00b7 have hNat : gseq a (i + 1) = gseq a i := Int.ofNat.inj h\n      have hstop := loop_stop (a : Int) n ((gseq a i : Nat) : Int)\n      refine \u27e80, Nat.zero_le _, Or.inr ?_, ?_\u27e9\n      \u00b7 exact hNat\n      \u00b7 rw [hNat]; exact hstop\n    \u00b7 have hne : gseq a (i + 1) \u2260 gseq a i := fun e => h (by rw [e])\n      have hpos : 0 < gseq a (i + 1) := (gseq_bounds a (i + 1) ha).1\n      have hrange := range_ok a (i + 1) ha hle\n      have hstep := loop_step (a := a) (y := gseq a i) (z := gseq a (i + 1))\n        (n := n) hpos hne hrange\n      obtain \u27e8k', hk', hdisj, heq\u27e9 := ih (i + 1) (by omega)\n      refine \u27e8k' + 1, Nat.succ_le_succ hk', ?_, ?_\u27e9\n      \u00b7 have e1 : i + (k' + 1) = (i + 1) + k' := by omega\n        have e2 : i + (k' + 1) + 1 = ((i + 1) + k') + 1 := by omega\n        rcases hdisj with hfin | hfix\n        \u00b7 left; omega\n        \u00b7 right; rw [e2, e1]; exact hfix\n      \u00b7 have hAval : Aval a = a * 10 ^ 10 := rfl\n        have hz' : ((((a * 10 ^ 10 / gseq a (i + 1) + gseq a (i + 1)) / 2 : Nat)) : Int)\n            = ((gseq a ((i + 1) + 1) : Nat) : Int) := by\n          have hnat : (a * 10 ^ 10 / gseq a (i + 1) + gseq a (i + 1)) / 2\n              = gseq a ((i + 1) + 1) := by\n            have e : gseq a ((i + 1) + 1)\n                = (gseq a (i + 1) + Aval a / gseq a (i + 1)) / 2 := rfl\n            rw [e, hAval, Nat.add_comm (a * 10 ^ 10 / gseq a (i + 1)) (gseq a (i + 1))]\n          exact congrArg (fun n : Nat => ((n : Nat) : Int)) hnat\n        have e1 : i + (k' + 1) = (i + 1) + k' := by omega\n        have e2 : i + (k' + 1) + 1 = ((i + 1) + k') + 1 := by omega\n        rw [hstep, hz', e2, e1]; exact heq\n\ntheorem req_sqrt_neg_reverts : SqrtNegReverts sqrt := by\n  intro x hx\n  show vyperSqrtWith (fun y z => if y < z then y else z) x = none\n  unfold vyperSqrtWith\n  rw [if_pos hx]\n\n/-- Steps 255 and 256 bracket the root. -/\ntheorem min255 : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    Nat.min (gseq a 255) (gseq a (255 + 1)) = Nat.sqrt (Aval a) := by\n  intro a ha hle\n  have hb := gseq_bounds a 255 ha\n  have h255 := close255 a ha hle\n  have hm := min_newton_eq_sqrt hb.1 hb.2 h255\n  have e : newton (Aval a) (gseq a 255) = gseq a (255 + 1) := rfl\n  rw [e] at hm\n  exact hm\n\n/-- The routine returns the integer square root on positive inputs. -/\ntheorem sqrt_val : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    vyperSqrtWith (fun y z => if y < z then y else z) (a : Int)\n      = some ((Nat.sqrt (Aval a) : Int)) := by\n  intro a ha hle\n  have hpos := vyperSqrtWith_pos (fun y z => if y < z then y else z) ha hle\n  rw [hpos]\n  have es : ((a / 2 + 5 * 10 ^ 9 : Nat) : Int) = ((gseq a 0 : Nat) : Int) := rfl\n  rw [es]\n  by_cases hseed : ((gseq a 0 : Nat) : Int) = (a : Int)\n  \u00b7 have hNat : gseq a 0 = a := Int.ofNat.inj hseed\n    have hsa : a / 2 + 5000000000 = a := hNat\n    have hcase : a = 10000000000 \u2228 a = 10000000000 - 1 := by\n      have hqm := Nat.div_add_mod a 2\n      have hm := Nat.mod_lt a (show 0 < 2 by decide)\n      have hm01 : a % 2 = 0 \u2228 a % 2 = 1 := by omega\n      rcases hm01 with hm0 | hm0\n      \u00b7 left; omega\n      \u00b7 right; omega\n    have hloop0 : loop (a : Int) 256 (a : Int) (a : Int)\n        = some ((a : Int), (a : Int)) := by\n      have e : (256 : Nat) = 255 + 1 := rfl\n      rw [e]\n      exact loop_stop _ _ _\n    have hs_eq : Nat.sqrt (Aval a) = a := by\n      rcases hcase with rfl | rfl\n      \u00b7 have hA : Aval 10000000000 = 10000000000 * 10000000000 := rfl\n        rw [hA]\n        exact sqrt_eq_of_bounds (by decide) (by decide)\n      \u00b7 have hA : Aval (10000000000 - 1) = (10000000000 - 1) * 10000000000 := rfl\n        rw [hA]\n        exact sqrt_eq_of_bounds (by decide) (by decide)\n    rw [hNat, hloop0]\n    show some (if (a : Int) < (a : Int) then (a : Int) else (a : Int))\n      = some ((Nat.sqrt (Aval a) : Int))\n    rw [if_neg (by omega : \u00ac (a : Int) < (a : Int)), hs_eq]\n  \u00b7 have hne : gseq a 0 \u2260 a := fun e => hseed (by rw [e])\n    have hpos0 : 0 < gseq a 0 := (gseq_bounds a 0 ha).1\n    have hrange0 := range_ok a 0 ha hle\n    have hstep := loop_step (a := a) (y := a) (z := gseq a 0) (n := 255)\n      hpos0 hne hrange0\n    have hAval : Aval a = a * 10 ^ 10 := rfl\n    have hz' : ((((a * 10 ^ 10 / gseq a 0 + gseq a 0) / 2 : Nat)) : Int)\n        = ((gseq a (0 + 1) : Nat) : Int) := by\n      have hnat : (a * 10 ^ 10 / gseq a 0 + gseq a 0) / 2\n          = gseq a (0 + 1) := by\n        have e : gseq a (0 + 1)\n            = (gseq a 0 + Aval a / gseq a 0) / 2 := rfl\n        rw [e, hAval, Nat.add_comm (a * 10 ^ 10 / gseq a 0) (gseq a 0)]\n      exact congrArg (fun n : Nat => ((n : Nat) : Int)) hnat\n    obtain \u27e8k, hk255, hdisj, heq\u27e9 := loop_ghost a 255 0 ha hle (by omega)\n    have e0 : (0 : Nat) + k = k := Nat.zero_add k\n    rw [e0] at heq hdisj\n    have hfuel : (256 : Nat) = 255 + 1 := rfl\n    rw [hfuel, hstep, hz', heq]\n    have hmin : (if ((gseq a k : Nat) : Int) < ((gseq a (k + 1) : Nat) : Int)\n          then ((gseq a k : Nat) : Int) else ((gseq a (k + 1) : Nat) : Int))\n        = ((Nat.min (gseq a k) (gseq a (k + 1)) : Nat) : Int) := by\n      by_cases hlt : ((gseq a k : Nat) : Int) < ((gseq a (k + 1) : Nat) : Int)\n      \u00b7 rw [if_pos hlt]\n        have hle' : gseq a k \u2264 gseq a (k + 1) :=\n          Int.ofNat_le.mp (Int.le_of_lt hlt)\n        have hmin' : Nat.min (gseq a k) (gseq a (k + 1)) = gseq a k :=\n          Nat.min_eq_left hle'\n        rw [hmin']\n      \u00b7 rw [if_neg hlt]\n        have hle' : gseq a (k + 1) \u2264 gseq a k := by\n          have hle'' : ((gseq a (k + 1) : Nat) : Int) \u2264 ((gseq a k : Nat) : Int) := by\n            omega\n          exact Int.ofNat_le.mp hle''\n        have hmin' : Nat.min (gseq a k) (gseq a (k + 1)) = gseq a (k + 1) :=\n          Nat.min_eq_right hle'\n        rw [hmin']\n    have hminval : Nat.min (gseq a k) (gseq a (k + 1)) = Nat.sqrt (Aval a) := by\n      rcases hdisj with hfin | hfix\n      \u00b7 have hk255' : k = 255 := by omega\n        rw [hk255']\n        exact min255 a ha hle\n      \u00b7 have hnew : newton (Aval a) (gseq a k) = gseq a k := by\n          have e : gseq a (k + 1) = newton (Aval a) (gseq a k) := rfl\n          exact e.symm.trans hfix\n        have hposk := (gseq_bounds a k ha).1\n        have hs_eq : gseq a k = Nat.sqrt (Aval a) :=\n          eq_sqrt_of_newton_eq_self hposk hnew\n        have hmin0 : Nat.min (gseq a k) (gseq a (k + 1)) = gseq a k := by\n          rw [hfix]\n          exact Nat.min_eq_left (Nat.le_refl _)\n        rw [hmin0]; exact hs_eq\n    show some (if ((gseq a k : Nat) : Int) < ((gseq a (k + 1) : Nat) : Int)\n        then ((gseq a k : Nat) : Int) else ((gseq a (k + 1) : Nat) : Int))\n      = some ((Nat.sqrt (Aval a) : Int))\n    rw [hmin, hminval]\n\n/-- The routine returns zero on zero. -/\ntheorem sqrt0 : sqrt (0 : Int) = some 0 := by\n  show vyperSqrtWith (fun y z => if y < z then y else z) 0 = some 0\n  unfold vyperSqrtWith\n  rw [if_neg (by omega : \u00ac (0 : Int) < 0), if_pos rfl]\n\ntheorem req_sqrt_not_above : SqrtNotAbove sqrt := by\n  intro x r hdec hsome\n  obtain \u27e8hlo, hhi\u27e9 := hdec\n  by_cases hx0 : x = 0\n  \u00b7 subst hx0\n    have hr : r = 0 := Option.some_inj.mp (hsome.symm.trans sqrt0)\n    subst hr\n    omega\n  \u00b7 by_cases hxneg : x < 0\n    \u00b7 rw [req_sqrt_neg_reverts x hxneg] at hsome\n      cases hsome\n    \u00b7 have hxpos : 0 < x := by omega\n      have hx0' : 0 \u2264 x := by omega\n      obtain \u27e8a, rfl\u27e9 : \u2203 a : Nat, x = (a : Int) :=\n        \u27e8x.toNat, (Int.toNat_of_nonneg hx0').symm\u27e9\n      have ha : 0 < a := by\n        have hpos' : (0 : Int) < ((a : Nat) : Int) := hxpos\n        exact_mod_cast hpos'\n      have hle : a \u2264 2 ^ 167 - 1 := by\n        have h2 : ((a : Nat) : Int) \u2264 MAX_DECIMAL := hhi\n        rw [max_decimal_eq] at h2\n        exact Int.ofNat_le.mp h2\n      have hval := sqrt_val a ha hle\n      have hsome2 : vyperSqrtWith (fun y z => if y < z then y else z) (a : Int)\n          = some r := hsome\n      rw [hval] at hsome2\n      have hr : r = ((Nat.sqrt (Aval a) : Int)) := Option.some_inj.mp hsome2.symm\n      rw [hr, divisor_eq]\n      exact_mod_cast Nat.sqrt_le (Aval a)\n\ntheorem req_sqrt_not_below : SqrtNotBelow sqrt := by\n  intro x r hdec hsome\n  obtain \u27e8hlo, hhi\u27e9 := hdec\n  by_cases hx0 : x = 0\n  \u00b7 subst hx0\n    have hr : r = 0 := Option.some_inj.mp (hsome.symm.trans sqrt0)\n    subst hr\n    show (0 : Int) * DIVISOR < (0 + 1) * (0 + 1)\n    omega\n  \u00b7 by_cases hxneg : x < 0\n    \u00b7 rw [req_sqrt_neg_reverts x hxneg] at hsome\n      cases hsome\n    \u00b7 have hxpos : 0 < x := by omega\n      have hx0' : 0 \u2264 x := by omega\n      obtain \u27e8a, rfl\u27e9 : \u2203 a : Nat, x = (a : Int) :=\n        \u27e8x.toNat, (Int.toNat_of_nonneg hx0').symm\u27e9\n      have ha : 0 < a := by\n        have hpos' : (0 : Int) < ((a : Nat) : Int) := hxpos\n        exact_mod_cast hpos'\n      have hle : a \u2264 2 ^ 167 - 1 := by\n        have h2 : ((a : Nat) : Int) \u2264 MAX_DECIMAL := hhi\n        rw [max_decimal_eq] at h2\n        exact Int.ofNat_le.mp h2\n      have hval := sqrt_val a ha hle\n      have hsome2 : vyperSqrtWith (fun y z => if y < z then y else z) (a : Int)\n          = some r := hsome\n      rw [hval] at hsome2\n      have hr : r = ((Nat.sqrt (Aval a) : Int)) := Option.some_inj.mp hsome2.symm\n      have hlt := Nat.lt_succ_sqrt (Aval a)\n      simp only [Nat.succ_eq_add_one] at hlt\n      rw [hr, divisor_eq]\n      exact_mod_cast hlt\n\ntheorem req_sqrt_total : SqrtTotal sqrt := by\n  intro x hdec hx0\n  obtain \u27e8hlo, hhi\u27e9 := hdec\n  by_cases hx00 : x = 0\n  \u00b7 subst hx00\n    rw [sqrt0]\n    rfl\n  \u00b7 have hxpos : 0 < x := by omega\n    obtain \u27e8a, rfl\u27e9 : \u2203 a : Nat, x = (a : Int) :=\n      \u27e8x.toNat, (Int.toNat_of_nonneg hx0).symm\u27e9\n    have ha : 0 < a := by\n      have hx00' : ((a : Nat) : Int) \u2260 0 := hx00\n      have hane : a \u2260 0 := fun e => hx00' (by rw [e]; simp)\n      exact Nat.pos_of_ne_zero hane\n    have hle : a \u2264 2 ^ 167 - 1 := by\n      have h2 : ((a : Nat) : Int) \u2264 MAX_DECIMAL := hhi\n      rw [max_decimal_eq] at h2\n      exact Int.ofNat_le.mp h2\n    have hval := sqrt_val a ha hle\n    have e : sqrt (a : Int)\n        = vyperSqrtWith (fun y z => if y < z then y else z) (a : Int) := rfl\n    rw [e, hval]\n    rfl\n\ntheorem req_deployed_loop : DeployedLoop sqrt :=\n  \u27e8_, fun _ => rfl\u27e9\n\nend VyperSqrt\n",
+  "sha256": "338ad107f92cc65254d473998304e84d524145f358adcec87c293aa94a9cfbaf",
+  "proved_required": [
+   "req_deployed_loop",
+   "req_sqrt_neg_reverts",
+   "req_sqrt_not_above",
+   "req_sqrt_not_below",
+   "req_sqrt_total"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_deployed_loop",
+   "req_sqrt_neg_reverts",
+   "req_sqrt_not_above",
+   "req_sqrt_not_below",
+   "req_sqrt_total"
+  ],
+  "text": "import VyperSqrt.Spec\nimport VyperSqrt.Lemmas\nimport ProofForgeFin\n\nnamespace VyperSqrt\n\nopen ProofForgeFin.Sqrt (newton sqrt_le_sqrt le_sqrt_of_mul_self_le sqrt_lt_of_lt_mul_self\n  sqrt_eq_of_bounds newton_sub_sqrt_le_half sqrt_le_newton newton_lt_self\n  eq_sqrt_of_newton_eq_self newton_le_sqrt_add_one newton_of_mem min_newton_eq_sqrt\n  sqrt_lt_two_pow)\nopen ProofForgeFin (div_anti_right div_mono_left div_div)\n\n/-- The fixed routine: the deployed loop followed by the smaller of the last two iterates\n(PR 4486: `if y < z: z = y`). -/\ndef sqrt : SqrtFn := vyperSqrtWith (fun y z => if y < z then y else z)\n\n/-- Scale: raw input `a` stands for `a / 10^10`; the integer under the root is `a * 10^10`. -/\ndef Aval (a : Nat) : Nat := a * 10 ^ 10\n\n/-- The seed `x / 2.0 + 0.5` on raw values: `a / 2 + 5 * 10^9`. -/\ndef seedN (a : Nat) : Nat := a / 2 + 5 * 10 ^ 9\n\n/-- Ghost Newton sequence: `t 0 = seed`, `t (i+1) = newton A (t i)`. -/\ndef gseq (a : Nat) : Nat \u2192 Nat\n  | 0 => seedN a\n  | n + 1 => newton (Aval a) (gseq a n)\n\n/-- Natural-number mirror of `loop`: no failure, values are `Nat`s. -/\ndef mloop (A : Nat) (n y z : Nat) : Nat \u00d7 Nat :=\n  match n with\n  | 0 => (y, z)\n  | n + 1 => if z = y then (y, z) else mloop A n z (newton A z)\n\n/-- The seed square strictly exceeds the scaled input: the root is below the seed. -/\ntheorem sq_seed : \u2200 a : Nat, Aval a < (seedN a + 1) * (seedN a + 1) := by\n  intro a\n  have hQM : 2 * (a / 2) + a % 2 = a := Nat.div_add_mod a 2\n  have hM : a % 2 < 2 := Nat.mod_lt a (by decide)\n  have eA : Aval a = 2 * (a / 2) * 10 ^ 10 + (a % 2) * 10 ^ 10 := by\n    unfold Aval\n    have eA' : a * 10 ^ 10 = (2 * (a / 2) + a % 2) * 10 ^ 10 := by rw [hQM]\n    rw [eA', Nat.add_mul]\n  have h5 : (5 : Nat) * 10 ^ 9 = 5000000000 := by decide\n  have eS : seedN a + 1 = (a / 2) + 5000000001 := by\n    unfold seedN; rw [h5]\n  have key : \u2200 q \u03bc : Int, 0 \u2264 \u03bc \u2192 \u03bc \u2264 1 \u2192\n      2 * q * 10000000000 + \u03bc * 10000000000\n        < (q + 5000000001) * (q + 5000000001) := by\n    intro q \u03bc h0 h1\n    have e1 : (q + 5000000001) * (q + 5000000001)\n        = q * q + 2 * 5000000001 * q + 5000000001 * 5000000001 := by grind\n    have e2 : (q - 4999999999) * (q - 4999999999)\n        = q * q - 2 * 4999999999 * q + 4999999999 * 4999999999 := by grind\n    have hsq : 0 \u2264 (q - 4999999999) * (q - 4999999999) := by\n      by_cases h : q < 4999999999\n      \u00b7 exact Int.mul_nonneg_of_nonpos_of_nonpos (by omega) (by omega)\n      \u00b7 exact Int.mul_nonneg (by omega) (by omega)\n    rw [e1]; rw [e2] at hsq; omega\n  rw [eA, eS]\n  have hM1 : a % 2 \u2264 1 := Nat.le_of_lt_succ hM\n  have h0 : (0 : Int) \u2264 ((a % 2 : Nat) : Int) := by omega\n  have h1 : ((a % 2 : Nat) : Int) \u2264 1 := by omega\n  have hK := key ((a / 2 : Nat) : Int) ((a % 2 : Nat) : Int) h0 h1\n  have hde : (((a / 2 : Nat) : Int) + 5000000001) * (((a / 2 : Nat) : Int) + 5000000001)\n      = ((a / 2 + 5000000001 : Nat) : Int) * ((a / 2 + 5000000001 : Nat) : Int) := by\n    rw [Int.natCast_add]; rfl\n  have hK' : ((2 * (a / 2) * 10 ^ 10 + (a % 2) * 10 ^ 10 : Nat) : Int)\n      < ((((a / 2) + 5000000001) * ((a / 2) + 5000000001) : Nat) : Int) := by\n    omega\n  exact Int.ofNat_lt.mp hK'\n\n/-- The seed is at least the root. -/\ntheorem seed_ge : \u2200 a : Nat, 0 < a \u2192 Nat.sqrt (Aval a) \u2264 seedN a := by\n  intro a ha\n  have h := sq_seed a\n  have hlt : Nat.sqrt (Aval a) < seedN a + 1 := sqrt_lt_of_lt_mul_self h\n  omega\n\n/-- The scaled input is positive. -/\ntheorem Aval_pos : \u2200 a : Nat, 0 < a \u2192 0 < Aval a := by\n  intro a ha; unfold Aval; omega\n\n/-- The root of a positive scaled input is at least `10^5`. -/\ntheorem s_ge100k : \u2200 a : Nat, 0 < a \u2192 100000 \u2264 Nat.sqrt (Aval a) := by\n  intro a ha\n  have hA : (100000 : Nat) * 100000 \u2264 Aval a := by\n    unfold Aval\n    have h1 : (1 : Nat) * 10 ^ 10 \u2264 a * 10 ^ 10 := Nat.mul_le_mul_right _ ha\n    have h2 : (100000 : Nat) * 100000 = 10 ^ 10 := by decide\n    omega\n  exact le_sqrt_of_mul_self_le hA\n\n/-- Every ghost iterate is positive and at least the root. -/\ntheorem gseq_bounds : \u2200 (a n : Nat), 0 < a \u2192\n    0 < gseq a n \u2227 Nat.sqrt (Aval a) \u2264 gseq a n := by\n  intro a n ha; induction n with\n  | zero =>\n    refine \u27e8?_, seed_ge a ha\u27e9\n    unfold gseq seedN; omega\n  | succ n ih =>\n    obtain \u27e8hpos, hle\u27e9 := ih\n    have hnew := sqrt_le_newton (a := Aval a) (x := gseq a n) hpos\n    have h1 : 1 \u2264 Nat.sqrt (Aval a) := by\n      have := s_ge100k a ha; omega\n    have hpos' : 0 < newton (Aval a) (gseq a n) := by omega\n    show 0 < newton (Aval a) (gseq a n) \u2227 _\n    exact \u27e8hpos', hnew\u27e9\n\n/-- Every ghost iterate is at most one past the seed. -/\ntheorem gseq_upper : \u2200 (a n : Nat), 0 < a \u2192 gseq a n \u2264 seedN a + 1 := by\n  intro a n ha; induction n with\n  | zero => exact Nat.le_succ _\n  | succ n ih =>\n    have \u27e8hpos, hle\u27e9 := gseq_bounds a n ha\n    have e : gseq a (n + 1) = newton (Aval a) (gseq a n) := rfl\n    rw [e]\n    rcases Nat.lt_or_ge (Nat.sqrt (Aval a)) (gseq a n) with h | h\n    \u00b7 exact Nat.le_trans (Nat.le_of_lt (newton_lt_self (a := Aval a) h)) ih\n    \u00b7 have hxs : gseq a n = Nat.sqrt (Aval a) := Nat.le_antisymm h hle\n      have h1 : newton (Aval a) (gseq a n) \u2264 Nat.sqrt (Aval a) + 1 := by\n        apply newton_le_sqrt_add_one hpos hle\n        rw [hxs, Nat.sub_self]; exact Nat.zero_le _\n      exact Nat.le_trans h1 (Nat.add_le_add_right (seed_ge a ha) _)\n\n/-- The root is below `2^101`: the scaled input is below `2^202`. -/\ntheorem s_lt_pow : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    Nat.sqrt (Aval a) < 2 ^ 101 := by\n  intro a ha hle\n  apply sqrt_lt_two_pow (k := 101)\n  have h10 : (10 : Nat) ^ 10 \u2264 2 ^ 34 := by decide\n  have e1 : Aval a \u2264 (2 ^ 167 - 1) * 10 ^ 10 := Nat.mul_le_mul_right _ hle\n  have e2 : (2 ^ 167 - 1) * 10 ^ 10 \u2264 (2 ^ 167 - 1) * 2 ^ 34 :=\n    Nat.mul_le_mul_left _ h10\n  have h2 : ((2 ^ 167 - 1) + 1) * 2 ^ 34 = (2 ^ 167 - 1) * 2 ^ 34 + 2 ^ 34 :=\n    Nat.add_mul _ _ _\n  have hsub : (2 ^ 167 - 1) + 1 = 2 ^ 167 :=\n    Nat.sub_add_cancel (by decide : (1 : Nat) \u2264 2 ^ 167)\n  have e3' : (2 ^ 167 - 1) * 2 ^ 34 + 2 ^ 34 = 2 ^ 167 * 2 ^ 34 := by\n    rw [\u2190 h2, hsub]\n  have h34 : 0 < (2 : Nat) ^ 34 := by decide\n  have e3 : (2 ^ 167 - 1) * 2 ^ 34 < 2 ^ 167 * 2 ^ 34 := by\n    rw [\u2190 e3']; exact Nat.lt_add_of_pos_right h34\n  have e4 : (2 : Nat) ^ 167 * 2 ^ 34 = 2 ^ 201 := by decide\n  have e5 : (2 : Nat) ^ 201 < 2 ^ 202 := by decide\n  have hfin : (2 : Nat) ^ (2 * 101) = 2 ^ 202 := by decide\n  have e6 : (2 : Nat) ^ 167 * 2 ^ 34 < 2 ^ 202 := by\n    rw [e4]; exact e5\n  rw [hfin]\n  exact Nat.lt_of_le_of_lt (Nat.le_trans e1 e2) (Nat.lt_trans e3 e6)\n\n/-- The Newton quotient stays near the root. -/\ntheorem quot_le : \u2200 (a i : Nat), 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    Aval a / gseq a i \u2264 Nat.sqrt (Aval a) + 2 := by\n  intro a i ha hle\n  have \u27e8hpos, hle2\u27e9 := gseq_bounds a i ha\n  have hspos : 0 < Nat.sqrt (Aval a) := by\n    have := s_ge100k a ha; omega\n  have hup := Nat.lt_succ_sqrt (Aval a)\n  simp only [Nat.succ_eq_add_one] at hup\n  have hexp : (Nat.sqrt (Aval a) + 1) * (Nat.sqrt (Aval a) + 1)\n      = Nat.sqrt (Aval a) * Nat.sqrt (Aval a)\n        + (Nat.sqrt (Aval a) + Nat.sqrt (Aval a)) + 1 := by grind\n  have h2 : Aval a\n      \u2264 Nat.sqrt (Aval a) * Nat.sqrt (Aval a)\n        + (Nat.sqrt (Aval a) + Nat.sqrt (Aval a)) := by omega\n  have h1 : Aval a / gseq a i \u2264 Aval a / Nat.sqrt (Aval a) :=\n    div_anti_right _ hspos hle2\n  have hmul : Nat.sqrt (Aval a) * (Nat.sqrt (Aval a) + 2)\n      = Nat.sqrt (Aval a) * Nat.sqrt (Aval a)\n        + (Nat.sqrt (Aval a) + Nat.sqrt (Aval a)) := by grind\n  rw [\u2190 hmul] at h2\n  have h3 : Aval a / Nat.sqrt (Aval a) \u2264 Nat.sqrt (Aval a) + 2 := by\n    have h3' : Aval a / Nat.sqrt (Aval a)\n        \u2264 (Nat.sqrt (Aval a) * (Nat.sqrt (Aval a) + 2)) / Nat.sqrt (Aval a) :=\n      Nat.div_le_div_right h2\n    have h4 : Nat.sqrt (Aval a) * (Nat.sqrt (Aval a) + 2) / Nat.sqrt (Aval a)\n        = Nat.sqrt (Aval a) + 2 := by\n      rw [Nat.mul_comm]\n      exact Nat.mul_div_cancel _ hspos\n    rw [h4] at h3'; exact h3'\n  exact Nat.le_trans h1 h3\n\n/-- Every Newton step stays in decimal range. -/\ntheorem range_ok : \u2200 (a i : Nat), 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    Aval a / gseq a i + gseq a i \u2264 2 ^ 167 - 1 := by\n  intro a i ha hle\n  have hq := quot_le a i ha hle\n  have hup := gseq_upper a i ha\n  have hs := s_lt_pow a ha hle\n  have h1 : Aval a / gseq a i + gseq a i\n      \u2264 (Nat.sqrt (Aval a) + 2) + (seedN a + 1) := Nat.add_le_add hq hup\n  have hseed : seedN a \u2264 (2 ^ 167 - 1) / 2 + 5 * 10 ^ 9 := by\n    unfold seedN\n    exact Nat.add_le_add_right (Nat.div_le_div_right hle) _\n  have hhalf : (2 ^ 167 - 1) / 2 = 2 ^ 166 - 1 := by decide\n  have hseed2 : seedN a \u2264 (2 ^ 166 - 1) + 5 * 10 ^ 9 := by\n    rw [\u2190 hhalf]; exact hseed\n  have key : 2 ^ 101 + 2 + ((2 ^ 166 - 1) + 5 * 10 ^ 9 + 1) \u2264 2 ^ 167 - 1 := by\n    decide\n  have h2 : (Nat.sqrt (Aval a) + 2) + (seedN a + 1)\n      \u2264 (2 ^ 101 + 2) + ((2 ^ 166 - 1) + 5 * 10 ^ 9 + 1) := by\n    have g1 : Nat.sqrt (Aval a) + 2 \u2264 2 ^ 101 + 2 :=\n      Nat.add_le_add_right (Nat.le_of_lt hs) _\n    have g2 : seedN a + 1 \u2264 ((2 ^ 166 - 1) + 5 * 10 ^ 9) + 1 :=\n      Nat.add_le_add_right hseed2 _\n    exact Nat.add_le_add g1 g2\n  exact Nat.le_trans h1 (Nat.le_trans h2 key)\n\n/-- Halving bound with an explicit closed form. -/\ntheorem err_bound : \u2200 (a k : Nat), 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    gseq a k - Nat.sqrt (Aval a)\n      \u2264 (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ k + 2 := by\n  intro a k ha hle; induction k with\n  | zero =>\n    rw [Nat.pow_zero, Nat.div_one]; exact Nat.le_add_right _ _\n  | succ k ih =>\n    have \u27e8hpos, hle2\u27e9 := gseq_bounds a k ha\n    have hstep : gseq a (k + 1) - Nat.sqrt (Aval a)\n        \u2264 (gseq a k - Nat.sqrt (Aval a)) / 2 + 1 := by\n      have h := newton_sub_sqrt_le_half (a := Aval a) (x := gseq a k) hpos hle2\n      show newton (Aval a) (gseq a k) - _ \u2264 _\n      exact h\n    have key : (gseq a k - Nat.sqrt (Aval a)) / 2 + 1\n        \u2264 ((gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ k + 2) / 2 + 1 :=\n      Nat.add_le_add_right (Nat.div_le_div_right ih) _\n    have hdd : ((gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ k) / 2\n        = (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ (k + 1) := by\n      rw [div_div, Nat.pow_succ]\n    have hfin : ((gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ k + 2) / 2 + 1\n        = (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ (k + 1) + 2 := by\n      revert hdd\n      generalize (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ k = U\n      generalize (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ (k + 1) = U'\n      intro hdd\n      omega\n    rw [\u2190 hfin]\n    exact Nat.le_trans hstep key\n\n/-- After 254 steps the error is at most 2. -/\ntheorem err254 : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    gseq a 254 - Nat.sqrt (Aval a) \u2264 2 := by\n  intro a ha hle\n  have h := err_bound a 254 ha hle\n  have hE : gseq a 0 - Nat.sqrt (Aval a) \u2264 (2 ^ 166 - 1) + 5 * 10 ^ 9 := by\n    have h1 : gseq a 0 - Nat.sqrt (Aval a) \u2264 gseq a 0 := Nat.sub_le _ _\n    have h2 : gseq a 0 \u2264 (2 ^ 166 - 1) + 5 * 10 ^ 9 := by\n      have ha2 : a / 2 \u2264 2 ^ 166 - 1 := by\n        have h1 : a / 2 \u2264 (2 ^ 167 - 1) / 2 := Nat.div_le_div_right hle\n        have h2 : (2 ^ 167 - 1) / 2 = 2 ^ 166 - 1 := by decide\n        rw [h2] at h1; exact h1\n      show seedN a \u2264 _\n      unfold seedN\n      exact Nat.add_le_add_right ha2 _\n    exact Nat.le_trans h1 h2\n  have h0 : (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ 254 = 0 := by\n    apply Nat.div_eq_of_lt\n    have key : (2 ^ 166 - 1) + 5 * 10 ^ 9 < 2 ^ 254 := by decide\n    omega\n  rw [h0] at h\n  omega\n\n/-- Step 255 lands within one of the root. -/\ntheorem close255 : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    gseq a 255 \u2264 Nat.sqrt (Aval a) + 1 := by\n  intro a ha hle\n  have \u27e8hpos254, hle254\u27e9 := gseq_bounds a 254 ha\n  have he := err254 a ha hle\n  have hs2 : 2 \u2264 Nat.sqrt (Aval a) := by\n    have := s_ge100k a ha; omega\n  have hsq : (gseq a 254 - Nat.sqrt (Aval a)) * (gseq a 254 - Nat.sqrt (Aval a))\n      \u2264 2 * Nat.sqrt (Aval a) := by\n    have h1 : (gseq a 254 - Nat.sqrt (Aval a)) * (gseq a 254 - Nat.sqrt (Aval a))\n        \u2264 2 * 2 := Nat.mul_le_mul he he\n    omega\n  have hle255 : newton (Aval a) (gseq a 254) \u2264 Nat.sqrt (Aval a) + 1 :=\n    newton_le_sqrt_add_one hpos254 hle254 hsq\n  have e255 : gseq a 255 = newton (Aval a) (gseq a 254) := rfl\n  rw [e255]; exact hle255\n\n/-- The Nat mirror follows the ghost sequence. -/\ntheorem mloop_pair : \u2200 (a i n : Nat), \u2203 k, k \u2264 n\n    \u2227 (i + k = i + n \u2228 gseq a (i + k + 1) = gseq a (i + k))\n    \u2227 mloop (Aval a) n (gseq a i) (gseq a (i + 1))\n      = (gseq a (i + k), gseq a (i + k + 1)) := by\n  intro a i n; induction n generalizing i with\n  | zero => exact \u27e80, Nat.le_refl _, Or.inl rfl, rfl\u27e9\n  | succ n ih =>\n    have e : mloop (Aval a) (n + 1) (gseq a i) (gseq a (i + 1))\n        = (if gseq a (i + 1) = gseq a i then (gseq a i, gseq a (i + 1))\n          else mloop (Aval a) n (gseq a (i + 1))\n            (newton (Aval a) (gseq a (i + 1)))) := rfl\n    by_cases h : gseq a (i + 1) = gseq a i\n    \u00b7 refine \u27e80, Nat.zero_le _, Or.inr h, ?_\u27e9\n      rw [e, if_pos h]\n      rfl\n    \u00b7 obtain \u27e8k', hk', hdisj, heq\u27e9 := ih (i + 1)\n      refine \u27e8k' + 1, Nat.succ_le_succ hk', ?_, ?_\u27e9\n      \u00b7 have e1 : i + (k' + 1) = (i + 1) + k' := by omega\n        have e2 : i + (k' + 1) + 1 = ((i + 1) + k') + 1 := by omega\n        rcases hdisj with hfin | hfix\n        \u00b7 left; omega\n        \u00b7 right; rw [e2, e1]; exact hfix\n      \u00b7 have e1 : i + (k' + 1) = (i + 1) + k' := by omega\n        have e2 : i + (k' + 1) + 1 = ((i + 1) + k') + 1 := by omega\n        have e3 : newton (Aval a) (gseq a (i + 1)) = gseq a ((i + 1) + 1) := rfl\n        rw [e, if_neg h, e3, e2, e1]\n        exact heq\n\n/-- The deployed loop follows the ghost sequence. -/\ntheorem loop_ghost : \u2200 (a n i : Nat), 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192 i + n \u2264 256 \u2192\n    \u2203 k, k \u2264 n \u2227 (i + k = i + n \u2228 gseq a (i + k + 1) = gseq a (i + k))\n      \u2227 loop (a : Int) n ((gseq a i : Nat) : Int) ((gseq a (i + 1) : Nat) : Int)\n        = some (((gseq a (i + k) : Nat) : Int), (((gseq a (i + k + 1) : Nat)) : Int)) := by\n  intro a n i ha hle hin; induction n generalizing i with\n  | zero =>\n    refine \u27e80, Nat.le_refl _, Or.inl rfl, rfl\u27e9\n  | succ n ih =>\n    by_cases h : ((gseq a (i + 1) : Nat) : Int) = ((gseq a i : Nat) : Int)\n    \u00b7 have hNat : gseq a (i + 1) = gseq a i := Int.ofNat.inj h\n      have hstop := loop_stop (a : Int) n ((gseq a i : Nat) : Int)\n      refine \u27e80, Nat.zero_le _, Or.inr ?_, ?_\u27e9\n      \u00b7 exact hNat\n      \u00b7 rw [hNat]; exact hstop\n    \u00b7 have hne : gseq a (i + 1) \u2260 gseq a i := fun e => h (by rw [e])\n      have hpos : 0 < gseq a (i + 1) := (gseq_bounds a (i + 1) ha).1\n      have hrange := range_ok a (i + 1) ha hle\n      have hstep := loop_step (a := a) (y := gseq a i) (z := gseq a (i + 1))\n        (n := n) hpos hne hrange\n      obtain \u27e8k', hk', hdisj, heq\u27e9 := ih (i + 1) (by omega)\n      refine \u27e8k' + 1, Nat.succ_le_succ hk', ?_, ?_\u27e9\n      \u00b7 have e1 : i + (k' + 1) = (i + 1) + k' := by omega\n        have e2 : i + (k' + 1) + 1 = ((i + 1) + k') + 1 := by omega\n        rcases hdisj with hfin | hfix\n        \u00b7 left; omega\n        \u00b7 right; rw [e2, e1]; exact hfix\n      \u00b7 have hAval : Aval a = a * 10 ^ 10 := rfl\n        have hz' : ((((a * 10 ^ 10 / gseq a (i + 1) + gseq a (i + 1)) / 2 : Nat)) : Int)\n            = ((gseq a ((i + 1) + 1) : Nat) : Int) := by\n          have hnat : (a * 10 ^ 10 / gseq a (i + 1) + gseq a (i + 1)) / 2\n              = gseq a ((i + 1) + 1) := by\n            have e : gseq a ((i + 1) + 1)\n                = (gseq a (i + 1) + Aval a / gseq a (i + 1)) / 2 := rfl\n            rw [e, hAval, Nat.add_comm (a * 10 ^ 10 / gseq a (i + 1)) (gseq a (i + 1))]\n          exact congrArg (fun n : Nat => ((n : Nat) : Int)) hnat\n        have e1 : i + (k' + 1) = (i + 1) + k' := by omega\n        have e2 : i + (k' + 1) + 1 = ((i + 1) + k') + 1 := by omega\n        rw [hstep, hz', e2, e1]; exact heq\n\ntheorem req_sqrt_neg_reverts : SqrtNegReverts sqrt := by\n  intro x hx\n  show vyperSqrtWith (fun y z => if y < z then y else z) x = none\n  unfold vyperSqrtWith\n  rw [if_pos hx]\n\n/-- Steps 255 and 256 bracket the root. -/\ntheorem min255 : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    Nat.min (gseq a 255) (gseq a (255 + 1)) = Nat.sqrt (Aval a) := by\n  intro a ha hle\n  have hb := gseq_bounds a 255 ha\n  have h255 := close255 a ha hle\n  have hm := min_newton_eq_sqrt hb.1 hb.2 h255\n  have e : newton (Aval a) (gseq a 255) = gseq a (255 + 1) := rfl\n  rw [e] at hm\n  exact hm\n\n/-- The routine returns the integer square root on positive inputs. -/\ntheorem sqrt_val : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    vyperSqrtWith (fun y z => if y < z then y else z) (a : Int)\n      = some ((Nat.sqrt (Aval a) : Int)) := by\n  intro a ha hle\n  have hpos := vyperSqrtWith_pos (fun y z => if y < z then y else z) ha hle\n  rw [hpos]\n  have es : ((a / 2 + 5 * 10 ^ 9 : Nat) : Int) = ((gseq a 0 : Nat) : Int) := rfl\n  rw [es]\n  by_cases hseed : ((gseq a 0 : Nat) : Int) = (a : Int)\n  \u00b7 have hNat : gseq a 0 = a := Int.ofNat.inj hseed\n    have hsa : a / 2 + 5000000000 = a := hNat\n    have hcase : a = 10000000000 \u2228 a = 10000000000 - 1 := by\n      have hqm := Nat.div_add_mod a 2\n      have hm := Nat.mod_lt a (show 0 < 2 by decide)\n      have hm01 : a % 2 = 0 \u2228 a % 2 = 1 := by omega\n      rcases hm01 with hm0 | hm0\n      \u00b7 left; omega\n      \u00b7 right; omega\n    have hloop0 : loop (a : Int) 256 (a : Int) (a : Int)\n        = some ((a : Int), (a : Int)) := by\n      have e : (256 : Nat) = 255 + 1 := rfl\n      rw [e]\n      exact loop_stop _ _ _\n    have hs_eq : Nat.sqrt (Aval a) = a := by\n      rcases hcase with rfl | rfl\n      \u00b7 have hA : Aval 10000000000 = 10000000000 * 10000000000 := rfl\n        rw [hA]\n        exact sqrt_eq_of_bounds (by decide) (by decide)\n      \u00b7 have hA : Aval (10000000000 - 1) = (10000000000 - 1) * 10000000000 := rfl\n        rw [hA]\n        exact sqrt_eq_of_bounds (by decide) (by decide)\n    rw [hNat, hloop0]\n    show some (if (a : Int) < (a : Int) then (a : Int) else (a : Int))\n      = some ((Nat.sqrt (Aval a) : Int))\n    rw [if_neg (by omega : \u00ac (a : Int) < (a : Int)), hs_eq]\n  \u00b7 have hne : gseq a 0 \u2260 a := fun e => hseed (by rw [e])\n    have hpos0 : 0 < gseq a 0 := (gseq_bounds a 0 ha).1\n    have hrange0 := range_ok a 0 ha hle\n    have hstep := loop_step (a := a) (y := a) (z := gseq a 0) (n := 255)\n      hpos0 hne hrange0\n    have hAval : Aval a = a * 10 ^ 10 := rfl\n    have hz' : ((((a * 10 ^ 10 / gseq a 0 + gseq a 0) / 2 : Nat)) : Int)\n        = ((gseq a (0 + 1) : Nat) : Int) := by\n      have hnat : (a * 10 ^ 10 / gseq a 0 + gseq a 0) / 2\n          = gseq a (0 + 1) := by\n        have e : gseq a (0 + 1)\n            = (gseq a 0 + Aval a / gseq a 0) / 2 := rfl\n        rw [e, hAval, Nat.add_comm (a * 10 ^ 10 / gseq a 0) (gseq a 0)]\n      exact congrArg (fun n : Nat => ((n : Nat) : Int)) hnat\n    obtain \u27e8k, hk255, hdisj, heq\u27e9 := loop_ghost a 255 0 ha hle (by omega)\n    have e0 : (0 : Nat) + k = k := Nat.zero_add k\n    rw [e0] at heq hdisj\n    have hfuel : (256 : Nat) = 255 + 1 := rfl\n    rw [hfuel, hstep, hz', heq]\n    have hmin : (if ((gseq a k : Nat) : Int) < ((gseq a (k + 1) : Nat) : Int)\n          then ((gseq a k : Nat) : Int) else ((gseq a (k + 1) : Nat) : Int))\n        = ((Nat.min (gseq a k) (gseq a (k + 1)) : Nat) : Int) := by\n      by_cases hlt : ((gseq a k : Nat) : Int) < ((gseq a (k + 1) : Nat) : Int)\n      \u00b7 rw [if_pos hlt]\n        have hle' : gseq a k \u2264 gseq a (k + 1) :=\n          Int.ofNat_le.mp (Int.le_of_lt hlt)\n        have hmin' : Nat.min (gseq a k) (gseq a (k + 1)) = gseq a k :=\n          Nat.min_eq_left hle'\n        rw [hmin']\n      \u00b7 rw [if_neg hlt]\n        have hle' : gseq a (k + 1) \u2264 gseq a k := by\n          have hle'' : ((gseq a (k + 1) : Nat) : Int) \u2264 ((gseq a k : Nat) : Int) := by\n            omega\n          exact Int.ofNat_le.mp hle''\n        have hmin' : Nat.min (gseq a k) (gseq a (k + 1)) = gseq a (k + 1) :=\n          Nat.min_eq_right hle'\n        rw [hmin']\n    have hminval : Nat.min (gseq a k) (gseq a (k + 1)) = Nat.sqrt (Aval a) := by\n      rcases hdisj with hfin | hfix\n      \u00b7 have hk255' : k = 255 := by omega\n        rw [hk255']\n        exact min255 a ha hle\n      \u00b7 have hnew : newton (Aval a) (gseq a k) = gseq a k := by\n          have e : gseq a (k + 1) = newton (Aval a) (gseq a k) := rfl\n          exact e.symm.trans hfix\n        have hposk := (gseq_bounds a k ha).1\n        have hs_eq : gseq a k = Nat.sqrt (Aval a) :=\n          eq_sqrt_of_newton_eq_self hposk hnew\n        have hmin0 : Nat.min (gseq a k) (gseq a (k + 1)) = gseq a k := by\n          rw [hfix]\n          exact Nat.min_eq_left (Nat.le_refl _)\n        rw [hmin0]; exact hs_eq\n    show some (if ((gseq a k : Nat) : Int) < ((gseq a (k + 1) : Nat) : Int)\n        then ((gseq a k : Nat) : Int) else ((gseq a (k + 1) : Nat) : Int))\n      = some ((Nat.sqrt (Aval a) : Int))\n    rw [hmin, hminval]\n\n/-- The routine returns zero on zero. -/\ntheorem sqrt0 : sqrt (0 : Int) = some 0 := by\n  show vyperSqrtWith (fun y z => if y < z then y else z) 0 = some 0\n  unfold vyperSqrtWith\n  rw [if_neg (by omega : \u00ac (0 : Int) < 0), if_pos rfl]\n\ntheorem req_sqrt_not_above : SqrtNotAbove sqrt := by\n  intro x r hdec hsome\n  obtain \u27e8hlo, hhi\u27e9 := hdec\n  by_cases hx0 : x = 0\n  \u00b7 subst hx0\n    have hr : r = 0 := Option.some_inj.mp (hsome.symm.trans sqrt0)\n    subst hr\n    omega\n  \u00b7 by_cases hxneg : x < 0\n    \u00b7 rw [req_sqrt_neg_reverts x hxneg] at hsome\n      cases hsome\n    \u00b7 have hxpos : 0 < x := by omega\n      have hx0' : 0 \u2264 x := by omega\n      obtain \u27e8a, rfl\u27e9 : \u2203 a : Nat, x = (a : Int) :=\n        \u27e8x.toNat, (Int.toNat_of_nonneg hx0').symm\u27e9\n      have ha : 0 < a := by\n        have hpos' : (0 : Int) < ((a : Nat) : Int) := hxpos\n        exact_mod_cast hpos'\n      have hle : a \u2264 2 ^ 167 - 1 := by\n        have h2 : ((a : Nat) : Int) \u2264 MAX_DECIMAL := hhi\n        rw [max_decimal_eq] at h2\n        exact Int.ofNat_le.mp h2\n      have hval := sqrt_val a ha hle\n      have hsome2 : vyperSqrtWith (fun y z => if y < z then y else z) (a : Int)\n          = some r := hsome\n      rw [hval] at hsome2\n      have hr : r = ((Nat.sqrt (Aval a) : Int)) := Option.some_inj.mp hsome2.symm\n      rw [hr, divisor_eq]\n      exact_mod_cast Nat.sqrt_le (Aval a)\n\ntheorem req_sqrt_not_below : SqrtNotBelow sqrt := by\n  intro x r hdec hsome\n  obtain \u27e8hlo, hhi\u27e9 := hdec\n  by_cases hx0 : x = 0\n  \u00b7 subst hx0\n    have hr : r = 0 := Option.some_inj.mp (hsome.symm.trans sqrt0)\n    subst hr\n    show (0 : Int) * DIVISOR < (0 + 1) * (0 + 1)\n    omega\n  \u00b7 by_cases hxneg : x < 0\n    \u00b7 rw [req_sqrt_neg_reverts x hxneg] at hsome\n      cases hsome\n    \u00b7 have hxpos : 0 < x := by omega\n      have hx0' : 0 \u2264 x := by omega\n      obtain \u27e8a, rfl\u27e9 : \u2203 a : Nat, x = (a : Int) :=\n        \u27e8x.toNat, (Int.toNat_of_nonneg hx0').symm\u27e9\n      have ha : 0 < a := by\n        have hpos' : (0 : Int) < ((a : Nat) : Int) := hxpos\n        exact_mod_cast hpos'\n      have hle : a \u2264 2 ^ 167 - 1 := by\n        have h2 : ((a : Nat) : Int) \u2264 MAX_DECIMAL := hhi\n        rw [max_decimal_eq] at h2\n        exact Int.ofNat_le.mp h2\n      have hval := sqrt_val a ha hle\n      have hsome2 : vyperSqrtWith (fun y z => if y < z then y else z) (a : Int)\n          = some r := hsome\n      rw [hval] at hsome2\n      have hr : r = ((Nat.sqrt (Aval a) : Int)) := Option.some_inj.mp hsome2.symm\n      have hlt := Nat.lt_succ_sqrt (Aval a)\n      simp only [Nat.succ_eq_add_one] at hlt\n      rw [hr, divisor_eq]\n      exact_mod_cast hlt\n\ntheorem req_sqrt_total : SqrtTotal sqrt := by\n  intro x hdec hx0\n  obtain \u27e8hlo, hhi\u27e9 := hdec\n  by_cases hx00 : x = 0\n  \u00b7 subst hx00\n    rw [sqrt0]\n    rfl\n  \u00b7 have hxpos : 0 < x := by omega\n    obtain \u27e8a, rfl\u27e9 : \u2203 a : Nat, x = (a : Int) :=\n      \u27e8x.toNat, (Int.toNat_of_nonneg hx0).symm\u27e9\n    have ha : 0 < a := by\n      have hx00' : ((a : Nat) : Int) \u2260 0 := hx00\n      have hane : a \u2260 0 := fun e => hx00' (by rw [e]; simp)\n      exact Nat.pos_of_ne_zero hane\n    have hle : a \u2264 2 ^ 167 - 1 := by\n      have h2 : ((a : Nat) : Int) \u2264 MAX_DECIMAL := hhi\n      rw [max_decimal_eq] at h2\n      exact Int.ofNat_le.mp h2\n    have hval := sqrt_val a ha hle\n    have e : sqrt (a : Int)\n        = vyperSqrtWith (fun y z => if y < z then y else z) (a : Int) := rfl\n    rw [e, hval]\n    rfl\n\ntheorem req_deployed_loop : DeployedLoop sqrt :=\n  \u27e8_, fun _ => rfl\u27e9\n\nend VyperSqrt\n"
+ },
+ "proved": [
+  {
+   "name": "req_sqrt_neg_reverts",
+   "kind": "theorem",
+   "text": "theorem req_sqrt_neg_reverts : SqrtNegReverts sqrt := by\n  intro x hx\n  show vyperSqrtWith (fun y z => if y < z then y else z) x = none\n  unfold vyperSqrtWith\n  rw [if_pos hx]",
+   "deps": [
+    "sqrt"
+   ],
+   "statement": "theorem req_sqrt_neg_reverts : SqrtNegReverts sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "req_deployed_loop",
+   "kind": "theorem",
+   "text": "theorem req_deployed_loop : DeployedLoop sqrt :=\n  \u27e8_, fun _ => rfl\u27e9",
+   "deps": [
+    "sqrt"
+   ],
+   "statement": "theorem req_deployed_loop : DeployedLoop sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "mloop",
+   "kind": "def",
+   "text": "def mloop (A : Nat) (n y z : Nat) : Nat \u00d7 Nat :=\n  match n with\n  | 0 => (y, z)\n  | n + 1 => if z = y then (y, z) else mloop A n z (newton A z)",
+   "deps": [],
+   "statement": "def mloop (A : Nat) (n y z : Nat) : Nat \u00d7 Nat :=\n  match n with\n  | 0 => (y, z)\n  | n + 1 => if z = y then (y, z) else mloop A n z (newton A z)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "gseq",
+   "kind": "def",
+   "text": "def gseq (a : Nat) : Nat \u2192 Nat\n  | 0 => seedN a\n  | n + 1 => newton (Aval a) (gseq a n)",
+   "deps": [
+    "Aval",
+    "seedN"
+   ],
+   "statement": "def gseq (a : Nat) : Nat \u2192 Nat\n  | 0 => seedN a\n  | n + 1 => newton (Aval a) (gseq a n)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "seedN",
+   "kind": "def",
+   "text": "def seedN (a : Nat) : Nat := a / 2 + 5 * 10 ^ 9",
+   "deps": [],
+   "statement": "def seedN (a : Nat) : Nat := a / 2 + 5 * 10 ^ 9",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "Aval",
+   "kind": "def",
+   "text": "def Aval (a : Nat) : Nat := a * 10 ^ 10",
+   "deps": [],
+   "statement": "def Aval (a : Nat) : Nat := a * 10 ^ 10",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "sqrt",
+   "kind": "def",
+   "text": "def sqrt : SqrtFn := vyperSqrtWith (fun y z => if y < z then y else z)",
+   "deps": [],
+   "statement": "def sqrt : SqrtFn := vyperSqrtWith (fun y z => if y < z then y else z)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "close255",
+   "kind": "theorem",
+   "text": "theorem close255 : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    gseq a 255 \u2264 Nat.sqrt (Aval a) + 1 := by\n  intro a ha hle\n  have \u27e8hpos254, hle254\u27e9 := gseq_bounds a 254 ha\n  have he := err254 a ha hle\n  have hs2 : 2 \u2264 Nat.sqrt (Aval a) := by\n    have := s_ge100k a ha; omega\n  have hsq : (gseq a 254 - Nat.sqrt (Aval a)) * (gseq a 254 - Nat.sqrt (Aval a))\n      \u2264 2 * Nat.sqrt (Aval a) := by\n    have h1 : (gseq a 254 - Nat.sqrt (Aval a)) * (gseq a 254 - Nat.sqrt (Aval a))\n        \u2264 2 * 2 := Nat.mul_le_mul he he\n    omega\n  have hle255 : newton (Aval a) (gseq a 254) \u2264 Nat.sqrt (Aval a) + 1 :=\n    newton_le_sqrt_add_one hpos254 hle254 hsq\n  have e255 : gseq a 255 = newton (Aval a) (gseq a 254) := rfl\n  rw [e255]; exact hle255",
+   "deps": [
+    "Aval",
+    "err254",
+    "err_bound",
+    "gseq",
+    "gseq_bounds",
+    "s_ge100k",
+    "seedN",
+    "seed_ge",
+    "sq_seed",
+    "sqrt"
+   ],
+   "statement": "theorem close255 : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    gseq a 255 \u2264 Nat.sqrt (Aval a) + 1",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "err254",
+   "kind": "theorem",
+   "text": "theorem err254 : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    gseq a 254 - Nat.sqrt (Aval a) \u2264 2 := by\n  intro a ha hle\n  have h := err_bound a 254 ha hle\n  have hE : gseq a 0 - Nat.sqrt (Aval a) \u2264 (2 ^ 166 - 1) + 5 * 10 ^ 9 := by\n    have h1 : gseq a 0 - Nat.sqrt (Aval a) \u2264 gseq a 0 := Nat.sub_le _ _\n    have h2 : gseq a 0 \u2264 (2 ^ 166 - 1) + 5 * 10 ^ 9 := by\n      have ha2 : a / 2 \u2264 2 ^ 166 - 1 := by\n        have h1 : a / 2 \u2264 (2 ^ 167 - 1) / 2 := Nat.div_le_div_right hle\n        have h2 : (2 ^ 167 - 1) / 2 = 2 ^ 166 - 1 := by decide\n        rw [h2] at h1; exact h1\n      show seedN a \u2264 _\n      unfold seedN\n      exact Nat.add_le_add_right ha2 _\n    exact Nat.le_trans h1 h2\n  have h0 : (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ 254 = 0 := by\n    apply Nat.div_eq_of_lt\n    have key : (2 ^ 166 - 1) + 5 * 10 ^ 9 < 2 ^ 254 := by decide\n    omega\n  rw [h0] at h\n  omega",
+   "deps": [
+    "Aval",
+    "err_bound",
+    "gseq",
+    "gseq_bounds",
+    "s_ge100k",
+    "seedN",
+    "seed_ge",
+    "sq_seed",
+    "sqrt"
+   ],
+   "statement": "theorem err254 : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    gseq a 254 - Nat.sqrt (Aval a) \u2264 2",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "err_bound",
+   "kind": "theorem",
+   "text": "theorem err_bound : \u2200 (a k : Nat), 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    gseq a k - Nat.sqrt (Aval a)\n      \u2264 (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ k + 2 := by\n  intro a k ha hle; induction k with\n  | zero =>\n    rw [Nat.pow_zero, Nat.div_one]; exact Nat.le_add_right _ _\n  | succ k ih =>\n    have \u27e8hpos, hle2\u27e9 := gseq_bounds a k ha\n    have hstep : gseq a (k + 1) - Nat.sqrt (Aval a)\n        \u2264 (gseq a k - Nat.sqrt (Aval a)) / 2 + 1 := by\n      have h := newton_sub_sqrt_le_half (a := Aval a) (x := gseq a k) hpos hle2\n      show newton (Aval a) (gseq a k) - _ \u2264 _\n      exact h\n    have key : (gseq a k - Nat.sqrt (Aval a)) / 2 + 1\n        \u2264 ((gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ k + 2) / 2 + 1 :=\n      Nat.add_le_add_right (Nat.div_le_div_right ih) _\n    have hdd : ((gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ k) / 2\n        = (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ (k + 1) := by\n      rw [div_div, Nat.pow_succ]\n    have hfin : ((gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ k + 2) / 2 + 1\n        = (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ (k + 1) + 2 := by\n      revert hdd\n      generalize (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ k = U\n      generalize (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ (k + 1) = U'\n      intro hdd\n      omega\n    rw [\u2190 hfin]\n    exact Nat.le_trans hstep key",
+   "deps": [
+    "Aval",
+    "gseq",
+    "gseq_bounds",
+    "s_ge100k",
+    "seedN",
+    "seed_ge",
+    "sq_seed",
+    "sqrt"
+   ],
+   "statement": "theorem err_bound : \u2200 (a k : Nat), 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    gseq a k - Nat.sqrt (Aval a)\n      \u2264 (gseq a 0 - Nat.sqrt (Aval a)) / 2 ^ k + 2",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "range_ok",
+   "kind": "theorem",
+   "text": "theorem range_ok : \u2200 (a i : Nat), 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    Aval a / gseq a i + gseq a i \u2264 2 ^ 167 - 1 := by\n  intro a i ha hle\n  have hq := quot_le a i ha hle\n  have hup := gseq_upper a i ha\n  have hs := s_lt_pow a ha hle\n  have h1 : Aval a / gseq a i + gseq a i\n      \u2264 (Nat.sqrt (Aval a) + 2) + (seedN a + 1) := Nat.add_le_add hq hup\n  have hseed : seedN a \u2264 (2 ^ 167 - 1) / 2 + 5 * 10 ^ 9 := by\n    unfold seedN\n    exact Nat.add_le_add_right (Nat.div_le_div_right hle) _\n  have hhalf : (2 ^ 167 - 1) / 2 = 2 ^ 166 - 1 := by decide\n  have hseed2 : seedN a \u2264 (2 ^ 166 - 1) + 5 * 10 ^ 9 := by\n    rw [\u2190 hhalf]; exact hseed\n  have key : 2 ^ 101 + 2 + ((2 ^ 166 - 1) + 5 * 10 ^ 9 + 1) \u2264 2 ^ 167 - 1 := by\n    decide\n  have h2 : (Nat.sqrt (Aval a) + 2) + (seedN a + 1)\n      \u2264 (2 ^ 101 + 2) + ((2 ^ 166 - 1) + 5 * 10 ^ 9 + 1) := by\n    have g1 : Nat.sqrt (Aval a) + 2 \u2264 2 ^ 101 + 2 :=\n      Nat.add_le_add_right (Nat.le_of_lt hs) _\n    have g2 : seedN a + 1 \u2264 ((2 ^ 166 - 1) + 5 * 10 ^ 9) + 1 :=\n      Nat.add_le_add_right hseed2 _\n    exact Nat.add_le_add g1 g2\n  exact Nat.le_trans h1 (Nat.le_trans h2 key)",
+   "deps": [
+    "Aval",
+    "gseq",
+    "gseq_bounds",
+    "gseq_upper",
+    "quot_le",
+    "s_ge100k",
+    "s_lt_pow",
+    "seedN",
+    "seed_ge",
+    "sq_seed",
+    "sqrt"
+   ],
+   "statement": "theorem range_ok : \u2200 (a i : Nat), 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    Aval a / gseq a i + gseq a i \u2264 2 ^ 167 - 1",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "quot_le",
+   "kind": "theorem",
+   "text": "theorem quot_le : \u2200 (a i : Nat), 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    Aval a / gseq a i \u2264 Nat.sqrt (Aval a) + 2 := by\n  intro a i ha hle\n  have \u27e8hpos, hle2\u27e9 := gseq_bounds a i ha\n  have hspos : 0 < Nat.sqrt (Aval a) := by\n    have := s_ge100k a ha; omega\n  have hup := Nat.lt_succ_sqrt (Aval a)\n  simp only [Nat.succ_eq_add_one] at hup\n  have hexp : (Nat.sqrt (Aval a) + 1) * (Nat.sqrt (Aval a) + 1)\n      = Nat.sqrt (Aval a) * Nat.sqrt (Aval a)\n        + (Nat.sqrt (Aval a) + Nat.sqrt (Aval a)) + 1 := by grind\n  have h2 : Aval a\n      \u2264 Nat.sqrt (Aval a) * Nat.sqrt (Aval a)\n        + (Nat.sqrt (Aval a) + Nat.sqrt (Aval a)) := by omega\n  have h1 : Aval a / gseq a i \u2264 Aval a / Nat.sqrt (Aval a) :=\n    div_anti_right _ hspos hle2\n  have hmul : Nat.sqrt (Aval a) * (Nat.sqrt (Aval a) + 2)\n      = Nat.sqrt (Aval a) * Nat.sqrt (Aval a)\n        + (Nat.sqrt (Aval a) + Nat.sqrt (Aval a)) := by grind\n  rw [\u2190 hmul] at h2\n  have h3 : Aval a / Nat.sqrt (Aval a) \u2264 Nat.sqrt (Aval a) + 2 := by\n    have h3' : Aval a / Nat.sqrt (Aval a)\n        \u2264 (Nat.sqrt (Aval a) * (Nat.sqrt (Aval a) + 2)) / Nat.sqrt (Aval a) :=\n      Nat.div_le_div_right h2\n    have h4 : Nat.sqrt (Aval a) * (Nat.sqrt (Aval a) + 2) / Nat.sqrt (Aval a)\n        = Nat.sqrt (Aval a) + 2 := by\n      rw [Nat.mul_comm]\n      exact Nat.mul_div_cancel _ hspos\n    rw [h4] at h3'; exact h3'\n  exact Nat.le_trans h1 h3",
+   "deps": [
+    "Aval",
+    "gseq",
+    "gseq_bounds",
+    "s_ge100k",
+    "seedN",
+    "seed_ge",
+    "sq_seed",
+    "sqrt"
+   ],
+   "statement": "theorem quot_le : \u2200 (a i : Nat), 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    Aval a / gseq a i \u2264 Nat.sqrt (Aval a) + 2",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "s_lt_pow",
+   "kind": "theorem",
+   "text": "theorem s_lt_pow : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    Nat.sqrt (Aval a) < 2 ^ 101 := by\n  intro a ha hle\n  apply sqrt_lt_two_pow (k := 101)\n  have h10 : (10 : Nat) ^ 10 \u2264 2 ^ 34 := by decide\n  have e1 : Aval a \u2264 (2 ^ 167 - 1) * 10 ^ 10 := Nat.mul_le_mul_right _ hle\n  have e2 : (2 ^ 167 - 1) * 10 ^ 10 \u2264 (2 ^ 167 - 1) * 2 ^ 34 :=\n    Nat.mul_le_mul_left _ h10\n  have h2 : ((2 ^ 167 - 1) + 1) * 2 ^ 34 = (2 ^ 167 - 1) * 2 ^ 34 + 2 ^ 34 :=\n    Nat.add_mul _ _ _\n  have hsub : (2 ^ 167 - 1) + 1 = 2 ^ 167 :=\n    Nat.sub_add_cancel (by decide : (1 : Nat) \u2264 2 ^ 167)\n  have e3' : (2 ^ 167 - 1) * 2 ^ 34 + 2 ^ 34 = 2 ^ 167 * 2 ^ 34 := by\n    rw [\u2190 h2, hsub]\n  have h34 : 0 < (2 : Nat) ^ 34 := by decide\n  have e3 : (2 ^ 167 - 1) * 2 ^ 34 < 2 ^ 167 * 2 ^ 34 := by\n    rw [\u2190 e3']; exact Nat.lt_add_of_pos_right h34\n  have e4 : (2 : Nat) ^ 167 * 2 ^ 34 = 2 ^ 201 := by decide\n  have e5 : (2 : Nat) ^ 201 < 2 ^ 202 := by decide\n  have hfin : (2 : Nat) ^ (2 * 101) = 2 ^ 202 := by decide\n  have e6 : (2 : Nat) ^ 167 * 2 ^ 34 < 2 ^ 202 := by\n    rw [e4]; exact e5\n  rw [hfin]\n  exact Nat.lt_of_le_of_lt (Nat.le_trans e1 e2) (Nat.lt_trans e3 e6)",
+   "deps": [
+    "Aval",
+    "sqrt"
+   ],
+   "statement": "theorem s_lt_pow : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    Nat.sqrt (Aval a) < 2 ^ 101",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "gseq_upper",
+   "kind": "theorem",
+   "text": "theorem gseq_upper : \u2200 (a n : Nat), 0 < a \u2192 gseq a n \u2264 seedN a + 1 := by\n  intro a n ha; induction n with\n  | zero => exact Nat.le_succ _\n  | succ n ih =>\n    have \u27e8hpos, hle\u27e9 := gseq_bounds a n ha\n    have e : gseq a (n + 1) = newton (Aval a) (gseq a n) := rfl\n    rw [e]\n    rcases Nat.lt_or_ge (Nat.sqrt (Aval a)) (gseq a n) with h | h\n    \u00b7 exact Nat.le_trans (Nat.le_of_lt (newton_lt_self (a := Aval a) h)) ih\n    \u00b7 have hxs : gseq a n = Nat.sqrt (Aval a) := Nat.le_antisymm h hle\n      have h1 : newton (Aval a) (gseq a n) \u2264 Nat.sqrt (Aval a) + 1 := by\n        apply newton_le_sqrt_add_one hpos hle\n        rw [hxs, Nat.sub_self]; exact Nat.zero_le _\n      exact Nat.le_trans h1 (Nat.add_le_add_right (seed_ge a ha) _)",
+   "deps": [
+    "Aval",
+    "gseq",
+    "gseq_bounds",
+    "s_ge100k",
+    "seedN",
+    "seed_ge",
+    "sq_seed",
+    "sqrt"
+   ],
+   "statement": "theorem gseq_upper : \u2200 (a n : Nat), 0 < a \u2192 gseq a n \u2264 seedN a + 1",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "gseq_bounds",
+   "kind": "theorem",
+   "text": "theorem gseq_bounds : \u2200 (a n : Nat), 0 < a \u2192\n    0 < gseq a n \u2227 Nat.sqrt (Aval a) \u2264 gseq a n := by\n  intro a n ha; induction n with\n  | zero =>\n    refine \u27e8?_, seed_ge a ha\u27e9\n    unfold gseq seedN; omega\n  | succ n ih =>\n    obtain \u27e8hpos, hle\u27e9 := ih\n    have hnew := sqrt_le_newton (a := Aval a) (x := gseq a n) hpos\n    have h1 : 1 \u2264 Nat.sqrt (Aval a) := by\n      have := s_ge100k a ha; omega\n    have hpos' : 0 < newton (Aval a) (gseq a n) := by omega\n    show 0 < newton (Aval a) (gseq a n) \u2227 _\n    exact \u27e8hpos', hnew\u27e9",
+   "deps": [
+    "Aval",
+    "gseq",
+    "s_ge100k",
+    "seedN",
+    "seed_ge",
+    "sq_seed",
+    "sqrt"
+   ],
+   "statement": "theorem gseq_bounds : \u2200 (a n : Nat), 0 < a \u2192\n    0 < gseq a n \u2227 Nat.sqrt (Aval a) \u2264 gseq a n",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "s_ge100k",
+   "kind": "theorem",
+   "text": "theorem s_ge100k : \u2200 a : Nat, 0 < a \u2192 100000 \u2264 Nat.sqrt (Aval a) := by\n  intro a ha\n  have hA : (100000 : Nat) * 100000 \u2264 Aval a := by\n    unfold Aval\n    have h1 : (1 : Nat) * 10 ^ 10 \u2264 a * 10 ^ 10 := Nat.mul_le_mul_right _ ha\n    have h2 : (100000 : Nat) * 100000 = 10 ^ 10 := by decide\n    omega\n  exact le_sqrt_of_mul_self_le hA",
+   "deps": [
+    "Aval",
+    "sqrt"
+   ],
+   "statement": "theorem s_ge100k : \u2200 a : Nat, 0 < a \u2192 100000 \u2264 Nat.sqrt (Aval a)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "Aval_pos",
+   "kind": "theorem",
+   "text": "theorem Aval_pos : \u2200 a : Nat, 0 < a \u2192 0 < Aval a := by\n  intro a ha; unfold Aval; omega",
+   "deps": [
+    "Aval"
+   ],
+   "statement": "theorem Aval_pos : \u2200 a : Nat, 0 < a \u2192 0 < Aval a",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "seed_ge",
+   "kind": "theorem",
+   "text": "theorem seed_ge : \u2200 a : Nat, 0 < a \u2192 Nat.sqrt (Aval a) \u2264 seedN a := by\n  intro a ha\n  have h := sq_seed a\n  have hlt : Nat.sqrt (Aval a) < seedN a + 1 := sqrt_lt_of_lt_mul_self h\n  omega",
+   "deps": [
+    "Aval",
+    "seedN",
+    "sq_seed",
+    "sqrt"
+   ],
+   "statement": "theorem seed_ge : \u2200 a : Nat, 0 < a \u2192 Nat.sqrt (Aval a) \u2264 seedN a",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "sq_seed",
+   "kind": "theorem",
+   "text": "theorem sq_seed : \u2200 a : Nat, Aval a < (seedN a + 1) * (seedN a + 1) := by\n  intro a\n  have hQM : 2 * (a / 2) + a % 2 = a := Nat.div_add_mod a 2\n  have hM : a % 2 < 2 := Nat.mod_lt a (by decide)\n  have eA : Aval a = 2 * (a / 2) * 10 ^ 10 + (a % 2) * 10 ^ 10 := by\n    unfold Aval\n    have eA' : a * 10 ^ 10 = (2 * (a / 2) + a % 2) * 10 ^ 10 := by rw [hQM]\n    rw [eA', Nat.add_mul]\n  have h5 : (5 : Nat) * 10 ^ 9 = 5000000000 := by decide\n  have eS : seedN a + 1 = (a / 2) + 5000000001 := by\n    unfold seedN; rw [h5]\n  have key : \u2200 q \u03bc : Int, 0 \u2264 \u03bc \u2192 \u03bc \u2264 1 \u2192\n      2 * q * 10000000000 + \u03bc * 10000000000\n        < (q + 5000000001) * (q + 5000000001) := by\n    intro q \u03bc h0 h1\n    have e1 : (q + 5000000001) * (q + 5000000001)\n        = q * q + 2 * 5000000001 * q + 5000000001 * 5000000001 := by grind\n    have e2 : (q - 4999999999) * (q - 4999999999)\n        = q * q - 2 * 4999999999 * q + 4999999999 * 4999999999 := by grind\n    have hsq : 0 \u2264 (q - 4999999999) * (q - 4999999999) := by\n      by_cases h : q < 4999999999\n      \u00b7 exact Int.mul_nonneg_of_nonpos_of_nonpos (by omega) (by omega)\n      \u00b7 exact Int.mul_nonneg (by omega) (by omega)\n    rw [e1]; rw [e2] at hsq; omega\n  rw [eA, eS]\n  have hM1 : a % 2 \u2264 1 := Nat.le_of_lt_succ hM\n  have h0 : (0 : Int) \u2264 ((a % 2 : Nat) : Int) := by omega\n  have h1 : ((a % 2 : Nat) : Int) \u2264 1 := by omega\n  have hK := key ((a / 2 : Nat) : Int) ((a % 2 : Nat) : Int) h0 h1\n  have hde : (((a / 2 : Nat) : Int) + 5000000001) * (((a / 2 : Nat) : Int) + 5000000001)\n      = ((a / 2 + 5000000001 : Nat) : Int) * ((a / 2 + 5000000001 : Nat) : Int) := by\n    rw [Int.natCast_add]; rfl\n  have hK' : ((2 * (a / 2) * 10 ^ 10 + (a % 2) * 10 ^ 10 : Nat) : Int)\n      < ((((a / 2) + 5000000001) * ((a / 2) + 5000000001) : Nat) : Int) := by\n    omega\n  exact Int.ofNat_lt.mp hK'",
+   "deps": [
+    "Aval",
+    "seedN"
+   ],
+   "statement": "theorem sq_seed : \u2200 a : Nat, Aval a < (seedN a + 1) * (seedN a + 1)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "loop_ghost",
+   "kind": "theorem",
+   "text": "theorem loop_ghost : \u2200 (a n i : Nat), 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192 i + n \u2264 256 \u2192\n    \u2203 k, k \u2264 n \u2227 (i + k = i + n \u2228 gseq a (i + k + 1) = gseq a (i + k))\n      \u2227 loop (a : Int) n ((gseq a i : Nat) : Int) ((gseq a (i + 1) : Nat) : Int)\n        = some (((gseq a (i + k) : Nat) : Int), (((gseq a (i + k + 1) : Nat)) : Int)) := by\n  intro a n i ha hle hin; induction n generalizing i with\n  | zero =>\n    refine \u27e80, Nat.le_refl _, Or.inl rfl, rfl\u27e9\n  | succ n ih =>\n    by_cases h : ((gseq a (i + 1) : Nat) : Int) = ((gseq a i : Nat) : Int)\n    \u00b7 have hNat : gseq a (i + 1) = gseq a i := Int.ofNat.inj h\n      have hstop := loop_stop (a : Int) n ((gseq a i : Nat) : Int)\n      refine \u27e80, Nat.zero_le _, Or.inr ?_, ?_\u27e9\n      \u00b7 exact hNat\n      \u00b7 rw [hNat]; exact hstop\n    \u00b7 have hne : gseq a (i + 1) \u2260 gseq a i := fun e => h (by rw [e])\n      have hpos : 0 < gseq a (i + 1) := (gseq_bounds a (i + 1) ha).1\n      have hrange := range_ok a (i + 1) ha hle\n      have hstep := loop_step (a := a) (y := gseq a i) (z := gseq a (i + 1))\n        (n := n) hpos hne hrange\n      obtain \u27e8k', hk', hdisj, heq\u27e9 := ih (i + 1) (by omega)\n      refine \u27e8k' + 1, Nat.succ_le_succ hk', ?_, ?_\u27e9\n      \u00b7 have e1 : i + (k' + 1) = (i + 1) + k' := by omega\n        have e2 : i + (k' + 1) + 1 = ((i + 1) + k') + 1 := by omega\n        rcases hdisj with hfin | hfix\n        \u00b7 left; omega\n        \u00b7 right; rw [e2, e1]; exact hfix\n      \u00b7 have hAval : Aval a = a * 10 ^ 10 := rfl\n        have hz' : ((((a * 10 ^ 10 / gseq a (i + 1) + gseq a (i + 1)) / 2 : Nat)) : Int)\n            = ((gseq a ((i + 1) + 1) : Nat) : Int) := by\n          have hnat : (a * 10 ^ 10 / gseq a (i + 1) + gseq a (i + 1)) / 2\n              = gseq a ((i + 1) + 1) := by\n            have e : gseq a ((i + 1) + 1)\n                = (gseq a (i + 1) + Aval a / gseq a (i + 1)) / 2 := rfl\n            rw [e, hAval, Nat.add_comm (a * 10 ^ 10 / gseq a (i + 1)) (gseq a (i + 1))]\n          exact congrArg (fun n : Nat => ((n : Nat) : Int)) hnat\n        have e1 : i + (k' + 1) = (i + 1) + k' := by omega\n        have e2 : i + (k' + 1) + 1 = ((i + 1) + k') + 1 := by omega\n        rw [hstep, hz', e2, e1]; exact heq",
+   "deps": [
+    "Aval",
+    "gseq",
+    "gseq_bounds",
+    "gseq_upper",
+    "quot_le",
+    "range_ok",
+    "s_ge100k",
+    "s_lt_pow",
+    "seedN",
+    "seed_ge",
+    "sq_seed",
+    "sqrt"
+   ],
+   "statement": "theorem loop_ghost : \u2200 (a n i : Nat), 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192 i + n \u2264 256 \u2192\n    \u2203 k, k \u2264 n \u2227 (i + k = i + n \u2228 gseq a (i + k + 1) = gseq a (i + k))\n      \u2227 loop (a : Int) n ((gseq a i : Nat) : Int) ((gseq a (i + 1) : Nat) : Int)\n        = some (((gseq a (i + k) : Nat) : Int), (((gseq a (i + k + 1) : Nat)) : Int))",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "mloop_pair",
+   "kind": "theorem",
+   "text": "theorem mloop_pair : \u2200 (a i n : Nat), \u2203 k, k \u2264 n\n    \u2227 (i + k = i + n \u2228 gseq a (i + k + 1) = gseq a (i + k))\n    \u2227 mloop (Aval a) n (gseq a i) (gseq a (i + 1))\n      = (gseq a (i + k), gseq a (i + k + 1)) := by\n  intro a i n; induction n generalizing i with\n  | zero => exact \u27e80, Nat.le_refl _, Or.inl rfl, rfl\u27e9\n  | succ n ih =>\n    have e : mloop (Aval a) (n + 1) (gseq a i) (gseq a (i + 1))\n        = (if gseq a (i + 1) = gseq a i then (gseq a i, gseq a (i + 1))\n          else mloop (Aval a) n (gseq a (i + 1))\n            (newton (Aval a) (gseq a (i + 1)))) := rfl\n    by_cases h : gseq a (i + 1) = gseq a i\n    \u00b7 refine \u27e80, Nat.zero_le _, Or.inr h, ?_\u27e9\n      rw [e, if_pos h]\n      rfl\n    \u00b7 obtain \u27e8k', hk', hdisj, heq\u27e9 := ih (i + 1)\n      refine \u27e8k' + 1, Nat.succ_le_succ hk', ?_, ?_\u27e9\n      \u00b7 have e1 : i + (k' + 1) = (i + 1) + k' := by omega\n        have e2 : i + (k' + 1) + 1 = ((i + 1) + k') + 1 := by omega\n        rcases hdisj with hfin | hfix\n        \u00b7 left; omega\n        \u00b7 right; rw [e2, e1]; exact hfix\n      \u00b7 have e1 : i + (k' + 1) = (i + 1) + k' := by omega\n        have e2 : i + (k' + 1) + 1 = ((i + 1) + k') + 1 := by omega\n        have e3 : newton (Aval a) (gseq a (i + 1)) = gseq a ((i + 1) + 1) := rfl\n        rw [e, if_neg h, e3, e2, e1]\n        exact heq",
+   "deps": [
+    "Aval",
+    "gseq",
+    "mloop",
+    "seedN"
+   ],
+   "statement": "theorem mloop_pair : \u2200 (a i n : Nat), \u2203 k, k \u2264 n\n    \u2227 (i + k = i + n \u2228 gseq a (i + k + 1) = gseq a (i + k))\n    \u2227 mloop (Aval a) n (gseq a i) (gseq a (i + 1))\n      = (gseq a (i + k), gseq a (i + k + 1))",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "req_sqrt_total",
+   "kind": "theorem",
+   "text": "theorem req_sqrt_total : SqrtTotal sqrt := by\n  intro x hdec hx0\n  obtain \u27e8hlo, hhi\u27e9 := hdec\n  by_cases hx00 : x = 0\n  \u00b7 subst hx00\n    rw [sqrt0]\n    rfl\n  \u00b7 have hxpos : 0 < x := by omega\n    obtain \u27e8a, rfl\u27e9 : \u2203 a : Nat, x = (a : Int) :=\n      \u27e8x.toNat, (Int.toNat_of_nonneg hx0).symm\u27e9\n    have ha : 0 < a := by\n      have hx00' : ((a : Nat) : Int) \u2260 0 := hx00\n      have hane : a \u2260 0 := fun e => hx00' (by rw [e]; simp)\n      exact Nat.pos_of_ne_zero hane\n    have hle : a \u2264 2 ^ 167 - 1 := by\n      have h2 : ((a : Nat) : Int) \u2264 MAX_DECIMAL := hhi\n      rw [max_decimal_eq] at h2\n      exact Int.ofNat_le.mp h2\n    have hval := sqrt_val a ha hle\n    have e : sqrt (a : Int)\n        = vyperSqrtWith (fun y z => if y < z then y else z) (a : Int) := rfl\n    rw [e, hval]\n    rfl",
+   "deps": [
+    "Aval",
+    "close255",
+    "err254",
+    "err_bound",
+    "gseq",
+    "gseq_bounds",
+    "gseq_upper",
+    "loop_ghost",
+    "min255",
+    "quot_le",
+    "range_ok",
+    "s_ge100k",
+    "s_lt_pow",
+    "seedN",
+    "seed_ge",
+    "sq_seed",
+    "sqrt",
+    "sqrt0",
+    "sqrt_val"
+   ],
+   "statement": "theorem req_sqrt_total : SqrtTotal sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "req_sqrt_not_below",
+   "kind": "theorem",
+   "text": "theorem req_sqrt_not_below : SqrtNotBelow sqrt := by\n  intro x r hdec hsome\n  obtain \u27e8hlo, hhi\u27e9 := hdec\n  by_cases hx0 : x = 0\n  \u00b7 subst hx0\n    have hr : r = 0 := Option.some_inj.mp (hsome.symm.trans sqrt0)\n    subst hr\n    show (0 : Int) * DIVISOR < (0 + 1) * (0 + 1)\n    omega\n  \u00b7 by_cases hxneg : x < 0\n    \u00b7 rw [req_sqrt_neg_reverts x hxneg] at hsome\n      cases hsome\n    \u00b7 have hxpos : 0 < x := by omega\n      have hx0' : 0 \u2264 x := by omega\n      obtain \u27e8a, rfl\u27e9 : \u2203 a : Nat, x = (a : Int) :=\n        \u27e8x.toNat, (Int.toNat_of_nonneg hx0').symm\u27e9\n      have ha : 0 < a := by\n        have hpos' : (0 : Int) < ((a : Nat) : Int) := hxpos\n        exact_mod_cast hpos'\n      have hle : a \u2264 2 ^ 167 - 1 := by\n        have h2 : ((a : Nat) : Int) \u2264 MAX_DECIMAL := hhi\n        rw [max_decimal_eq] at h2\n        exact Int.ofNat_le.mp h2\n      have hval := sqrt_val a ha hle\n      have hsome2 : vyperSqrtWith (fun y z => if y < z then y else z) (a : Int)\n          = some r := hsome\n      rw [hval] at hsome2\n      have hr : r = ((Nat.sqrt (Aval a) : Int)) := Option.some_inj.mp hsome2.symm\n      have hlt := Nat.lt_succ_sqrt (Aval a)\n      simp only [Nat.succ_eq_add_one] at hlt\n      rw [hr, divisor_eq]\n      exact_mod_cast hlt",
+   "deps": [
+    "Aval",
+    "close255",
+    "err254",
+    "err_bound",
+    "gseq",
+    "gseq_bounds",
+    "gseq_upper",
+    "loop_ghost",
+    "min255",
+    "quot_le",
+    "range_ok",
+    "req_sqrt_neg_reverts",
+    "s_ge100k",
+    "s_lt_pow",
+    "seedN",
+    "seed_ge",
+    "sq_seed",
+    "sqrt",
+    "sqrt0",
+    "sqrt_val"
+   ],
+   "statement": "theorem req_sqrt_not_below : SqrtNotBelow sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "req_sqrt_not_above",
+   "kind": "theorem",
+   "text": "theorem req_sqrt_not_above : SqrtNotAbove sqrt := by\n  intro x r hdec hsome\n  obtain \u27e8hlo, hhi\u27e9 := hdec\n  by_cases hx0 : x = 0\n  \u00b7 subst hx0\n    have hr : r = 0 := Option.some_inj.mp (hsome.symm.trans sqrt0)\n    subst hr\n    omega\n  \u00b7 by_cases hxneg : x < 0\n    \u00b7 rw [req_sqrt_neg_reverts x hxneg] at hsome\n      cases hsome\n    \u00b7 have hxpos : 0 < x := by omega\n      have hx0' : 0 \u2264 x := by omega\n      obtain \u27e8a, rfl\u27e9 : \u2203 a : Nat, x = (a : Int) :=\n        \u27e8x.toNat, (Int.toNat_of_nonneg hx0').symm\u27e9\n      have ha : 0 < a := by\n        have hpos' : (0 : Int) < ((a : Nat) : Int) := hxpos\n        exact_mod_cast hpos'\n      have hle : a \u2264 2 ^ 167 - 1 := by\n        have h2 : ((a : Nat) : Int) \u2264 MAX_DECIMAL := hhi\n        rw [max_decimal_eq] at h2\n        exact Int.ofNat_le.mp h2\n      have hval := sqrt_val a ha hle\n      have hsome2 : vyperSqrtWith (fun y z => if y < z then y else z) (a : Int)\n          = some r := hsome\n      rw [hval] at hsome2\n      have hr : r = ((Nat.sqrt (Aval a) : Int)) := Option.some_inj.mp hsome2.symm\n      rw [hr, divisor_eq]\n      exact_mod_cast Nat.sqrt_le (Aval a)",
+   "deps": [
+    "Aval",
+    "close255",
+    "err254",
+    "err_bound",
+    "gseq",
+    "gseq_bounds",
+    "gseq_upper",
+    "loop_ghost",
+    "min255",
+    "quot_le",
+    "range_ok",
+    "req_sqrt_neg_reverts",
+    "s_ge100k",
+    "s_lt_pow",
+    "seedN",
+    "seed_ge",
+    "sq_seed",
+    "sqrt",
+    "sqrt0",
+    "sqrt_val"
+   ],
+   "statement": "theorem req_sqrt_not_above : SqrtNotAbove sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "sqrt0",
+   "kind": "theorem",
+   "text": "theorem sqrt0 : sqrt (0 : Int) = some 0 := by\n  show vyperSqrtWith (fun y z => if y < z then y else z) 0 = some 0\n  unfold vyperSqrtWith\n  rw [if_neg (by omega : \u00ac (0 : Int) < 0), if_pos rfl]",
+   "deps": [
+    "sqrt"
+   ],
+   "statement": "theorem sqrt0 : sqrt (0 : Int) = some 0",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "sqrt_val",
+   "kind": "theorem",
+   "text": "theorem sqrt_val : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    vyperSqrtWith (fun y z => if y < z then y else z) (a : Int)\n      = some ((Nat.sqrt (Aval a) : Int)) := by\n  intro a ha hle\n  have hpos := vyperSqrtWith_pos (fun y z => if y < z then y else z) ha hle\n  rw [hpos]\n  have es : ((a / 2 + 5 * 10 ^ 9 : Nat) : Int) = ((gseq a 0 : Nat) : Int) := rfl\n  rw [es]\n  by_cases hseed : ((gseq a 0 : Nat) : Int) = (a : Int)\n  \u00b7 have hNat : gseq a 0 = a := Int.ofNat.inj hseed\n    have hsa : a / 2 + 5000000000 = a := hNat\n    have hcase : a = 10000000000 \u2228 a = 10000000000 - 1 := by\n      have hqm := Nat.div_add_mod a 2\n      have hm := Nat.mod_lt a (show 0 < 2 by decide)\n      have hm01 : a % 2 = 0 \u2228 a % 2 = 1 := by omega\n      rcases hm01 with hm0 | hm0\n      \u00b7 left; omega\n      \u00b7 right; omega\n    have hloop0 : loop (a : Int) 256 (a : Int) (a : Int)\n        = some ((a : Int), (a : Int)) := by\n      have e : (256 : Nat) = 255 + 1 := rfl\n      rw [e]\n      exact loop_stop _ _ _\n    have hs_eq : Nat.sqrt (Aval a) = a := by\n      rcases hcase with rfl | rfl\n      \u00b7 have hA : Aval 10000000000 = 10000000000 * 10000000000 := rfl\n        rw [hA]\n        exact sqrt_eq_of_bounds (by decide) (by decide)\n      \u00b7 have hA : Aval (10000000000 - 1) = (10000000000 - 1) * 10000000000 := rfl\n        rw [hA]\n        exact sqrt_eq_of_bounds (by decide) (by decide)\n    rw [hNat, hloop0]\n    show some (if (a : Int) < (a : Int) then (a : Int) else (a : Int))\n      = some ((Nat.sqrt (Aval a) : Int))\n    rw [if_neg (by omega : \u00ac (a : Int) < (a : Int)), hs_eq]\n  \u00b7 have hne : gseq a 0 \u2260 a := fun e => hseed (by rw [e])\n    have hpos0 : 0 < gseq a 0 := (gseq_bounds a 0 ha).1\n    have hrange0 := range_ok a 0 ha hle\n    have hstep := loop_step (a := a) (y := a) (z := gseq a 0) (n := 255)\n      hpos0 hne hrange0\n    have hAval : Aval a = a * 10 ^ 10 := rfl\n    have hz' : ((((a * 10 ^ 10 / gseq a 0 + gseq a 0) / 2 : Nat)) : Int)\n        = ((gseq a (0 + 1) : Nat) : Int) := by\n      have hnat : (a * 10 ^ 10 / gseq a 0 + gseq a 0) / 2\n          = gseq a (0 + 1) := by\n        have e : gseq a (0 + 1)\n            = (gseq a 0 + Aval a / gseq a 0) / 2 := rfl\n        rw [e, hAval, Nat.add_comm (a * 10 ^ 10 / gseq a 0) (gseq a 0)]\n      exact congrArg (fun n : Nat => ((n : Nat) : Int)) hnat\n    obtain \u27e8k, hk255, hdisj, heq\u27e9 := loop_ghost a 255 0 ha hle (by omega)\n    have e0 : (0 : Nat) + k = k := Nat.zero_add k\n    rw [e0] at heq hdisj\n    have hfuel : (256 : Nat) = 255 + 1 := rfl\n    rw [hfuel, hstep, hz', heq]\n    have hmin : (if ((gseq a k : Nat) : Int) < ((gseq a (k + 1) : Nat) : Int)\n          then ((gseq a k : Nat) : Int) else ((gseq a (k + 1) : Nat) : Int))\n        = ((Nat.min (gseq a k) (gseq a (k + 1)) : Nat) : Int) := by\n      by_cases hlt : ((gseq a k : Nat) : Int) < ((gseq a (k + 1) : Nat) : Int)\n      \u00b7 rw [if_pos hlt]\n        have hle' : gseq a k \u2264 gseq a (k + 1) :=\n          Int.ofNat_le.mp (Int.le_of_lt hlt)\n        have hmin' : Nat.min (gseq a k) (gseq a (k + 1)) = gseq a k :=\n          Nat.min_eq_left hle'\n        rw [hmin']\n      \u00b7 rw [if_neg hlt]\n        have hle' : gseq a (k + 1) \u2264 gseq a k := by\n          have hle'' : ((gseq a (k + 1) : Nat) : Int) \u2264 ((gseq a k : Nat) : Int) := by\n            omega\n          exact Int.ofNat_le.mp hle''\n        have hmin' : Nat.min (gseq a k) (gseq a (k + 1)) = gseq a (k + 1) :=\n          Nat.min_eq_right hle'\n        rw [hmin']\n    have hminval : Nat.min (gseq a k) (gseq a (k + 1)) = Nat.sqrt (Aval a) := by\n      rcases hdisj with hfin | hfix\n      \u00b7 have hk255' : k = 255 := by omega\n        rw [hk255']\n        exact min255 a ha hle\n      \u00b7 have hnew : newton (Aval a) (gseq a k) = gseq a k := by\n          have e : gseq a (k + 1) = newton (Aval a) (gseq a k) := rfl\n          exact e.symm.trans hfix\n        have hposk := (gseq_bounds a k ha).1\n        have hs_eq : gseq a k = Nat.sqrt (Aval a) :=\n          eq_sqrt_of_newton_eq_self hposk hnew\n        have hmin0 : Nat.min (gseq a k) (gseq a (k + 1)) = gseq a k := by\n          rw [hfix]\n          exact Nat.min_eq_left (Nat.le_refl _)\n        rw [hmin0]; exact hs_eq\n    show some (if ((gseq a k : Nat) : Int) < ((gseq a (k + 1) : Nat) : Int)\n        then ((gseq a k : Nat) : Int) else ((gseq a (k + 1) : Nat) : Int))\n      = some ((Nat.sqrt (Aval a) : Int))\n    rw [hmin, hminval]",
+   "deps": [
+    "Aval",
+    "close255",
+    "err254",
+    "err_bound",
+    "gseq",
+    "gseq_bounds",
+    "gseq_upper",
+    "loop_ghost",
+    "min255",
+    "quot_le",
+    "range_ok",
+    "s_ge100k",
+    "s_lt_pow",
+    "seedN",
+    "seed_ge",
+    "sq_seed",
+    "sqrt"
+   ],
+   "statement": "theorem sqrt_val : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    vyperSqrtWith (fun y z => if y < z then y else z) (a : Int)\n      = some ((Nat.sqrt (Aval a) : Int))",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  },
+  {
+   "name": "min255",
+   "kind": "theorem",
+   "text": "theorem min255 : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    Nat.min (gseq a 255) (gseq a (255 + 1)) = Nat.sqrt (Aval a) := by\n  intro a ha hle\n  have hb := gseq_bounds a 255 ha\n  have h255 := close255 a ha hle\n  have hm := min_newton_eq_sqrt hb.1 hb.2 h255\n  have e : newton (Aval a) (gseq a 255) = gseq a (255 + 1) := rfl\n  rw [e] at hm\n  exact hm",
+   "deps": [
+    "Aval",
+    "close255",
+    "err254",
+    "err_bound",
+    "gseq",
+    "gseq_bounds",
+    "s_ge100k",
+    "seedN",
+    "seed_ge",
+    "sq_seed",
+    "sqrt"
+   ],
+   "statement": "theorem min255 : \u2200 a : Nat, 0 < a \u2192 a \u2264 2 ^ 167 - 1 \u2192\n    Nat.min (gseq a 255) (gseq a (255 + 1)) = Nat.sqrt (Aval a)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-vyper-sqrt",
+   "spec_sha256": "ea5b5e443d8f028f5bd161c67e95a1ff2046fec2de44a43f04a7936e51622fb1"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [],
+ "budget": {
+  "usd_list": 4.7916,
+  "elapsed_s": 2107.3
+ },
+ "resumed_from": []
+}

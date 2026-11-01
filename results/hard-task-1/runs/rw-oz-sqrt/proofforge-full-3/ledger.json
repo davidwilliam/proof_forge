@@ -1,0 +1,469 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "rw-oz-sqrt",
+ "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616",
+ "run_dir": "<proofforge>/results/hard-task-1/runs/rw-oz-sqrt/proofforge-full-3",
+ "arm": "proofforge-full",
+ "loop": "muse-code",
+ "model": "muse-spark-1.3-contributor",
+ "created": "2026-11-01T01:50:13-0400",
+ "reconstructed": false,
+ "final": {
+  "text": "import OzSqrt.Spec\nimport OzSqrt.Lemmas\nimport ProofForgeFin.Sqrt\nimport ProofForgeFin.Word\n/-!\nThe square-root routine under repair, `Math.sqrt(uint256 a)` in the style of OpenZeppelin\nContracts `Math.sol`, as this pool's first deposit calls it:\n\n```\nfunction sqrt(uint256 a) internal pure returns (uint256) {\n    if (a == 0) {\n        return 0;\n    }\n    uint256 result = 1 << (log2(a) >> 1);\n    unchecked {\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        return min(result, a / result);\n    }\n}\n```\n-/\nnamespace OzSqrt\n\nopen ProofForgeFin.Sqrt\nopen ProofForgeFin\n\n/-- Squaring commutes with floor division, downward. -/\ntheorem sq_div_le (X D : Nat) (hD : 0 < D) : (X / D) * (X / D) \u2264 X * X / (D * D) := by\n  have h1 : (X / D) * D \u2264 X := Nat.div_mul_le_self X D\n  have h2 : ((X / D) * D) * ((X / D) * D) \u2264 X * X := Nat.mul_le_mul h1 h1\n  have e : (X / D) * (X / D) * (D * D) = ((X / D) * D) * ((X / D) * D) := by grind\n  have h3 : (X / D) * (X / D) * (D * D) \u2264 X * X := by omega\n  have hDD : 0 < D * D := Nat.mul_pos hD hD\n  exact (Nat.le_div_iff_mul_le hDD).mpr h3\n\n/-- A square of a sum, expanded (flat form, as in `newton_link`). -/\ntheorem sq_add_expand (C D s : Nat) : (C * s + 2 * D) * (C * s + 2 * D)\n    = C * C * s * s + (2 * C * 2 * D * s + 2 * 2 * D * D) := by grind\n\n/-- Dividing a quotient again is at most dividing by the product. -/\ntheorem div_div_le (X DD m : Nat) (hDD : 0 < DD) (hm : 0 < m) :\n    (X / DD) / m \u2264 X / (DD * m) := by\n  have h1 : (X / DD) / m * m \u2264 X / DD := Nat.div_mul_le_self _ _\n  have e : (X / DD) / m * (DD * m) = ((X / DD) / m * m) * DD := by grind\n  have h2 : (X / DD) / m * (DD * m) \u2264 X := by\n    have h3 : ((X / DD) / m * m) * DD \u2264 (X / DD) * DD :=\n      Nat.mul_le_mul_right DD h1\n    have h4 : (X / DD) * DD \u2264 X := Nat.div_mul_le_self X DD\n    omega\n  have hDDm : 0 < DD * m := Nat.mul_pos hDD hm\n  exact (Nat.le_div_iff_mul_le hDDm).mpr h2\n\n/-- Adding less than the divisor increases the quotient by at most one. -/\ntheorem add_div_le_of_lt (U J W : Nat) (hJ : J < W) : (U + J) / W \u2264 U / W + 1 := by\n  have hW : 0 < W := by omega\n  rw [Nat.div_le_iff_le_mul_add_pred hW]\n  have hexp : W * (U / W + 1) = U / W * W + W := by grind\n  rw [hexp]\n  have hdm : U / W * W + U % W = U := by\n    rw [Nat.mul_comm (U / W) W]\n    exact Nat.div_add_mod U W\n  have hmod : U % W < W := Nat.mod_lt U hW\n  omega\n\n/-- One quadratic cascade step: from `e \u2264 c\u00b7s/D + K` the next Newton error is at most\n`c\u00b2\u00b7s/(2\u00b7D\u00b2) + 2`, provided the cross terms fit below the divisor. -/\ntheorem newton_link {s e e' c D K : Nat} (hs : 0 < s) (hD : 0 < D)\n    (he : e' \u2264 e * e / (2 * s) + 1)\n    (hle : e \u2264 c * s / D + K)\n    (hJ : 2 * c * K * D * s + K * K * D * D < 2 * D * D * s) :\n    e' \u2264 c * c * s / (2 * D * D) + 2 := by\n  have h2s : 0 < 2 * s := by omega\n  have h1 : (c * s / D) * D \u2264 c * s := Nat.div_mul_le_self _ _\n  have h1c : D * (c * s / D) = (c * s / D) * D := Nat.mul_comm _ _\n  have hKD : D * K = K * D := Nat.mul_comm _ _\n  have e2 : D * (c * s / D + K) = D * (c * s / D) + D * K := by grind\n  have h2 : D * (c * s / D + K) \u2264 c * s + K * D := by omega\n  have h3 : D * e \u2264 c * s + K * D :=\n    Nat.le_trans (Nat.mul_le_mul_left D hle) h2\n  have h4 : e * D \u2264 c * s + K * D := by\n    rw [Nat.mul_comm]; exact h3\n  have hE_le : e \u2264 (c * s + K * D) / D := (Nat.le_div_iff_mul_le hD).mpr h4\n  have hee : e * e \u2264 (c * s + K * D) / D * ((c * s + K * D) / D) :=\n    Nat.mul_le_mul hE_le hE_le\n  have hsq := sq_div_le (c * s + K * D) D hD\n  have hEE : e * e \u2264 (c * s + K * D) * (c * s + K * D) / (D * D) :=\n    Nat.le_trans hee hsq\n  have hstep : e * e / (2 * s) \u2264 ((c * s + K * D) * (c * s + K * D) / (D * D)) / (2 * s) :=\n    Nat.div_le_div_right hEE\n  have hDD : 0 < D * D := Nat.mul_pos hD hD\n  have hW : D * D * (2 * s) = 2 * D * D * s := by grind\n  have hexp : (c * s + K * D) * (c * s + K * D)\n      = c * c * s * s + (2 * c * K * D * s + K * K * D * D) := by grind\n  have hstep2 : ((c * s + K * D) * (c * s + K * D) / (D * D)) / (2 * s) \u2264\n      (c * c * s * s + (2 * c * K * D * s + K * K * D * D)) / (2 * D * D * s) := by\n    calc ((c * s + K * D) * (c * s + K * D) / (D * D)) / (2 * s)\n        \u2264 (c * s + K * D) * (c * s + K * D) / (D * D * (2 * s)) :=\n          div_div_le _ _ _ hDD h2s\n      _ = (c * c * s * s + (2 * c * K * D * s + K * K * D * D)) / (2 * D * D * s) := by\n          rw [hW, hexp]\n  have hJ' : (c * c * s * s + (2 * c * K * D * s + K * K * D * D)) / (2 * D * D * s)\n      \u2264 c * c * s * s / (2 * D * D * s) + 1 :=\n    add_div_le_of_lt _ _ _ hJ\n  have e1 : c * c * s * s = s * (c * c * s) := by grind\n  have e2' : 2 * D * D * s = s * (2 * D * D) := by grind\n  have hcancel : c * c * s * s / (2 * D * D * s) = c * c * s / (2 * D * D) := by\n    rw [e1, e2', Nat.mul_div_mul_left _ _ hs]\n  omega\n\n/-- First step: from below the root, the error after one step is at most `3\u00b7s/8 + 1`. -/\ntheorem newton_first {A s y0 : Nat} (hy0 : 0 < y0)\n    (hle : y0 \u2264 s) (hlt : s < 2 * y0)\n    (he : 2 * y0 * (newton A y0 - s) \u2264 (s - y0) * (s - y0) + 2 * s) :\n    newton A y0 - s \u2264 3 * s / 8 + 1 := by\n  obtain \u27e8d, rfl\u27e9 := Nat.exists_eq_add_of_le hle\n  rw [Nat.add_sub_cancel_left] at he\n  have hdy : d + 1 \u2264 y0 := by omega\n  obtain \u27e8t, rfl\u27e9 := Nat.exists_eq_add_of_le hdy\n  have e1 : (d + 1 + t) * (d + 1 + t)\n      = d * d + 2 * d + 1 + 2 * d * t + 2 * t + t * t := by grind\n  have e2 : (d + 1 + t) * d = d * d + d + d * t := by grind\n  have e3 : (d + 1 + t) * (d + 1 + t + d)\n      = (d + 1 + t) * (d + 1 + t) + (d + 1 + t) * d := by grind\n  have key : 4 * (d * d) + 8 * d\n      \u2264 3 * ((d + 1 + t) * (d + 1 + t)) + 3 * ((d + 1 + t) * d) := by omega\n  have h8 : 8 * (2 * (d + 1 + t) * (newton A (d + 1 + t) - (d + 1 + t + d)))\n      \u2264 8 * (d * d) + 16 * (d + 1 + t + d) := by\n    have h8a := Nat.mul_le_mul_left 8 he\n    have e8 : 8 * (d * d + 2 * (d + 1 + t + d)) = 8 * (d * d) + 16 * (d + 1 + t + d) := by\n      grind\n    omega\n  have g2 : 2 * (d + 1 + t) * (3 * (d + 1 + t + d) + 8)\n      = 6 * ((d + 1 + t) * (d + 1 + t + d)) + 16 * (d + 1 + t) := by grind\n  have hkey : 8 * (d * d) + 16 * (d + 1 + t + d)\n      \u2264 6 * ((d + 1 + t) * (d + 1 + t + d)) + 16 * (d + 1 + t) := by\n    have k2 : 8 * (d * d) + 16 * d\n        \u2264 6 * ((d + 1 + t) * (d + 1 + t)) + 6 * ((d + 1 + t) * d) := by omega\n    omega\n  have hle2 : 2 * (d + 1 + t) * (8 * (newton A (d + 1 + t) - (d + 1 + t + d)))\n      \u2264 2 * (d + 1 + t) * (3 * (d + 1 + t + d) + 8) := by\n    have g1 : 2 * (d + 1 + t) * (8 * (newton A (d + 1 + t) - (d + 1 + t + d)))\n        = 8 * (2 * (d + 1 + t) * (newton A (d + 1 + t) - (d + 1 + t + d))) := by grind\n    omega\n  have hpos : 0 < 2 * (d + 1 + t) := by omega\n  have hfin' : 8 * (newton A (d + 1 + t) - (d + 1 + t + d)) \u2264 3 * (d + 1 + t + d) + 8 :=\n    Nat.le_of_mul_le_mul_left hle2 hpos\n  have hfin : (newton A (d + 1 + t) - (d + 1 + t + d)) * 8 \u2264 3 * (d + 1 + t + d) + 8 := by\n    rw [Nat.mul_comm]; exact hfin'\n  have hdiv : (3 * (d + 1 + t + d) + 8) / 8 = 3 * (d + 1 + t + d) / 8 + 1 := by omega\n  have hle3 : newton A (d + 1 + t) - (d + 1 + t + d) \u2264 (3 * (d + 1 + t + d) + 8) / 8 :=\n    (Nat.le_div_iff_mul_le (by decide : 0 < 8)).mpr hfin\n  omega\n\n/-- The power-of-two estimate is exact: its value is `2 ^ (log2 / 2)`. -/\ntheorem x0_val (a : U256) : ((1 : U256) <<< (log2 a >>> 1)).toNat = 2 ^ (Nat.log2 a.toNat / 2) := by\n  have h1 : ((1 : U256)).toNat = 1 := by decide\n  have h2 : (log2 a >>> 1).toNat = Nat.log2 a.toNat / 2 := by\n    rw [ProofForgeFin.toNat_ushiftRight, toNat_log2, Nat.pow_one]\n  have hlog : Nat.log2 a.toNat < 256 := by\n    by_cases h0 : a.toNat = 0\n    \u00b7 rw [h0]; decide\n    \u00b7 rcases Nat.lt_or_ge (Nat.log2 a.toNat) 256 with h | h\n      \u00b7 exact h\n      \u00b7 have h1' : 2 ^ 256 \u2264 2 ^ Nat.log2 a.toNat :=\n          Nat.pow_le_pow_right (by decide) h\n        have h2' : 2 ^ Nat.log2 a.toNat \u2264 a.toNat := ((Nat.log2_eq_iff h0).mp rfl).1\n        have hA := a.isLt\n        omega\n  have hL : Nat.log2 a.toNat / 2 < 256 := by omega\n  show ((1 : U256) <<< (log2 a >>> 1).toNat).toNat = _\n  rw [h2]\n  have hfit : ((1 : U256)).toNat * 2 ^ (Nat.log2 a.toNat / 2) < 2 ^ 256 := by\n    rw [h1, Nat.one_mul]\n    have hle : 2 ^ (Nat.log2 a.toNat / 2) \u2264 2 ^ 255 :=\n      Nat.pow_le_pow_right (by decide) (by omega)\n    have hlt : (2 : Nat) ^ 255 < 2 ^ 256 := by decide\n    omega\n  rw [ProofForgeFin.toNat_shiftLeft_of_lt _ _ hfit, h1, Nat.one_mul]\n\n/-- The square of the power-of-two estimate. -/\ntheorem x0_sq (A : Nat) :\n    2 ^ (Nat.log2 A / 2) * 2 ^ (Nat.log2 A / 2) = 2 ^ (2 * (Nat.log2 A / 2)) := by\n  rw [\u2190 Nat.pow_add]; congr 1; omega\n\n/-- The estimate is below the root. -/\ntheorem x0_le_sqrt {A : Nat} (hA : 0 < A) : 2 ^ (Nat.log2 A / 2) \u2264 Nat.sqrt A := by\n  apply le_sqrt_of_mul_self_le\n  have h2L : 2 ^ Nat.log2 A \u2264 A := ((Nat.log2_eq_iff (by omega : A \u2260 0)).mp rfl).1\n  have hle : 2 * (Nat.log2 A / 2) \u2264 Nat.log2 A := by\n    have hdm := Nat.div_mul_le_self (Nat.log2 A) 2\n    omega\n  rw [x0_sq]\n  exact Nat.le_trans (Nat.pow_le_pow_right (by decide) hle) h2L\n\n/-- The root is below twice the estimate. -/\ntheorem sqrt_lt_two_x0 {A : Nat} (hA : 0 < A) :\n    Nat.sqrt A < 2 * 2 ^ (Nat.log2 A / 2) := by\n  apply sqrt_lt_of_lt_mul_self\n  have hLt : A < 2 ^ (Nat.log2 A + 1) := ((Nat.log2_eq_iff (by omega : A \u2260 0)).mp rfl).2\n  have hle : Nat.log2 A + 1 \u2264 2 * (Nat.log2 A / 2) + 2 := by\n    have hdm := Nat.div_mul_le_self (Nat.log2 A) 2\n    omega\n  have e : (2 * 2 ^ (Nat.log2 A / 2)) * (2 * 2 ^ (Nat.log2 A / 2))\n      = 2 ^ (2 * (Nat.log2 A / 2) + 2) := by\n    have e4 : (2 * 2 ^ (Nat.log2 A / 2)) * (2 * 2 ^ (Nat.log2 A / 2))\n        = 4 * (2 ^ (Nat.log2 A / 2) * 2 ^ (Nat.log2 A / 2)) := by grind\n    rw [e4, x0_sq, show (4 : Nat) = 2 ^ 2 by decide, \u2190 Nat.pow_add]\n    congr 1; omega\n  rw [e]\n  exact Nat.lt_of_lt_of_le hLt (Nat.pow_le_pow_right (by decide) hle)\n\n/-- The input is below four estimate-squares. -/\ntheorem mul_lt_four_x0_sq {A : Nat} (hA : 0 < A) :\n    A < 4 * (2 ^ (Nat.log2 A / 2) * 2 ^ (Nat.log2 A / 2)) := by\n  have hLt : A < 2 ^ (Nat.log2 A + 1) := ((Nat.log2_eq_iff (by omega : A \u2260 0)).mp rfl).2\n  have hle : Nat.log2 A + 1 \u2264 2 * (Nat.log2 A / 2) + 2 := by\n    have hdm := Nat.div_mul_le_self (Nat.log2 A) 2\n    omega\n  have hle2 : 2 ^ (Nat.log2 A + 1) \u2264 2 ^ (2 * (Nat.log2 A / 2) + 2) :=\n    Nat.pow_le_pow_right (by decide) hle\n  have e : 2 ^ (2 * (Nat.log2 A / 2) + 2)\n      = 4 * (2 ^ (Nat.log2 A / 2) * 2 ^ (Nat.log2 A / 2)) := by\n    have h42 : (2 : Nat) ^ (2 * (Nat.log2 A / 2) + 2)\n        = 2 ^ 2 * 2 ^ (2 * (Nat.log2 A / 2)) := by\n      rw [\u2190 Nat.pow_add]; congr 1; omega\n    rw [h42, show (2 : Nat) ^ 2 = 4 by decide, \u2190 x0_sq]\n  omega\n\n/-- Endgame: the sixth-iterate bound squares below the root. -/\ntheorem cascade_end {s e6 : Nat} (hs6 : 6 \u2264 s) (hs128 : s < 2 ^ 128)\n    (hle : e6 \u2264 1853020188851841 * s / 2 ^ 127 + 2) : e6 * e6 \u2264 s := by\n  have hss : s * s \u2264 s * 2 ^ 128 := Nat.mul_le_mul_left s (by omega)\n  have h1 : e6 \u2264 (1853020188851841 * s + 2 * 2 ^ 127) / 2 ^ 127 := by\n    have hD : 0 < 2 ^ 127 := by decide\n    have hDM : (2 ^ 127) * (1853020188851841 * s / 2 ^ 127) \u2264 1853020188851841 * s := by\n      have h := Nat.div_mul_le_self (1853020188851841 * s) (2 ^ 127)\n      have hc : 2 ^ 127 * (1853020188851841 * s / 2 ^ 127)\n          = (1853020188851841 * s / 2 ^ 127) * 2 ^ 127 := Nat.mul_comm _ _\n      omega\n    have h2D : (2 ^ 127) * 2 = 2 * 2 ^ 127 := Nat.mul_comm _ _\n    have hmul := Nat.mul_le_mul_left (2 ^ 127) hle\n    have eadd : (2 ^ 127) * (1853020188851841 * s / 2 ^ 127 + 2)\n        = (2 ^ 127) * (1853020188851841 * s / 2 ^ 127) + (2 ^ 127) * 2 := by grind\n    have hle' : (2 ^ 127) * e6 \u2264 1853020188851841 * s + 2 * 2 ^ 127 := by omega\n    have hle'' : e6 * 2 ^ 127 \u2264 1853020188851841 * s + 2 * 2 ^ 127 := by\n      rw [Nat.mul_comm]; exact hle'\n    exact (Nat.le_div_iff_mul_le hD).mpr hle''\n  have h2 : e6 * e6 \u2264 (1853020188851841 * s + 2 * 2 ^ 127)\n      * (1853020188851841 * s + 2 * 2 ^ 127) / (2 ^ 127 * 2 ^ 127) := by\n    have hsq := sq_div_le (1853020188851841 * s + 2 * 2 ^ 127) (2 ^ 127) (by decide)\n    exact Nat.le_trans (Nat.mul_le_mul h1 h1) hsq\n  have h3 : (1853020188851841 * s + 2 * 2 ^ 127) * (1853020188851841 * s + 2 * 2 ^ 127)\n      \u2264 (2 ^ 127 * 2 ^ 127) * s := by\n    have hassoc : (1853020188851841 * 1853020188851841 * s) * s\n        = 1853020188851841 * 1853020188851841 * (s * s) := Nat.mul_assoc _ _ _\n    rw [sq_add_expand, hassoc]\n    omega\n  have h4 : (1853020188851841 * s + 2 * 2 ^ 127) * (1853020188851841 * s + 2 * 2 ^ 127)\n      / (2 ^ 127 * 2 ^ 127) \u2264 s :=\n    Nat.div_le_of_le_mul h3\n  omega\n\ndef sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)\n\n/-- Nat-level Newton iterates from the power-of-two estimate. -/\ndef newtonSeq (A : Nat) : Nat \u2192 Nat\n  | 0 => 2 ^ (Nat.log2 A / 2)\n  | n + 1 => newton A (newtonSeq A n)\n\ntheorem newtonSeq_zero (A : Nat) : newtonSeq A 0 = 2 ^ (Nat.log2 A / 2) := rfl\n\ntheorem newtonSeq_succ (A n : Nat) : newtonSeq A (n + 1) = newton A (newtonSeq A n) := rfl\n\n/-- Every iterate is positive. -/\ntheorem newtonSeq_pos {A : Nat} (hA : 0 < A) (n : Nat) : 0 < newtonSeq A n := by\n  induction n with\n  | zero => rw [newtonSeq_zero]; exact Nat.pow_pos (by decide)\n  | succ k ih =>\n    have hs : 0 < Nat.sqrt A := sqrt_pos hA\n    have hle := sqrt_le_newton (a := A) (x := newtonSeq A k) ih\n    show 0 < newton A (newtonSeq A k)\n    omega\n\n/-- Every iterate past the estimate is above the root. -/\ntheorem newtonSeq_ge_sqrt {A : Nat} (hA : 0 < A) (n : Nat) :\n    Nat.sqrt A \u2264 newtonSeq A (n + 1) := by\n  induction n with\n  | zero =>\n    show Nat.sqrt A \u2264 newton A (newtonSeq A 0)\n    exact sqrt_le_newton (newtonSeq_pos hA 0)\n  | succ k ih =>\n    show Nat.sqrt A \u2264 newton A (newtonSeq A (k + 1))\n    exact sqrt_le_newton (newtonSeq_pos hA (k + 1))\n\n/-- The input is below `s * (s + 2)`. -/\ntheorem sqrt_mul_le {A : Nat} : A \u2264 Nat.sqrt A * (Nat.sqrt A + 2) := by\n  have hlt := Nat.lt_succ_sqrt A\n  simp only [Nat.succ_eq_add_one] at hlt\n  have e : (Nat.sqrt A + 1) * (Nat.sqrt A + 1)\n      = Nat.sqrt A * (Nat.sqrt A + 2) + 1 := by grind\n  omega\n\n/-- Division by an iterate above the root is at most `s + 2`. -/\ntheorem div_le_sqrt_add_two {A Y : Nat}\n    (hAss : A \u2264 Nat.sqrt A * (Nat.sqrt A + 2)) (hY : Nat.sqrt A \u2264 Y) :\n    A / Y \u2264 Nat.sqrt A + 2 := by\n  apply Nat.div_le_of_le_mul\n  have hmul := Nat.mul_le_mul_left (Nat.sqrt A + 2) hY\n  have e : (Nat.sqrt A + 2) * Nat.sqrt A = Nat.sqrt A * (Nat.sqrt A + 2) :=\n    Nat.mul_comm _ _\n  have hc : Y * (Nat.sqrt A + 2) = (Nat.sqrt A + 2) * Y := Nat.mul_comm _ _\n  omega\n\n/-- Every iterate past the estimate fits in 129 bits. -/\ntheorem newtonSeq_le129 {A : Nat} (hA1 : 1 \u2264 A) (hs128 : Nat.sqrt A < 2 ^ 128)\n    (hAss : A \u2264 Nat.sqrt A * (Nat.sqrt A + 2))\n    (hle0 : newtonSeq A 0 \u2264 2 ^ 127) (hAY0 : A / newtonSeq A 0 \u2264 4 * newtonSeq A 0)\n    (n : Nat) : newtonSeq A (n + 1) \u2264 2 ^ 129 := by\n  have hA : 0 < A := by omega\n  induction n with\n  | zero =>\n    have hQ : A / newtonSeq A 0 \u2264 4 * 2 ^ 127 :=\n      Nat.le_trans hAY0 (Nat.mul_le_mul_left 4 hle0)\n    have h1 : (newtonSeq A 0 + A / newtonSeq A 0) / 2 \u2264 2 ^ 129 := by omega\n    show newton A (newtonSeq A 0) \u2264 2 ^ 129\n    unfold newton\n    exact h1\n  | succ k ih =>\n    have hY : newtonSeq A (k + 1) \u2264 2 ^ 129 := ih\n    have hge : Nat.sqrt A \u2264 newtonSeq A (k + 1) := newtonSeq_ge_sqrt hA k\n    have hAY : A / newtonSeq A (k + 1) \u2264 Nat.sqrt A + 2 :=\n      div_le_sqrt_add_two hAss hge\n    have hs : Nat.sqrt A + 2 \u2264 2 ^ 128 + 1 := by omega\n    have h2 : (newtonSeq A (k + 1) + A / newtonSeq A (k + 1)) / 2 \u2264 2 ^ 129 := by omega\n    show newton A (newtonSeq A (k + 1)) \u2264 2 ^ 129\n    unfold newton\n    exact h2\n\n/-- One word-level Newton step mirrors the Nat step. -/\ntheorem wstep {a : U256} {n : Nat} {r : U256}\n    (hr : r.toNat = newtonSeq a.toNat n)\n    (hno : r.toNat + a.toNat / r.toNat < 2 ^ 256) :\n    (newtonStep a r).toNat = newtonSeq a.toNat (n + 1) := by\n  rw [toNat_newtonStep _ _ hno, hr]\n\n/-- The Nat-level cascade: seven Newton steps then `min` give the floor. -/\ntheorem newtonSeq_floor {A : Nat} (hA1 : 1 \u2264 A) (hs6 : 6 \u2264 Nat.sqrt A)\n    (hs128 : Nat.sqrt A < 2 ^ 128)\n    (hle : 2 ^ (Nat.log2 A / 2) \u2264 Nat.sqrt A)\n    (hlt : Nat.sqrt A < 2 * 2 ^ (Nat.log2 A / 2)) :\n    Nat.min (newtonSeq A 7) (A / newtonSeq A 7) = Nat.sqrt A := by\n  have hA : 0 < A := by omega\n  have hspos : 0 < Nat.sqrt A := sqrt_pos hA\n  have hY0le : newtonSeq A 0 \u2264 Nat.sqrt A := by\n    rw [newtonSeq_zero]; exact hle\n  have hY0lt : Nat.sqrt A < 2 * newtonSeq A 0 := by\n    rw [newtonSeq_zero]; exact hlt\n  have hYpos : \u2200 n, 0 < newtonSeq A n := newtonSeq_pos hA\n  have hYge : \u2200 n, Nat.sqrt A \u2264 newtonSeq A (n + 1) := newtonSeq_ge_sqrt hA\n  have he0 := newton_err_below (x := newtonSeq A 0) (hYpos 0) hY0le\n  have q1 : newtonSeq A 1 - Nat.sqrt A \u2264 3 * Nat.sqrt A / 8 + 1 :=\n    newton_first (hYpos 0) hY0le hY0lt he0\n  have he1 := newton_sub_sqrt_le_sq_div hspos (hYge 0)\n  have hJ1 : 2 * 3 * 1 * 8 * Nat.sqrt A + 1 * 1 * 8 * 8 < 2 * 8 * 8 * Nat.sqrt A := by\n    omega\n  have q2 : newtonSeq A 2 - Nat.sqrt A \u2264 9 * Nat.sqrt A / 128 + 2 :=\n    newton_link hspos (by decide) he1 q1 hJ1\n  have he2 := newton_sub_sqrt_le_sq_div hspos (hYge 1)\n  have hJ2 : 2 * 9 * 2 * 128 * Nat.sqrt A + 2 * 2 * 128 * 128\n      < 2 * 128 * 128 * Nat.sqrt A := by omega\n  have q3 : newtonSeq A 3 - Nat.sqrt A \u2264 81 * Nat.sqrt A / 32768 + 2 :=\n    newton_link hspos (by decide) he2 q2 hJ2\n  have he3 := newton_sub_sqrt_le_sq_div hspos (hYge 2)\n  have hJ3 : 2 * 81 * 2 * 32768 * Nat.sqrt A + 2 * 2 * 32768 * 32768\n      < 2 * 32768 * 32768 * Nat.sqrt A := by omega\n  have q4 : newtonSeq A 4 - Nat.sqrt A \u2264 6561 * Nat.sqrt A / 2 ^ 31 + 2 :=\n    newton_link hspos (by decide) he3 q3 hJ3\n  have he4 := newton_sub_sqrt_le_sq_div hspos (hYge 3)\n  have hJ4 : 2 * 6561 * 2 * 2 ^ 31 * Nat.sqrt A + 2 * 2 * 2 ^ 31 * 2 ^ 31\n      < 2 * 2 ^ 31 * 2 ^ 31 * Nat.sqrt A := by omega\n  have q5 : newtonSeq A 5 - Nat.sqrt A \u2264 43046721 * Nat.sqrt A / 2 ^ 63 + 2 :=\n    newton_link hspos (by decide) he4 q4 hJ4\n  have he5 := newton_sub_sqrt_le_sq_div hspos (hYge 4)\n  have hJ5 : 2 * 43046721 * 2 * 2 ^ 63 * Nat.sqrt A + 2 * 2 * 2 ^ 63 * 2 ^ 63\n      < 2 * 2 ^ 63 * 2 ^ 63 * Nat.sqrt A := by omega\n  have q6 : newtonSeq A 6 - Nat.sqrt A \u2264 1853020188851841 * Nat.sqrt A / 2 ^ 127 + 2 :=\n    newton_link hspos (by decide) he5 q5 hJ5\n  have hend : (newtonSeq A 6 - Nat.sqrt A) * (newtonSeq A 6 - Nat.sqrt A) \u2264 Nat.sqrt A :=\n    cascade_end hs6 hs128 q6\n  have hfinal := newton_eq_or_succ (x := newtonSeq A 6) (hYpos 6) (hYge 5) hend\n  exact min_div_eq_sqrt (hYpos 7) hfinal\n\n/-- Tiny inputs never overstate: checked by evaluation. -/\ntheorem tiny_bound1 : \u2200 i : Fin 36,\n    (sqrt (BitVec.ofNat 256 i.val)).toNat * (sqrt (BitVec.ofNat 256 i.val)).toNat \u2264 i.val := by\n  decide\n\n/-- Tiny inputs never understate: checked by evaluation. -/\ntheorem tiny_bound2 : \u2200 i : Fin 36,\n    i.val < ((sqrt (BitVec.ofNat 256 i.val)).toNat + 1) * ((sqrt (BitVec.ofNat 256 i.val)).toNat + 1) := by\n  decide\n\n/-- The master fact on tiny inputs. -/\ntheorem sqrt_eq_tiny (a : U256) (h : a.toNat \u2264 35) : (sqrt a).toNat = Nat.sqrt a.toNat := by\n  have ha : a = BitVec.ofNat 256 a.toNat := by\n    apply BitVec.eq_of_toNat_eq\n    rw [BitVec.toNat_ofNat]\n    have h256 : a.toNat < 2 ^ 256 := Nat.lt_of_le_of_lt h (by decide)\n    rw [Nat.mod_eq_of_lt h256]\n  have hOA : (BitVec.ofNat 256 a.toNat).toNat = a.toNat := by\n    rw [BitVec.toNat_ofNat]\n    have h256 : a.toNat < 2 ^ 256 := Nat.lt_of_le_of_lt h (by decide)\n    rw [Nat.mod_eq_of_lt h256]\n  have h1 := tiny_bound1 \u27e8a.toNat, by omega\u27e9\n  have h2 := tiny_bound2 \u27e8a.toNat, by omega\u27e9\n  rw [ha, hOA]\n  exact (sqrt_eq_of_bounds h1 h2).symm\n\ntheorem req_sqrt_not_above : SqrtNotAbove sqrt := sorry\ntheorem req_sqrt_not_below : SqrtNotBelow sqrt := sorry\ntheorem req_sqrt_up_covers : SqrtUpCovers sqrt := sorry\ntheorem req_sqrt_up_tight  : SqrtUpTight sqrt := sorry\ntheorem req_mint_backed    : MintBacked sqrt := sorry\ntheorem req_mint_full      : MintFull sqrt := sorry\ntheorem req_mint_live      : MintLive sqrt := sorry\ntheorem req_newton_budget  : NewtonBudget sqrt :=\n  \u27e87, by omega, fun a => rfl\u27e9\n\nend OzSqrt\n",
+  "sha256": "7e767e090860954b2c3e07e17954a8b244769556c95623e92a484dbd292e9b79",
+  "proved_required": []
+ },
+ "best_candidate": {
+  "version": "last compiling",
+  "proved_required": [
+   "req_newton_budget"
+  ],
+  "text": "import OzSqrt.Spec\nimport OzSqrt.Lemmas\nimport ProofForgeFin.Sqrt\nimport ProofForgeFin.Word\n/-!\nThe square-root routine under repair, `Math.sqrt(uint256 a)` in the style of OpenZeppelin\nContracts `Math.sol`, as this pool's first deposit calls it:\n\n```\nfunction sqrt(uint256 a) internal pure returns (uint256) {\n    if (a == 0) {\n        return 0;\n    }\n    uint256 result = 1 << (log2(a) >> 1);\n    unchecked {\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        return min(result, a / result);\n    }\n}\n```\n-/\nnamespace OzSqrt\n\nopen ProofForgeFin.Sqrt\nopen ProofForgeFin\n\n/-- Squaring commutes with floor division, downward. -/\ntheorem sq_div_le (X D : Nat) (hD : 0 < D) : (X / D) * (X / D) \u2264 X * X / (D * D) := by\n  have h1 : (X / D) * D \u2264 X := Nat.div_mul_le_self X D\n  have h2 : ((X / D) * D) * ((X / D) * D) \u2264 X * X := Nat.mul_le_mul h1 h1\n  have e : (X / D) * (X / D) * (D * D) = ((X / D) * D) * ((X / D) * D) := by grind\n  have h3 : (X / D) * (X / D) * (D * D) \u2264 X * X := by omega\n  have hDD : 0 < D * D := Nat.mul_pos hD hD\n  exact (Nat.le_div_iff_mul_le hDD).mpr h3\n\n/-- A square of a sum, expanded (flat form, as in `newton_link`). -/\ntheorem sq_add_expand (C D s : Nat) : (C * s + 2 * D) * (C * s + 2 * D)\n    = C * C * s * s + (2 * C * 2 * D * s + 2 * 2 * D * D) := by grind\n\n/-- Dividing a quotient again is at most dividing by the product. -/\ntheorem div_div_le (X DD m : Nat) (hDD : 0 < DD) (hm : 0 < m) :\n    (X / DD) / m \u2264 X / (DD * m) := by\n  have h1 : (X / DD) / m * m \u2264 X / DD := Nat.div_mul_le_self _ _\n  have e : (X / DD) / m * (DD * m) = ((X / DD) / m * m) * DD := by grind\n  have h2 : (X / DD) / m * (DD * m) \u2264 X := by\n    have h3 : ((X / DD) / m * m) * DD \u2264 (X / DD) * DD :=\n      Nat.mul_le_mul_right DD h1\n    have h4 : (X / DD) * DD \u2264 X := Nat.div_mul_le_self X DD\n    omega\n  have hDDm : 0 < DD * m := Nat.mul_pos hDD hm\n  exact (Nat.le_div_iff_mul_le hDDm).mpr h2\n\n/-- Adding less than the divisor increases the quotient by at most one. -/\ntheorem add_div_le_of_lt (U J W : Nat) (hJ : J < W) : (U + J) / W \u2264 U / W + 1 := by\n  have hW : 0 < W := by omega\n  rw [Nat.div_le_iff_le_mul_add_pred hW]\n  have hexp : W * (U / W + 1) = U / W * W + W := by grind\n  rw [hexp]\n  have hdm : U / W * W + U % W = U := by\n    rw [Nat.mul_comm (U / W) W]\n    exact Nat.div_add_mod U W\n  have hmod : U % W < W := Nat.mod_lt U hW\n  omega\n\n/-- One quadratic cascade step: from `e \u2264 c\u00b7s/D + K` the next Newton error is at most\n`c\u00b2\u00b7s/(2\u00b7D\u00b2) + 2`, provided the cross terms fit below the divisor. -/\ntheorem newton_link {s e e' c D K : Nat} (hs : 0 < s) (hD : 0 < D)\n    (he : e' \u2264 e * e / (2 * s) + 1)\n    (hle : e \u2264 c * s / D + K)\n    (hJ : 2 * c * K * D * s + K * K * D * D < 2 * D * D * s) :\n    e' \u2264 c * c * s / (2 * D * D) + 2 := by\n  have h2s : 0 < 2 * s := by omega\n  have h1 : (c * s / D) * D \u2264 c * s := Nat.div_mul_le_self _ _\n  have h1c : D * (c * s / D) = (c * s / D) * D := Nat.mul_comm _ _\n  have hKD : D * K = K * D := Nat.mul_comm _ _\n  have e2 : D * (c * s / D + K) = D * (c * s / D) + D * K := by grind\n  have h2 : D * (c * s / D + K) \u2264 c * s + K * D := by omega\n  have h3 : D * e \u2264 c * s + K * D :=\n    Nat.le_trans (Nat.mul_le_mul_left D hle) h2\n  have h4 : e * D \u2264 c * s + K * D := by\n    rw [Nat.mul_comm]; exact h3\n  have hE_le : e \u2264 (c * s + K * D) / D := (Nat.le_div_iff_mul_le hD).mpr h4\n  have hee : e * e \u2264 (c * s + K * D) / D * ((c * s + K * D) / D) :=\n    Nat.mul_le_mul hE_le hE_le\n  have hsq := sq_div_le (c * s + K * D) D hD\n  have hEE : e * e \u2264 (c * s + K * D) * (c * s + K * D) / (D * D) :=\n    Nat.le_trans hee hsq\n  have hstep : e * e / (2 * s) \u2264 ((c * s + K * D) * (c * s + K * D) / (D * D)) / (2 * s) :=\n    Nat.div_le_div_right hEE\n  have hDD : 0 < D * D := Nat.mul_pos hD hD\n  have hW : D * D * (2 * s) = 2 * D * D * s := by grind\n  have hexp : (c * s + K * D) * (c * s + K * D)\n      = c * c * s * s + (2 * c * K * D * s + K * K * D * D) := by grind\n  have hstep2 : ((c * s + K * D) * (c * s + K * D) / (D * D)) / (2 * s) \u2264\n      (c * c * s * s + (2 * c * K * D * s + K * K * D * D)) / (2 * D * D * s) := by\n    calc ((c * s + K * D) * (c * s + K * D) / (D * D)) / (2 * s)\n        \u2264 (c * s + K * D) * (c * s + K * D) / (D * D * (2 * s)) :=\n          div_div_le _ _ _ hDD h2s\n      _ = (c * c * s * s + (2 * c * K * D * s + K * K * D * D)) / (2 * D * D * s) := by\n          rw [hW, hexp]\n  have hJ' : (c * c * s * s + (2 * c * K * D * s + K * K * D * D)) / (2 * D * D * s)\n      \u2264 c * c * s * s / (2 * D * D * s) + 1 :=\n    add_div_le_of_lt _ _ _ hJ\n  have e1 : c * c * s * s = s * (c * c * s) := by grind\n  have e2' : 2 * D * D * s = s * (2 * D * D) := by grind\n  have hcancel : c * c * s * s / (2 * D * D * s) = c * c * s / (2 * D * D) := by\n    rw [e1, e2', Nat.mul_div_mul_left _ _ hs]\n  omega\n\n/-- First step: from below the root, the error after one step is at most `3\u00b7s/8 + 1`. -/\ntheorem newton_first {A s y0 : Nat} (hy0 : 0 < y0)\n    (hle : y0 \u2264 s) (hlt : s < 2 * y0)\n    (he : 2 * y0 * (newton A y0 - s) \u2264 (s - y0) * (s - y0) + 2 * s) :\n    newton A y0 - s \u2264 3 * s / 8 + 1 := by\n  obtain \u27e8d, rfl\u27e9 := Nat.exists_eq_add_of_le hle\n  rw [Nat.add_sub_cancel_left] at he\n  have hdy : d + 1 \u2264 y0 := by omega\n  obtain \u27e8t, rfl\u27e9 := Nat.exists_eq_add_of_le hdy\n  have e1 : (d + 1 + t) * (d + 1 + t)\n      = d * d + 2 * d + 1 + 2 * d * t + 2 * t + t * t := by grind\n  have e2 : (d + 1 + t) * d = d * d + d + d * t := by grind\n  have e3 : (d + 1 + t) * (d + 1 + t + d)\n      = (d + 1 + t) * (d + 1 + t) + (d + 1 + t) * d := by grind\n  have key : 4 * (d * d) + 8 * d\n      \u2264 3 * ((d + 1 + t) * (d + 1 + t)) + 3 * ((d + 1 + t) * d) := by omega\n  have h8 : 8 * (2 * (d + 1 + t) * (newton A (d + 1 + t) - (d + 1 + t + d)))\n      \u2264 8 * (d * d) + 16 * (d + 1 + t + d) := by\n    have h8a := Nat.mul_le_mul_left 8 he\n    have e8 : 8 * (d * d + 2 * (d + 1 + t + d)) = 8 * (d * d) + 16 * (d + 1 + t + d) := by\n      grind\n    omega\n  have g2 : 2 * (d + 1 + t) * (3 * (d + 1 + t + d) + 8)\n      = 6 * ((d + 1 + t) * (d + 1 + t + d)) + 16 * (d + 1 + t) := by grind\n  have hkey : 8 * (d * d) + 16 * (d + 1 + t + d)\n      \u2264 6 * ((d + 1 + t) * (d + 1 + t + d)) + 16 * (d + 1 + t) := by\n    have k2 : 8 * (d * d) + 16 * d\n        \u2264 6 * ((d + 1 + t) * (d + 1 + t)) + 6 * ((d + 1 + t) * d) := by omega\n    omega\n  have hle2 : 2 * (d + 1 + t) * (8 * (newton A (d + 1 + t) - (d + 1 + t + d)))\n      \u2264 2 * (d + 1 + t) * (3 * (d + 1 + t + d) + 8) := by\n    have g1 : 2 * (d + 1 + t) * (8 * (newton A (d + 1 + t) - (d + 1 + t + d)))\n        = 8 * (2 * (d + 1 + t) * (newton A (d + 1 + t) - (d + 1 + t + d))) := by grind\n    omega\n  have hpos : 0 < 2 * (d + 1 + t) := by omega\n  have hfin' : 8 * (newton A (d + 1 + t) - (d + 1 + t + d)) \u2264 3 * (d + 1 + t + d) + 8 :=\n    Nat.le_of_mul_le_mul_left hle2 hpos\n  have hfin : (newton A (d + 1 + t) - (d + 1 + t + d)) * 8 \u2264 3 * (d + 1 + t + d) + 8 := by\n    rw [Nat.mul_comm]; exact hfin'\n  have hdiv : (3 * (d + 1 + t + d) + 8) / 8 = 3 * (d + 1 + t + d) / 8 + 1 := by omega\n  have hle3 : newton A (d + 1 + t) - (d + 1 + t + d) \u2264 (3 * (d + 1 + t + d) + 8) / 8 :=\n    (Nat.le_div_iff_mul_le (by decide : 0 < 8)).mpr hfin\n  omega\n\n/-- The power-of-two estimate is exact: its value is `2 ^ (log2 / 2)`. -/\ntheorem x0_val (a : U256) : ((1 : U256) <<< (log2 a >>> 1)).toNat = 2 ^ (Nat.log2 a.toNat / 2) := by\n  have h1 : ((1 : U256)).toNat = 1 := by decide\n  have h2 : (log2 a >>> 1).toNat = Nat.log2 a.toNat / 2 := by\n    rw [ProofForgeFin.toNat_ushiftRight, toNat_log2, Nat.pow_one]\n  have hlog : Nat.log2 a.toNat < 256 := by\n    by_cases h0 : a.toNat = 0\n    \u00b7 rw [h0]; decide\n    \u00b7 rcases Nat.lt_or_ge (Nat.log2 a.toNat) 256 with h | h\n      \u00b7 exact h\n      \u00b7 have h1' : 2 ^ 256 \u2264 2 ^ Nat.log2 a.toNat :=\n          Nat.pow_le_pow_right (by decide) h\n        have h2' : 2 ^ Nat.log2 a.toNat \u2264 a.toNat := ((Nat.log2_eq_iff h0).mp rfl).1\n        have hA := a.isLt\n        omega\n  have hL : Nat.log2 a.toNat / 2 < 256 := by omega\n  show ((1 : U256) <<< (log2 a >>> 1).toNat).toNat = _\n  rw [h2]\n  have hfit : ((1 : U256)).toNat * 2 ^ (Nat.log2 a.toNat / 2) < 2 ^ 256 := by\n    rw [h1, Nat.one_mul]\n    have hle : 2 ^ (Nat.log2 a.toNat / 2) \u2264 2 ^ 255 :=\n      Nat.pow_le_pow_right (by decide) (by omega)\n    have hlt : (2 : Nat) ^ 255 < 2 ^ 256 := by decide\n    omega\n  rw [ProofForgeFin.toNat_shiftLeft_of_lt _ _ hfit, h1, Nat.one_mul]\n\n/-- The square of the power-of-two estimate. -/\ntheorem x0_sq (A : Nat) :\n    2 ^ (Nat.log2 A / 2) * 2 ^ (Nat.log2 A / 2) = 2 ^ (2 * (Nat.log2 A / 2)) := by\n  rw [\u2190 Nat.pow_add]; congr 1; omega\n\n/-- The estimate is below the root. -/\ntheorem x0_le_sqrt {A : Nat} (hA : 0 < A) : 2 ^ (Nat.log2 A / 2) \u2264 Nat.sqrt A := by\n  apply le_sqrt_of_mul_self_le\n  have h2L : 2 ^ Nat.log2 A \u2264 A := ((Nat.log2_eq_iff (by omega : A \u2260 0)).mp rfl).1\n  have hle : 2 * (Nat.log2 A / 2) \u2264 Nat.log2 A := by\n    have hdm := Nat.div_mul_le_self (Nat.log2 A) 2\n    omega\n  rw [x0_sq]\n  exact Nat.le_trans (Nat.pow_le_pow_right (by decide) hle) h2L\n\n/-- The root is below twice the estimate. -/\ntheorem sqrt_lt_two_x0 {A : Nat} (hA : 0 < A) :\n    Nat.sqrt A < 2 * 2 ^ (Nat.log2 A / 2) := by\n  apply sqrt_lt_of_lt_mul_self\n  have hLt : A < 2 ^ (Nat.log2 A + 1) := ((Nat.log2_eq_iff (by omega : A \u2260 0)).mp rfl).2\n  have hle : Nat.log2 A + 1 \u2264 2 * (Nat.log2 A / 2) + 2 := by\n    have hdm := Nat.div_mul_le_self (Nat.log2 A) 2\n    omega\n  have e : (2 * 2 ^ (Nat.log2 A / 2)) * (2 * 2 ^ (Nat.log2 A / 2))\n      = 2 ^ (2 * (Nat.log2 A / 2) + 2) := by\n    have e4 : (2 * 2 ^ (Nat.log2 A / 2)) * (2 * 2 ^ (Nat.log2 A / 2))\n        = 4 * (2 ^ (Nat.log2 A / 2) * 2 ^ (Nat.log2 A / 2)) := by grind\n    rw [e4, x0_sq, show (4 : Nat) = 2 ^ 2 by decide, \u2190 Nat.pow_add]\n    congr 1; omega\n  rw [e]\n  exact Nat.lt_of_lt_of_le hLt (Nat.pow_le_pow_right (by decide) hle)\n\n/-- The input is below four estimate-squares. -/\ntheorem mul_lt_four_x0_sq {A : Nat} (hA : 0 < A) :\n    A < 4 * (2 ^ (Nat.log2 A / 2) * 2 ^ (Nat.log2 A / 2)) := by\n  have hLt : A < 2 ^ (Nat.log2 A + 1) := ((Nat.log2_eq_iff (by omega : A \u2260 0)).mp rfl).2\n  have hle : Nat.log2 A + 1 \u2264 2 * (Nat.log2 A / 2) + 2 := by\n    have hdm := Nat.div_mul_le_self (Nat.log2 A) 2\n    omega\n  have hle2 : 2 ^ (Nat.log2 A + 1) \u2264 2 ^ (2 * (Nat.log2 A / 2) + 2) :=\n    Nat.pow_le_pow_right (by decide) hle\n  have e : 2 ^ (2 * (Nat.log2 A / 2) + 2)\n      = 4 * (2 ^ (Nat.log2 A / 2) * 2 ^ (Nat.log2 A / 2)) := by\n    have h42 : (2 : Nat) ^ (2 * (Nat.log2 A / 2) + 2)\n        = 2 ^ 2 * 2 ^ (2 * (Nat.log2 A / 2)) := by\n      rw [\u2190 Nat.pow_add]; congr 1; omega\n    rw [h42, show (2 : Nat) ^ 2 = 4 by decide, \u2190 x0_sq]\n  omega\n\n/-- Endgame: the sixth-iterate bound squares below the root. -/\ntheorem cascade_end {s e6 : Nat} (hs6 : 6 \u2264 s) (hs128 : s < 2 ^ 128)\n    (hle : e6 \u2264 1853020188851841 * s / 2 ^ 127 + 2) : e6 * e6 \u2264 s := by\n  have hss : s * s \u2264 s * 2 ^ 128 := Nat.mul_le_mul_left s (by omega)\n  have h1 : e6 \u2264 (1853020188851841 * s + 2 * 2 ^ 127) / 2 ^ 127 := by\n    have hD : 0 < 2 ^ 127 := by decide\n    have hDM : (2 ^ 127) * (1853020188851841 * s / 2 ^ 127) \u2264 1853020188851841 * s := by\n      have h := Nat.div_mul_le_self (1853020188851841 * s) (2 ^ 127)\n      have hc : 2 ^ 127 * (1853020188851841 * s / 2 ^ 127)\n          = (1853020188851841 * s / 2 ^ 127) * 2 ^ 127 := Nat.mul_comm _ _\n      omega\n    have h2D : (2 ^ 127) * 2 = 2 * 2 ^ 127 := Nat.mul_comm _ _\n    have hmul := Nat.mul_le_mul_left (2 ^ 127) hle\n    have eadd : (2 ^ 127) * (1853020188851841 * s / 2 ^ 127 + 2)\n        = (2 ^ 127) * (1853020188851841 * s / 2 ^ 127) + (2 ^ 127) * 2 := by grind\n    have hle' : (2 ^ 127) * e6 \u2264 1853020188851841 * s + 2 * 2 ^ 127 := by omega\n    have hle'' : e6 * 2 ^ 127 \u2264 1853020188851841 * s + 2 * 2 ^ 127 := by\n      rw [Nat.mul_comm]; exact hle'\n    exact (Nat.le_div_iff_mul_le hD).mpr hle''\n  have h2 : e6 * e6 \u2264 (1853020188851841 * s + 2 * 2 ^ 127)\n      * (1853020188851841 * s + 2 * 2 ^ 127) / (2 ^ 127 * 2 ^ 127) := by\n    have hsq := sq_div_le (1853020188851841 * s + 2 * 2 ^ 127) (2 ^ 127) (by decide)\n    exact Nat.le_trans (Nat.mul_le_mul h1 h1) hsq\n  have h3 : (1853020188851841 * s + 2 * 2 ^ 127) * (1853020188851841 * s + 2 * 2 ^ 127)\n      \u2264 (2 ^ 127 * 2 ^ 127) * s := by\n    have hassoc : (1853020188851841 * 1853020188851841 * s) * s\n        = 1853020188851841 * 1853020188851841 * (s * s) := Nat.mul_assoc _ _ _\n    rw [sq_add_expand, hassoc]\n    omega\n  have h4 : (1853020188851841 * s + 2 * 2 ^ 127) * (1853020188851841 * s + 2 * 2 ^ 127)\n      / (2 ^ 127 * 2 ^ 127) \u2264 s :=\n    Nat.div_le_of_le_mul h3\n  omega\n\ndef sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)\n\n/-- Nat-level Newton iterates from the power-of-two estimate. -/\ndef newtonSeq (A : Nat) : Nat \u2192 Nat\n  | 0 => 2 ^ (Nat.log2 A / 2)\n  | n + 1 => newton A (newtonSeq A n)\n\ntheorem newtonSeq_zero (A : Nat) : newtonSeq A 0 = 2 ^ (Nat.log2 A / 2) := rfl\n\ntheorem newtonSeq_succ (A n : Nat) : newtonSeq A (n + 1) = newton A (newtonSeq A n) := rfl\n\n/-- Every iterate is positive. -/\ntheorem newtonSeq_pos {A : Nat} (hA : 0 < A) (n : Nat) : 0 < newtonSeq A n := by\n  induction n with\n  | zero => rw [newtonSeq_zero]; exact Nat.pow_pos (by decide)\n  | succ k ih =>\n    have hs : 0 < Nat.sqrt A := sqrt_pos hA\n    have hle := sqrt_le_newton (a := A) (x := newtonSeq A k) ih\n    show 0 < newton A (newtonSeq A k)\n    omega\n\n/-- Every iterate past the estimate is above the root. -/\ntheorem newtonSeq_ge_sqrt {A : Nat} (hA : 0 < A) (n : Nat) :\n    Nat.sqrt A \u2264 newtonSeq A (n + 1) := by\n  induction n with\n  | zero =>\n    show Nat.sqrt A \u2264 newton A (newtonSeq A 0)\n    exact sqrt_le_newton (newtonSeq_pos hA 0)\n  | succ k ih =>\n    show Nat.sqrt A \u2264 newton A (newtonSeq A (k + 1))\n    exact sqrt_le_newton (newtonSeq_pos hA (k + 1))\n\n/-- The Nat-level cascade: seven Newton steps then `min` give the floor. -/\ntheorem newtonSeq_floor {A : Nat} (hA1 : 1 \u2264 A) (hs6 : 6 \u2264 Nat.sqrt A)\n    (hs128 : Nat.sqrt A < 2 ^ 128)\n    (hle : 2 ^ (Nat.log2 A / 2) \u2264 Nat.sqrt A)\n    (hlt : Nat.sqrt A < 2 * 2 ^ (Nat.log2 A / 2)) :\n    Nat.min (newtonSeq A 7) (A / newtonSeq A 7) = Nat.sqrt A := by\n  have hA : 0 < A := by omega\n  have hspos : 0 < Nat.sqrt A := sqrt_pos hA\n  have hY0le : newtonSeq A 0 \u2264 Nat.sqrt A := by\n    rw [newtonSeq_zero]; exact hle\n  have hY0lt : Nat.sqrt A < 2 * newtonSeq A 0 := by\n    rw [newtonSeq_zero]; exact hlt\n  have hYpos : \u2200 n, 0 < newtonSeq A n := newtonSeq_pos hA\n  have hYge : \u2200 n, Nat.sqrt A \u2264 newtonSeq A (n + 1) := newtonSeq_ge_sqrt hA\n  have he0 := newton_err_below (x := newtonSeq A 0) (hYpos 0) hY0le\n  have q1 : newtonSeq A 1 - Nat.sqrt A \u2264 3 * Nat.sqrt A / 8 + 1 :=\n    newton_first (hYpos 0) hY0le hY0lt he0\n  have he1 := newton_sub_sqrt_le_sq_div hspos (hYge 0)\n  have hJ1 : 2 * 3 * 1 * 8 * Nat.sqrt A + 1 * 1 * 8 * 8 < 2 * 8 * 8 * Nat.sqrt A := by\n    omega\n  have q2 : newtonSeq A 2 - Nat.sqrt A \u2264 9 * Nat.sqrt A / 128 + 2 :=\n    newton_link hspos (by decide) he1 q1 hJ1\n  have he2 := newton_sub_sqrt_le_sq_div hspos (hYge 1)\n  have hJ2 : 2 * 9 * 2 * 128 * Nat.sqrt A + 2 * 2 * 128 * 128\n      < 2 * 128 * 128 * Nat.sqrt A := by omega\n  have q3 : newtonSeq A 3 - Nat.sqrt A \u2264 81 * Nat.sqrt A / 32768 + 2 :=\n    newton_link hspos (by decide) he2 q2 hJ2\n  have he3 := newton_sub_sqrt_le_sq_div hspos (hYge 2)\n  have hJ3 : 2 * 81 * 2 * 32768 * Nat.sqrt A + 2 * 2 * 32768 * 32768\n      < 2 * 32768 * 32768 * Nat.sqrt A := by omega\n  have q4 : newtonSeq A 4 - Nat.sqrt A \u2264 6561 * Nat.sqrt A / 2 ^ 31 + 2 :=\n    newton_link hspos (by decide) he3 q3 hJ3\n  have he4 := newton_sub_sqrt_le_sq_div hspos (hYge 3)\n  have hJ4 : 2 * 6561 * 2 * 2 ^ 31 * Nat.sqrt A + 2 * 2 * 2 ^ 31 * 2 ^ 31\n      < 2 * 2 ^ 31 * 2 ^ 31 * Nat.sqrt A := by omega\n  have q5 : newtonSeq A 5 - Nat.sqrt A \u2264 43046721 * Nat.sqrt A / 2 ^ 63 + 2 :=\n    newton_link hspos (by decide) he4 q4 hJ4\n  have he5 := newton_sub_sqrt_le_sq_div hspos (hYge 4)\n  have hJ5 : 2 * 43046721 * 2 * 2 ^ 63 * Nat.sqrt A + 2 * 2 * 2 ^ 63 * 2 ^ 63\n      < 2 * 2 ^ 63 * 2 ^ 63 * Nat.sqrt A := by omega\n  have q6 : newtonSeq A 6 - Nat.sqrt A \u2264 1853020188851841 * Nat.sqrt A / 2 ^ 127 + 2 :=\n    newton_link hspos (by decide) he5 q5 hJ5\n  have hend : (newtonSeq A 6 - Nat.sqrt A) * (newtonSeq A 6 - Nat.sqrt A) \u2264 Nat.sqrt A :=\n    cascade_end hs6 hs128 q6\n  have hfinal := newton_eq_or_succ (x := newtonSeq A 6) (hYpos 6) (hYge 5) hend\n  exact min_div_eq_sqrt (hYpos 7) hfinal\n\n/-- Tiny inputs never overstate: checked by evaluation. -/\ntheorem tiny_bound1 : \u2200 i : Fin 36,\n    (sqrt (BitVec.ofNat 256 i.val)).toNat * (sqrt (BitVec.ofNat 256 i.val)).toNat \u2264 i.val := by\n  decide\n\n/-- Tiny inputs never understate: checked by evaluation. -/\ntheorem tiny_bound2 : \u2200 i : Fin 36,\n    i.val < ((sqrt (BitVec.ofNat 256 i.val)).toNat + 1) * ((sqrt (BitVec.ofNat 256 i.val)).toNat + 1) := by\n  decide\n\n/-- The master fact on tiny inputs. -/\ntheorem sqrt_eq_tiny (a : U256) (h : a.toNat \u2264 35) : (sqrt a).toNat = Nat.sqrt a.toNat := by\n  have ha : a = BitVec.ofNat 256 a.toNat := by\n    apply BitVec.eq_of_toNat_eq\n    rw [BitVec.toNat_ofNat]\n    have h256 : a.toNat < 2 ^ 256 := Nat.lt_of_le_of_lt h (by decide)\n    rw [Nat.mod_eq_of_lt h256]\n  have hOA : (BitVec.ofNat 256 a.toNat).toNat = a.toNat := by\n    rw [BitVec.toNat_ofNat]\n    have h256 : a.toNat < 2 ^ 256 := Nat.lt_of_le_of_lt h (by decide)\n    rw [Nat.mod_eq_of_lt h256]\n  have h1 := tiny_bound1 \u27e8a.toNat, by omega\u27e9\n  have h2 := tiny_bound2 \u27e8a.toNat, by omega\u27e9\n  rw [ha, hOA]\n  exact (sqrt_eq_of_bounds h1 h2).symm\n\ntheorem req_sqrt_not_above : SqrtNotAbove sqrt := sorry\ntheorem req_sqrt_not_below : SqrtNotBelow sqrt := sorry\ntheorem req_sqrt_up_covers : SqrtUpCovers sqrt := sorry\ntheorem req_sqrt_up_tight  : SqrtUpTight sqrt := sorry\ntheorem req_mint_backed    : MintBacked sqrt := sorry\ntheorem req_mint_full      : MintFull sqrt := sorry\ntheorem req_mint_live      : MintLive sqrt := sorry\ntheorem req_newton_budget  : NewtonBudget sqrt :=\n  \u27e87, by omega, fun a => rfl\u27e9\n\nend OzSqrt\n"
+ },
+ "proved": [
+  {
+   "name": "sqrt",
+   "kind": "def",
+   "text": "def sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)",
+   "deps": [],
+   "statement": "def sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "req_newton_budget",
+   "kind": "theorem",
+   "text": "theorem req_newton_budget  : NewtonBudget sqrt :=\n  \u27e87, by omega, fun a => rfl\u27e9",
+   "deps": [
+    "sqrt"
+   ],
+   "statement": "theorem req_newton_budget  : NewtonBudget sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sqrt",
+   "kind": "def",
+   "text": "def sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)",
+   "deps": [],
+   "statement": "def sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "add_div_le_of_lt",
+   "kind": "theorem",
+   "text": "theorem add_div_le_of_lt (U J W : Nat) (hJ : J < W) : (U + J) / W \u2264 U / W + 1 := by\n  have hW : 0 < W := by omega\n  rw [Nat.div_le_iff_le_mul_add_pred hW]\n  have hexp : W * (U / W + 1) = U / W * W + W := by grind\n  rw [hexp]\n  have hdm : U / W * W + U % W = U := by\n    rw [Nat.mul_comm (U / W) W]\n    exact Nat.div_add_mod U W\n  have hmod : U % W < W := Nat.mod_lt U hW\n  omega",
+   "deps": [],
+   "statement": "theorem add_div_le_of_lt (U J W : Nat) (hJ : J < W) : (U + J) / W \u2264 U / W + 1",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "div_div_le",
+   "kind": "theorem",
+   "text": "theorem div_div_le (X DD m : Nat) (hDD : 0 < DD) (hm : 0 < m) :\n    (X / DD) / m \u2264 X / (DD * m) := by\n  have h1 : (X / DD) / m * m \u2264 X / DD := Nat.div_mul_le_self _ _\n  have e : (X / DD) / m * (DD * m) = ((X / DD) / m * m) * DD := by grind\n  have h2 : (X / DD) / m * (DD * m) \u2264 X := by\n    have h3 : ((X / DD) / m * m) * DD \u2264 (X / DD) * DD :=\n      Nat.mul_le_mul_right DD h1\n    have h4 : (X / DD) * DD \u2264 X := Nat.div_mul_le_self X DD\n    omega\n  have hDDm : 0 < DD * m := Nat.mul_pos hDD hm\n  exact (Nat.le_div_iff_mul_le hDDm).mpr h2",
+   "deps": [],
+   "statement": "theorem div_div_le (X DD m : Nat) (hDD : 0 < DD) (hm : 0 < m) :\n    (X / DD) / m \u2264 X / (DD * m)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sq_div_le",
+   "kind": "theorem",
+   "text": "theorem sq_div_le (X D : Nat) (hD : 0 < D) : (X / D) * (X / D) \u2264 X * X / (D * D) := by\n  have h1 : (X / D) * D \u2264 X := Nat.div_mul_le_self X D\n  have h2 : ((X / D) * D) * ((X / D) * D) \u2264 X * X := Nat.mul_le_mul h1 h1\n  have e : (X / D) * (X / D) * (D * D) = ((X / D) * D) * ((X / D) * D) := by grind\n  have h3 : (X / D) * (X / D) * (D * D) \u2264 X * X := by omega\n  have hDD : 0 < D * D := Nat.mul_pos hD hD\n  exact (Nat.le_div_iff_mul_le hDD).mpr h3",
+   "deps": [],
+   "statement": "theorem sq_div_le (X D : Nat) (hD : 0 < D) : (X / D) * (X / D) \u2264 X * X / (D * D)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "newton_link",
+   "kind": "theorem",
+   "text": "theorem newton_link {s e e' c D K : Nat} (hs : 0 < s) (hD : 0 < D)\n    (he : e' \u2264 e * e / (2 * s) + 1)\n    (hle : e \u2264 c * s / D + K)\n    (hJ : 2 * c * K * D * s + K * K * D * D < 2 * D * D * s) :\n    e' \u2264 c * c * s / (2 * D * D) + 2 := by\n  have h2s : 0 < 2 * s := by omega\n  have h1 : (c * s / D) * D \u2264 c * s := Nat.div_mul_le_self _ _\n  have h1c : D * (c * s / D) = (c * s / D) * D := Nat.mul_comm _ _\n  have hKD : D * K = K * D := Nat.mul_comm _ _\n  have e2 : D * (c * s / D + K) = D * (c * s / D) + D * K := by grind\n  have h2 : D * (c * s / D + K) \u2264 c * s + K * D := by omega\n  have h3 : D * e \u2264 c * s + K * D :=\n    Nat.le_trans (Nat.mul_le_mul_left D hle) h2\n  have h4 : e * D \u2264 c * s + K * D := by\n    rw [Nat.mul_comm]; exact h3\n  have hE_le : e \u2264 (c * s + K * D) / D := (Nat.le_div_iff_mul_le hD).mpr h4\n  have hee : e * e \u2264 (c * s + K * D) / D * ((c * s + K * D) / D) :=\n    Nat.mul_le_mul hE_le hE_le\n  have hsq := sq_div_le (c * s + K * D) D hD\n  have hEE : e * e \u2264 (c * s + K * D) * (c * s + K * D) / (D * D) :=\n    Nat.le_trans hee hsq\n  have hstep : e * e / (2 * s) \u2264 ((c * s + K * D) * (c * s + K * D) / (D * D)) / (2 * s) :=\n    Nat.div_le_div_right hEE\n  have hDD : 0 < D * D := Nat.mul_pos hD hD\n  have hW : D * D * (2 * s) = 2 * D * D * s := by grind\n  have hexp : (c * s + K * D) * (c * s + K * D)\n      = c * c * s * s + (2 * c * K * D * s + K * K * D * D) := by grind\n  have hstep2 : ((c * s + K * D) * (c * s + K * D) / (D * D)) / (2 * s) \u2264\n      (c * c * s * s + (2 * c * K * D * s + K * K * D * D)) / (2 * D * D * s) := by\n    calc ((c * s + K * D) * (c * s + K * D) / (D * D)) / (2 * s)\n        \u2264 (c * s + K * D) * (c * s + K * D) / (D * D * (2 * s)) :=\n          div_div_le _ _ _ hDD h2s\n      _ = (c * c * s * s + (2 * c * K * D * s + K * K * D * D)) / (2 * D * D * s) := by\n          rw [hW, hexp]\n  have hJ' : (c * c * s * s + (2 * c * K * D * s + K * K * D * D)) / (2 * D * D * s)\n      \u2264 c * c * s * s / (2 * D * D * s) + 1 :=\n    add_div_le_of_lt _ _ _ hJ\n  have e1 : c * c * s * s = s * (c * c * s) := by grind\n  have e2' : 2 * D * D * s = s * (2 * D * D) := by grind\n  have hcancel : c * c * s * s / (2 * D * D * s) = c * c * s / (2 * D * D) := by\n    rw [e1, e2', Nat.mul_div_mul_left _ _ hs]\n  omega",
+   "deps": [
+    "add_div_le_of_lt",
+    "div_div_le",
+    "sq_div_le"
+   ],
+   "statement": "theorem newton_link {s e e' c D K : Nat} (hs : 0 < s) (hD : 0 < D)\n    (he : e' \u2264 e * e / (2 * s) + 1)\n    (hle : e \u2264 c * s / D + K)\n    (hJ : 2 * c * K * D * s + K * K * D * D < 2 * D * D * s) :\n    e' \u2264 c * c * s / (2 * D * D) + 2",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "newton_first",
+   "kind": "theorem",
+   "text": "theorem newton_first {A s y0 : Nat} (hy0 : 0 < y0)\n    (hle : y0 \u2264 s) (hlt : s < 2 * y0)\n    (he : 2 * y0 * (newton A y0 - s) \u2264 (s - y0) * (s - y0) + 2 * s) :\n    newton A y0 - s \u2264 3 * s / 8 + 1 := by\n  obtain \u27e8d, rfl\u27e9 := Nat.exists_eq_add_of_le hle\n  rw [Nat.add_sub_cancel_left] at he\n  have hdy : d + 1 \u2264 y0 := by omega\n  obtain \u27e8t, rfl\u27e9 := Nat.exists_eq_add_of_le hdy\n  have e1 : (d + 1 + t) * (d + 1 + t)\n      = d * d + 2 * d + 1 + 2 * d * t + 2 * t + t * t := by grind\n  have e2 : (d + 1 + t) * d = d * d + d + d * t := by grind\n  have e3 : (d + 1 + t) * (d + 1 + t + d)\n      = (d + 1 + t) * (d + 1 + t) + (d + 1 + t) * d := by grind\n  have key : 4 * (d * d) + 8 * d\n      \u2264 3 * ((d + 1 + t) * (d + 1 + t)) + 3 * ((d + 1 + t) * d) := by omega\n  have h8 : 8 * (2 * (d + 1 + t) * (newton A (d + 1 + t) - (d + 1 + t + d)))\n      \u2264 8 * (d * d) + 16 * (d + 1 + t + d) := by\n    have h8a := Nat.mul_le_mul_left 8 he\n    have e8 : 8 * (d * d + 2 * (d + 1 + t + d)) = 8 * (d * d) + 16 * (d + 1 + t + d) := by\n      grind\n    omega\n  have g2 : 2 * (d + 1 + t) * (3 * (d + 1 + t + d) + 8)\n      = 6 * ((d + 1 + t) * (d + 1 + t + d)) + 16 * (d + 1 + t) := by grind\n  have hkey : 8 * (d * d) + 16 * (d + 1 + t + d)\n      \u2264 6 * ((d + 1 + t) * (d + 1 + t + d)) + 16 * (d + 1 + t) := by\n    have k2 : 8 * (d * d) + 16 * d\n        \u2264 6 * ((d + 1 + t) * (d + 1 + t)) + 6 * ((d + 1 + t) * d) := by omega\n    omega\n  have hle2 : 2 * (d + 1 + t) * (8 * (newton A (d + 1 + t) - (d + 1 + t + d)))\n      \u2264 2 * (d + 1 + t) * (3 * (d + 1 + t + d) + 8) := by\n    have g1 : 2 * (d + 1 + t) * (8 * (newton A (d + 1 + t) - (d + 1 + t + d)))\n        = 8 * (2 * (d + 1 + t) * (newton A (d + 1 + t) - (d + 1 + t + d))) := by grind\n    omega\n  have hpos : 0 < 2 * (d + 1 + t) := by omega\n  have hfin' : 8 * (newton A (d + 1 + t) - (d + 1 + t + d)) \u2264 3 * (d + 1 + t + d) + 8 :=\n    Nat.le_of_mul_le_mul_left hle2 hpos\n  have hfin : (newton A (d + 1 + t) - (d + 1 + t + d)) * 8 \u2264 3 * (d + 1 + t + d) + 8 := by\n    rw [Nat.mul_comm]; exact hfin'\n  have hdiv : (3 * (d + 1 + t + d) + 8) / 8 = 3 * (d + 1 + t + d) / 8 + 1 := by omega\n  have hle3 : newton A (d + 1 + t) - (d + 1 + t + d) \u2264 (3 * (d + 1 + t + d) + 8) / 8 :=\n    (Nat.le_div_iff_mul_le (by decide : 0 < 8)).mpr hfin\n  omega",
+   "deps": [],
+   "statement": "theorem newton_first {A s y0 : Nat} (hy0 : 0 < y0)\n    (hle : y0 \u2264 s) (hlt : s < 2 * y0)\n    (he : 2 * y0 * (newton A y0 - s) \u2264 (s - y0) * (s - y0) + 2 * s) :\n    newton A y0 - s \u2264 3 * s / 8 + 1",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "x0_val",
+   "kind": "theorem",
+   "text": "theorem x0_val (a : U256) : ((1 : U256) <<< (log2 a >>> 1)).toNat = 2 ^ (Nat.log2 a.toNat / 2) := by\n  have h1 : ((1 : U256)).toNat = 1 := by decide\n  have h2 : (log2 a >>> 1).toNat = Nat.log2 a.toNat / 2 := by\n    rw [ProofForgeFin.toNat_ushiftRight, toNat_log2, Nat.pow_one]\n  have hlog : Nat.log2 a.toNat < 256 := by\n    by_cases h0 : a.toNat = 0\n    \u00b7 rw [h0]; decide\n    \u00b7 rcases Nat.lt_or_ge (Nat.log2 a.toNat) 256 with h | h\n      \u00b7 exact h\n      \u00b7 have h1' : 2 ^ 256 \u2264 2 ^ Nat.log2 a.toNat :=\n          Nat.pow_le_pow_right (by decide) h\n        have h2' : 2 ^ Nat.log2 a.toNat \u2264 a.toNat := ((Nat.log2_eq_iff h0).mp rfl).1\n        have hA := a.isLt\n        omega\n  have hL : Nat.log2 a.toNat / 2 < 256 := by omega\n  show ((1 : U256) <<< (log2 a >>> 1).toNat).toNat = _\n  rw [h2]\n  have hfit : ((1 : U256)).toNat * 2 ^ (Nat.log2 a.toNat / 2) < 2 ^ 256 := by\n    rw [h1, Nat.one_mul]\n    have hle : 2 ^ (Nat.log2 a.toNat / 2) \u2264 2 ^ 255 :=\n      Nat.pow_le_pow_right (by decide) (by omega)\n    have hlt : (2 : Nat) ^ 255 < 2 ^ 256 := by decide\n    omega\n  rw [ProofForgeFin.toNat_shiftLeft_of_lt _ _ hfit, h1, Nat.one_mul]",
+   "deps": [],
+   "statement": "theorem x0_val (a : U256) : ((1 : U256) <<< (log2 a >>> 1)).toNat = 2 ^ (Nat.log2 a.toNat / 2)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "mul_lt_four_x0_sq",
+   "kind": "theorem",
+   "text": "theorem mul_lt_four_x0_sq {A : Nat} (hA : 0 < A) :\n    A < 4 * (2 ^ (Nat.log2 A / 2) * 2 ^ (Nat.log2 A / 2)) := by\n  have hLt : A < 2 ^ (Nat.log2 A + 1) := ((Nat.log2_eq_iff (by omega : A \u2260 0)).mp rfl).2\n  have hle : Nat.log2 A + 1 \u2264 2 * (Nat.log2 A / 2) + 2 := by\n    have hdm := Nat.div_mul_le_self (Nat.log2 A) 2\n    omega\n  have hle2 : 2 ^ (Nat.log2 A + 1) \u2264 2 ^ (2 * (Nat.log2 A / 2) + 2) :=\n    Nat.pow_le_pow_right (by decide) hle\n  have e : 2 ^ (2 * (Nat.log2 A / 2) + 2)\n      = 4 * (2 ^ (Nat.log2 A / 2) * 2 ^ (Nat.log2 A / 2)) := by\n    have h42 : (2 : Nat) ^ (2 * (Nat.log2 A / 2) + 2)\n        = 2 ^ 2 * 2 ^ (2 * (Nat.log2 A / 2)) := by\n      rw [\u2190 Nat.pow_add]; congr 1; omega\n    rw [h42, show (2 : Nat) ^ 2 = 4 by decide, \u2190 x0_sq]\n  omega",
+   "deps": [
+    "x0_sq"
+   ],
+   "statement": "theorem mul_lt_four_x0_sq {A : Nat} (hA : 0 < A) :\n    A < 4 * (2 ^ (Nat.log2 A / 2) * 2 ^ (Nat.log2 A / 2))",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sqrt_lt_two_x0",
+   "kind": "theorem",
+   "text": "theorem sqrt_lt_two_x0 {A : Nat} (hA : 0 < A) :\n    Nat.sqrt A < 2 * 2 ^ (Nat.log2 A / 2) := by\n  apply sqrt_lt_of_lt_mul_self\n  have hLt : A < 2 ^ (Nat.log2 A + 1) := ((Nat.log2_eq_iff (by omega : A \u2260 0)).mp rfl).2\n  have hle : Nat.log2 A + 1 \u2264 2 * (Nat.log2 A / 2) + 2 := by\n    have hdm := Nat.div_mul_le_self (Nat.log2 A) 2\n    omega\n  have e : (2 * 2 ^ (Nat.log2 A / 2)) * (2 * 2 ^ (Nat.log2 A / 2))\n      = 2 ^ (2 * (Nat.log2 A / 2) + 2) := by\n    have e4 : (2 * 2 ^ (Nat.log2 A / 2)) * (2 * 2 ^ (Nat.log2 A / 2))\n        = 4 * (2 ^ (Nat.log2 A / 2) * 2 ^ (Nat.log2 A / 2)) := by grind\n    rw [e4, x0_sq, show (4 : Nat) = 2 ^ 2 by decide, \u2190 Nat.pow_add]\n    congr 1; omega\n  rw [e]\n  exact Nat.lt_of_lt_of_le hLt (Nat.pow_le_pow_right (by decide) hle)",
+   "deps": [
+    "sqrt",
+    "x0_sq"
+   ],
+   "statement": "theorem sqrt_lt_two_x0 {A : Nat} (hA : 0 < A) :\n    Nat.sqrt A < 2 * 2 ^ (Nat.log2 A / 2)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "x0_le_sqrt",
+   "kind": "theorem",
+   "text": "theorem x0_le_sqrt {A : Nat} (hA : 0 < A) : 2 ^ (Nat.log2 A / 2) \u2264 Nat.sqrt A := by\n  apply le_sqrt_of_mul_self_le\n  have h2L : 2 ^ Nat.log2 A \u2264 A := ((Nat.log2_eq_iff (by omega : A \u2260 0)).mp rfl).1\n  have hle : 2 * (Nat.log2 A / 2) \u2264 Nat.log2 A := by\n    have hdm := Nat.div_mul_le_self (Nat.log2 A) 2\n    omega\n  rw [x0_sq]\n  exact Nat.le_trans (Nat.pow_le_pow_right (by decide) hle) h2L",
+   "deps": [
+    "sqrt",
+    "x0_sq"
+   ],
+   "statement": "theorem x0_le_sqrt {A : Nat} (hA : 0 < A) : 2 ^ (Nat.log2 A / 2) \u2264 Nat.sqrt A",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "x0_sq",
+   "kind": "theorem",
+   "text": "theorem x0_sq (A : Nat) :\n    2 ^ (Nat.log2 A / 2) * 2 ^ (Nat.log2 A / 2) = 2 ^ (2 * (Nat.log2 A / 2)) := by\n  rw [\u2190 Nat.pow_add]; congr 1; omega",
+   "deps": [],
+   "statement": "theorem x0_sq (A : Nat) :\n    2 ^ (Nat.log2 A / 2) * 2 ^ (Nat.log2 A / 2) = 2 ^ (2 * (Nat.log2 A / 2))",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "cascade_end",
+   "kind": "theorem",
+   "text": "theorem cascade_end {s e6 : Nat} (hs6 : 6 \u2264 s) (hs128 : s < 2 ^ 128)\n    (hle : e6 \u2264 1853020188851841 * s / 2 ^ 127 + 2) : e6 * e6 \u2264 s := by\n  have hss : s * s \u2264 s * 2 ^ 128 := Nat.mul_le_mul_left s (by omega)\n  have h1 : e6 \u2264 (1853020188851841 * s + 2 * 2 ^ 127) / 2 ^ 127 := by\n    have hD : 0 < 2 ^ 127 := by decide\n    have hDM : (2 ^ 127) * (1853020188851841 * s / 2 ^ 127) \u2264 1853020188851841 * s := by\n      have h := Nat.div_mul_le_self (1853020188851841 * s) (2 ^ 127)\n      have hc : 2 ^ 127 * (1853020188851841 * s / 2 ^ 127)\n          = (1853020188851841 * s / 2 ^ 127) * 2 ^ 127 := Nat.mul_comm _ _\n      omega\n    have h2D : (2 ^ 127) * 2 = 2 * 2 ^ 127 := Nat.mul_comm _ _\n    have hmul := Nat.mul_le_mul_left (2 ^ 127) hle\n    have eadd : (2 ^ 127) * (1853020188851841 * s / 2 ^ 127 + 2)\n        = (2 ^ 127) * (1853020188851841 * s / 2 ^ 127) + (2 ^ 127) * 2 := by grind\n    have hle' : (2 ^ 127) * e6 \u2264 1853020188851841 * s + 2 * 2 ^ 127 := by omega\n    have hle'' : e6 * 2 ^ 127 \u2264 1853020188851841 * s + 2 * 2 ^ 127 := by\n      rw [Nat.mul_comm]; exact hle'\n    exact (Nat.le_div_iff_mul_le hD).mpr hle''\n  have h2 : e6 * e6 \u2264 (1853020188851841 * s + 2 * 2 ^ 127)\n      * (1853020188851841 * s + 2 * 2 ^ 127) / (2 ^ 127 * 2 ^ 127) := by\n    have hsq := sq_div_le (1853020188851841 * s + 2 * 2 ^ 127) (2 ^ 127) (by decide)\n    exact Nat.le_trans (Nat.mul_le_mul h1 h1) hsq\n  have h3 : (1853020188851841 * s + 2 * 2 ^ 127) * (1853020188851841 * s + 2 * 2 ^ 127)\n      \u2264 (2 ^ 127 * 2 ^ 127) * s := by\n    have hassoc : (1853020188851841 * 1853020188851841 * s) * s\n        = 1853020188851841 * 1853020188851841 * (s * s) := Nat.mul_assoc _ _ _\n    rw [sq_add_expand, hassoc]\n    omega\n  have h4 : (1853020188851841 * s + 2 * 2 ^ 127) * (1853020188851841 * s + 2 * 2 ^ 127)\n      / (2 ^ 127 * 2 ^ 127) \u2264 s :=\n    Nat.div_le_of_le_mul h3\n  omega",
+   "deps": [
+    "sq_add_expand",
+    "sq_div_le"
+   ],
+   "statement": "theorem cascade_end {s e6 : Nat} (hs6 : 6 \u2264 s) (hs128 : s < 2 ^ 128)\n    (hle : e6 \u2264 1853020188851841 * s / 2 ^ 127 + 2) : e6 * e6 \u2264 s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sq_add_expand",
+   "kind": "theorem",
+   "text": "theorem sq_add_expand (C D s : Nat) : (C * s + 2 * D) * (C * s + 2 * D)\n    = C * C * s * s + (2 * C * 2 * D * s + 2 * 2 * D * D) := by grind",
+   "deps": [],
+   "statement": "theorem sq_add_expand (C D s : Nat) : (C * s + 2 * D) * (C * s + 2 * D)\n    = C * C * s * s + (2 * C * 2 * D * s + 2 * 2 * D * D)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sqrt_eq_tiny",
+   "kind": "theorem",
+   "text": "theorem sqrt_eq_tiny (a : U256) (h : a.toNat \u2264 35) : (sqrt a).toNat = Nat.sqrt a.toNat := by\n  have ha : a = BitVec.ofNat 256 a.toNat := by\n    apply BitVec.eq_of_toNat_eq\n    rw [BitVec.toNat_ofNat]\n    have h256 : a.toNat < 2 ^ 256 := Nat.lt_of_le_of_lt h (by decide)\n    rw [Nat.mod_eq_of_lt h256]\n  have hOA : (BitVec.ofNat 256 a.toNat).toNat = a.toNat := by\n    rw [BitVec.toNat_ofNat]\n    have h256 : a.toNat < 2 ^ 256 := Nat.lt_of_le_of_lt h (by decide)\n    rw [Nat.mod_eq_of_lt h256]\n  have h1 := tiny_bound1 \u27e8a.toNat, by omega\u27e9\n  have h2 := tiny_bound2 \u27e8a.toNat, by omega\u27e9\n  rw [ha, hOA]\n  exact (sqrt_eq_of_bounds h1 h2).symm",
+   "deps": [
+    "sqrt",
+    "tiny_bound1",
+    "tiny_bound2"
+   ],
+   "statement": "theorem sqrt_eq_tiny (a : U256) (h : a.toNat \u2264 35) : (sqrt a).toNat = Nat.sqrt a.toNat",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "tiny_bound2",
+   "kind": "theorem",
+   "text": "theorem tiny_bound2 : \u2200 i : Fin 36,\n    i.val < ((sqrt (BitVec.ofNat 256 i.val)).toNat + 1) * ((sqrt (BitVec.ofNat 256 i.val)).toNat + 1) := by\n  decide",
+   "deps": [
+    "sqrt"
+   ],
+   "statement": "theorem tiny_bound2 : \u2200 i : Fin 36,\n    i.val < ((sqrt (BitVec.ofNat 256 i.val)).toNat + 1) * ((sqrt (BitVec.ofNat 256 i.val)).toNat + 1)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "tiny_bound1",
+   "kind": "theorem",
+   "text": "theorem tiny_bound1 : \u2200 i : Fin 36,\n    (sqrt (BitVec.ofNat 256 i.val)).toNat * (sqrt (BitVec.ofNat 256 i.val)).toNat \u2264 i.val := by\n  decide",
+   "deps": [
+    "sqrt"
+   ],
+   "statement": "theorem tiny_bound1 : \u2200 i : Fin 36,\n    (sqrt (BitVec.ofNat 256 i.val)).toNat * (sqrt (BitVec.ofNat 256 i.val)).toNat \u2264 i.val",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "newtonSeq_ge_sqrt",
+   "kind": "theorem",
+   "text": "theorem newtonSeq_ge_sqrt {A : Nat} (hA : 0 < A) (n : Nat) :\n    Nat.sqrt A \u2264 newtonSeq A (n + 1) := by\n  induction n with\n  | zero =>\n    show Nat.sqrt A \u2264 newton A (newtonSeq A 0)\n    exact sqrt_le_newton (newtonSeq_pos hA 0)\n  | succ k ih =>\n    show Nat.sqrt A \u2264 newton A (newtonSeq A (k + 1))\n    exact sqrt_le_newton (newtonSeq_pos hA (k + 1))",
+   "deps": [
+    "newtonSeq",
+    "newtonSeq_pos",
+    "newtonSeq_zero",
+    "sqrt"
+   ],
+   "statement": "theorem newtonSeq_ge_sqrt {A : Nat} (hA : 0 < A) (n : Nat) :\n    Nat.sqrt A \u2264 newtonSeq A (n + 1)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "newtonSeq_pos",
+   "kind": "theorem",
+   "text": "theorem newtonSeq_pos {A : Nat} (hA : 0 < A) (n : Nat) : 0 < newtonSeq A n := by\n  induction n with\n  | zero => rw [newtonSeq_zero]; exact Nat.pow_pos (by decide)\n  | succ k ih =>\n    have hs : 0 < Nat.sqrt A := sqrt_pos hA\n    have hle := sqrt_le_newton (a := A) (x := newtonSeq A k) ih\n    show 0 < newton A (newtonSeq A k)\n    omega",
+   "deps": [
+    "newtonSeq",
+    "newtonSeq_zero",
+    "sqrt"
+   ],
+   "statement": "theorem newtonSeq_pos {A : Nat} (hA : 0 < A) (n : Nat) : 0 < newtonSeq A n",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "newtonSeq_succ",
+   "kind": "theorem",
+   "text": "theorem newtonSeq_succ (A n : Nat) : newtonSeq A (n + 1) = newton A (newtonSeq A n) := rfl",
+   "deps": [
+    "newtonSeq"
+   ],
+   "statement": "theorem newtonSeq_succ (A n : Nat) : newtonSeq A (n + 1) = newton A (newtonSeq A n)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "newtonSeq_zero",
+   "kind": "theorem",
+   "text": "theorem newtonSeq_zero (A : Nat) : newtonSeq A 0 = 2 ^ (Nat.log2 A / 2) := rfl",
+   "deps": [
+    "newtonSeq"
+   ],
+   "statement": "theorem newtonSeq_zero (A : Nat) : newtonSeq A 0 = 2 ^ (Nat.log2 A / 2)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "newtonSeq",
+   "kind": "def",
+   "text": "def newtonSeq (A : Nat) : Nat \u2192 Nat\n  | 0 => 2 ^ (Nat.log2 A / 2)\n  | n + 1 => newton A (newtonSeq A n)",
+   "deps": [],
+   "statement": "def newtonSeq (A : Nat) : Nat \u2192 Nat\n  | 0 => 2 ^ (Nat.log2 A / 2)\n  | n + 1 => newton A (newtonSeq A n)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "newtonSeq_floor",
+   "kind": "theorem",
+   "text": "theorem newtonSeq_floor {A : Nat} (hA1 : 1 \u2264 A) (hs6 : 6 \u2264 Nat.sqrt A)\n    (hs128 : Nat.sqrt A < 2 ^ 128)\n    (hle : 2 ^ (Nat.log2 A / 2) \u2264 Nat.sqrt A)\n    (hlt : Nat.sqrt A < 2 * 2 ^ (Nat.log2 A / 2)) :\n    Nat.min (newtonSeq A 7) (A / newtonSeq A 7) = Nat.sqrt A := by\n  have hA : 0 < A := by omega\n  have hspos : 0 < Nat.sqrt A := sqrt_pos hA\n  have hY0le : newtonSeq A 0 \u2264 Nat.sqrt A := by\n    rw [newtonSeq_zero]; exact hle\n  have hY0lt : Nat.sqrt A < 2 * newtonSeq A 0 := by\n    rw [newtonSeq_zero]; exact hlt\n  have hYpos : \u2200 n, 0 < newtonSeq A n := newtonSeq_pos hA\n  have hYge : \u2200 n, Nat.sqrt A \u2264 newtonSeq A (n + 1) := newtonSeq_ge_sqrt hA\n  have he0 := newton_err_below (x := newtonSeq A 0) (hYpos 0) hY0le\n  have q1 : newtonSeq A 1 - Nat.sqrt A \u2264 3 * Nat.sqrt A / 8 + 1 :=\n    newton_first (hYpos 0) hY0le hY0lt he0\n  have he1 := newton_sub_sqrt_le_sq_div hspos (hYge 0)\n  have hJ1 : 2 * 3 * 1 * 8 * Nat.sqrt A + 1 * 1 * 8 * 8 < 2 * 8 * 8 * Nat.sqrt A := by\n    omega\n  have q2 : newtonSeq A 2 - Nat.sqrt A \u2264 9 * Nat.sqrt A / 128 + 2 :=\n    newton_link hspos (by decide) he1 q1 hJ1\n  have he2 := newton_sub_sqrt_le_sq_div hspos (hYge 1)\n  have hJ2 : 2 * 9 * 2 * 128 * Nat.sqrt A + 2 * 2 * 128 * 128\n      < 2 * 128 * 128 * Nat.sqrt A := by omega\n  have q3 : newtonSeq A 3 - Nat.sqrt A \u2264 81 * Nat.sqrt A / 32768 + 2 :=\n    newton_link hspos (by decide) he2 q2 hJ2\n  have he3 := newton_sub_sqrt_le_sq_div hspos (hYge 2)\n  have hJ3 : 2 * 81 * 2 * 32768 * Nat.sqrt A + 2 * 2 * 32768 * 32768\n      < 2 * 32768 * 32768 * Nat.sqrt A := by omega\n  have q4 : newtonSeq A 4 - Nat.sqrt A \u2264 6561 * Nat.sqrt A / 2 ^ 31 + 2 :=\n    newton_link hspos (by decide) he3 q3 hJ3\n  have he4 := newton_sub_sqrt_le_sq_div hspos (hYge 3)\n  have hJ4 : 2 * 6561 * 2 * 2 ^ 31 * Nat.sqrt A + 2 * 2 * 2 ^ 31 * 2 ^ 31\n      < 2 * 2 ^ 31 * 2 ^ 31 * Nat.sqrt A := by omega\n  have q5 : newtonSeq A 5 - Nat.sqrt A \u2264 43046721 * Nat.sqrt A / 2 ^ 63 + 2 :=\n    newton_link hspos (by decide) he4 q4 hJ4\n  have he5 := newton_sub_sqrt_le_sq_div hspos (hYge 4)\n  have hJ5 : 2 * 43046721 * 2 * 2 ^ 63 * Nat.sqrt A + 2 * 2 * 2 ^ 63 * 2 ^ 63\n      < 2 * 2 ^ 63 * 2 ^ 63 * Nat.sqrt A := by omega\n  have q6 : newtonSeq A 6 - Nat.sqrt A \u2264 1853020188851841 * Nat.sqrt A / 2 ^ 127 + 2 :=\n    newton_link hspos (by decide) he5 q5 hJ5\n  have hend : (newtonSeq A 6 - Nat.sqrt A) * (newtonSeq A 6 - Nat.sqrt A) \u2264 Nat.sqrt A :=\n    cascade_end hs6 hs128 q6\n  have hfinal := newton_eq_or_succ (x := newtonSeq A 6) (hYpos 6) (hYge 5) hend\n  exact min_div_eq_sqrt (hYpos 7) hfinal",
+   "deps": [
+    "add_div_le_of_lt",
+    "cascade_end",
+    "div_div_le",
+    "newtonSeq",
+    "newtonSeq_ge_sqrt",
+    "newtonSeq_pos",
+    "newtonSeq_zero",
+    "newton_first",
+    "newton_link",
+    "sq_add_expand",
+    "sq_div_le",
+    "sqrt"
+   ],
+   "statement": "theorem newtonSeq_floor {A : Nat} (hA1 : 1 \u2264 A) (hs6 : 6 \u2264 Nat.sqrt A)\n    (hs128 : Nat.sqrt A < 2 ^ 128)\n    (hle : 2 ^ (Nat.log2 A / 2) \u2264 Nat.sqrt A)\n    (hlt : Nat.sqrt A < 2 * 2 ^ (Nat.log2 A / 2)) :\n    Nat.min (newtonSeq A 7) (A / newtonSeq A 7) = Nat.sqrt A",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [
+  {
+   "name": "req_sqrt_not_above",
+   "required": true,
+   "statement": "theorem req_sqrt_not_above : SqrtNotAbove sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 9.4837,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_above (sorry), req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_sqrt_not_below",
+   "required": true,
+   "statement": "theorem req_sqrt_not_below : SqrtNotBelow sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 9.4837,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_above (sorry), req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_sqrt_up_covers",
+   "required": true,
+   "statement": "theorem req_sqrt_up_covers : SqrtUpCovers sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 9.4837,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_above (sorry), req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_sqrt_up_tight",
+   "required": true,
+   "statement": "theorem req_sqrt_up_tight  : SqrtUpTight sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 9.4837,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_above (sorry), req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_mint_backed",
+   "required": true,
+   "statement": "theorem req_mint_backed    : MintBacked sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 9.4837,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_above (sorry), req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_mint_full",
+   "required": true,
+   "statement": "theorem req_mint_full      : MintFull sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 9.4837,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_above (sorry), req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_mint_live",
+   "required": true,
+   "statement": "theorem req_mint_live      : MintLive sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 9.4837,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_above (sorry), req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_newton_budget",
+   "required": true,
+   "statement": "theorem req_newton_budget  : NewtonBudget sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 9.4837,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_above (sorry), req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  }
+ ],
+ "budget": {
+  "usd_list": 9.4837,
+  "elapsed_s": 4849.6
+ },
+ "resumed_from": []
+}
