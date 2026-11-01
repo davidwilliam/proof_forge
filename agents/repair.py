@@ -475,6 +475,7 @@ class Session:
     goal_tool = False        # --goal-tool: persistent Lean session (agents/leanserver.py)
     refute_samples = 0       # --refute: instances per new helper statement (agents/refute.py)
     variants_k = 0           # --variants (agents/variants.py)
+    verbatim = False         # whole-file phase: files are saved as written, without reordering
     full_messages = True     # compile(): every error of the build output (A0's FileSession: the tail)
     LOG_LOCK = threading.Lock()   # parallel variants log into the same events
 
@@ -599,7 +600,12 @@ class Session:
         return (self.ws / "candidate/Solution.lean").read_text()
 
     def _normalize(self, text):
-        """Keep the required theorems at the end of the file, after every helper."""
+        """Keep the required theorems at the end of the file, after every helper. In the
+        whole-file phase (`verbatim`) a file is kept as the model wrote it, as in A0: reordering
+        would move a required theorem after a helper that uses it, and Lean's error lines would
+        not match the file the model sent."""
+        if self.verbatim:
+            return text
         chunks = []
         for t in self.theorems:
             m = re.search(rf"^{DECL_PREFIX}theorem\s+{re.escape(t)}(?![\w.'])", text, re.M)
@@ -1215,9 +1221,13 @@ def orchestrate(s, a, middle=None):
     if not s.accepted:
         import baseline
         s.log(kind="phase", phase="whole-file")
-        baseline.run(s, argparse.Namespace(model=a.model, effort=a.effort, max_turns=200),
-                     state="current, partly implemented" if impl else "current, partly repaired",
-                     library_text=library_brief(s.lib_index, tools=False) if s.library else "")
+        s.verbatim = True
+        try:
+            baseline.run(s, argparse.Namespace(model=a.model, effort=a.effort, max_turns=200),
+                         state="current, partly implemented" if impl else "current, partly repaired",
+                         library_text=library_brief(s.lib_index, tools=False) if s.library else "")
+        finally:
+            s.verbatim = False
 
 
 def structured(s, a, system, spec):
@@ -2076,6 +2086,7 @@ def finish(s, out, arm, extra):
     judge.DEADLINE = None
     leanserver.close(s)
     if "error:" in s.compile(2000)["output_tail"] and s.last_good is not None:
+        s.verbatim = True   # the version restored exactly as it compiled
         s._save(s.last_good, "restore last compiling version")
     shutil.copy(s.ws / "candidate/Solution.lean", out / "final.lean")
     writes = [e for e in s.events if e.get("kind") == "write"]
