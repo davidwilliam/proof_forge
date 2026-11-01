@@ -16,8 +16,9 @@ with PF_CONTAINER_SLOTS=1), on rate-limiters-bucket-b1 (a small task):
     kernel-checked counterexample), a true one, and a theorem of the candidate by name;
     search_library with a goal; prior_attempts carrying the declarations Lean re-checks, dropping
     a broken one and its dependent, refusing a ledger for another spec, with the failure notes;
-    lean_build recording the compiled candidate. The candidate file and the workspace's git status
-    are unchanged and no Lean container of the server is left;
+    lean_build recording the compiled candidate, naming the required theorems it proves and keeping
+    it as .proofforge/best.lean. The candidate file and the workspace's git status are unchanged
+    and no Lean container of the server is left;
   * the idle shutdown stops the persistent server and the next call starts it again;
   * the runner's resume base is the prior final file that compiles with the most theorems proved.
 
@@ -383,7 +384,8 @@ def test_full_tools_over_stdio():
         carried = (ws / st.PRIOR_DIR / "Solution-with-carried.lean").read_text()
         assert "td0_step_of_adm" in carried and "td0_broken" not in carried and "gt_step" in carried
         out, _ = text(res, 12)
-        assert "exit code 0" in out, out
+        assert "exit code 0" in out and "Required theorems proved in this build: " in out, out
+        assert f"Kept as {pm.BEST}" in out and (ws / pm.BEST).read_text() == start.read_text(), out
         out, _ = text(res, 13)                                  # a term-mode `:= sorry` (the locked form)
         assert "not inside a tactic proof" in out and "`:= by sorry`" in out, out
         # Nothing changed the agent's file or its tracked workspace; the compiled version was recorded.

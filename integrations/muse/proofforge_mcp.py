@@ -36,6 +36,12 @@ Muse Code starts it from `mcp_servers` with the transport `stdio`. Three profile
                         on the same task and spec hash (agents/ledger.py): their proved
                         declarations re-checked by Lean against the current candidate, and the
                         failure notes of the goals they left open
+      lean_build        of the candidate: Lean's errors whole, other warnings on one line each and
+                        the `sorry` warnings as one list; then the required theorems the build
+                        proves (`#print axioms`) and the best compiling version so far (most
+                        required theorems proved, the latest on a tie), kept in the workspace as
+                        .proofforge/best.lean with .proofforge/best.json; a failed build names it
+                        and how to restore it
 
 `--blind` (measured runs) leaves the task README out of `show_task`: the READMEs of the
 real-world tasks describe the known fixes and earlier repairs.
@@ -59,6 +65,11 @@ import fin_lib, judge, task as taskmod  # noqa: E402
 PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"]
 SERVER_INFO = {"name": "proofforge", "version": "1.0.0"}
 OUT_LIMIT = 12000
+BEST = ".proofforge/best.lean"          # full profile: the best compiling version of the candidate
+BEST_RECORD = ".proofforge/best.json"   # its required theorems proved and its SHA-256
+MESSAGE = re.compile(r"^(error|warning|info)(?:\([\w.]+\))?: ")
+SORRY_WARNING = "declaration uses `sorry`"
+DECL_AT = re.compile(r"\b(?:theorem|lemma|def|instance|abbrev)\s+([^\s:({\[]+)")
 
 
 def clean_lean(text):
@@ -67,6 +78,44 @@ def clean_lean(text):
             if not l.startswith("trace:") and not re.match(r"^[✔✖⚠] \[\d+/\d+\]", l)
             and "linter" not in l and "Hint:" not in l and "deprecated" not in l]
     return "\n".join(keep)
+
+
+def lean_blocks(text):
+    """Lean's output as [(severity, lines)]: a message starts at a line `error: `, `warning: ` or
+    `info: ` (with an optional message class) and runs to the next one; lines before the first
+    message have the severity ''."""
+    blocks = [("", [])]
+    for line in text.splitlines():
+        m = MESSAGE.match(line)
+        if m:
+            blocks.append((m.group(1), [line]))
+        else:
+            blocks[-1][1].append(line)
+    return [b for b in blocks if b[1]]
+
+
+def compact_build(text, src):
+    """Lean's output for the candidate with every error whole, every other warning on its first
+    line, and the `declaration uses sorry` warnings as one line naming the declarations (Lean
+    repeats them on every build). Unindented lines after a warning (Lake's summary) are kept."""
+    src_lines = src.splitlines()
+    out, sorry = [], []
+    for sev, lines in lean_blocks(text):
+        if sev != "warning":
+            out += lines
+            continue
+        rest = [l for l in lines[1:] if l.strip() and not l[0].isspace()]
+        if SORRY_WARNING in lines[0]:
+            m = re.search(r":(\d+):\d+: ", lines[0])
+            ln = int(m.group(1)) if m else 0
+            d = DECL_AT.search(src_lines[ln - 1]) if 0 < ln <= len(src_lines) else None
+            sorry.append(f"{d.group(1)} (line {ln})" if d else f"line {ln}")
+        else:
+            out.append(lines[0])
+        out += rest
+    if sorry:
+        out.append(f"warning: {len(sorry)} declaration{'s use' if len(sorry) > 1 else ' uses'} `sorry`: " + ", ".join(sorry))
+    return "\n".join(out)
 
 
 def tail(text, n=OUT_LIMIT):
@@ -225,10 +274,64 @@ class Server:
             text = (self.ws / "candidate/Solution.lean").read_text()
             r = self.lean("lake build Solution 2>&1 | tail -c 60000")
             what = "lake build Solution"
-            if r["exit_code"] == 0 and "error:" not in r["output_tail"]:
+            built = r["exit_code"] == 0 and "error:" not in r["output_tail"]
+            if built:
                 self.record_compiled(text)
         out = clean_lean(r["output_tail"])
-        return f"$ {what}\nexit code {r['exit_code']} ({r['elapsed_ms']} ms)\n" + (tail(out) or "(no output)")
+        head = f"$ {what}\nexit code {r['exit_code']} ({r['elapsed_ms']} ms)\n"
+        if self.profile == "full" and not file:
+            note = self.progress(text, built, out)
+            return head + (tail(compact_build(out, text)) or "(no output)") + ("\n" + note if note else "")
+        return head + (tail(out) or "(no output)")
+
+    # -- full profile: progress across builds --------------------------------------------------
+    def best_record(self):
+        """The best compiling version kept in the workspace ({"proved", "sha256"}), or None when
+        there is none or the file no longer matches its record."""
+        try:
+            rec = json.loads((self.ws / BEST_RECORD).read_text())
+            text = (self.ws / BEST).read_text()
+        except (OSError, ValueError):
+            return None
+        if not isinstance(rec, dict) or rec.get("sha256") != hashlib.sha256(text.encode()).hexdigest():
+            return None
+        return rec
+
+    def save_best(self, text, proved):
+        (self.ws / ".proofforge").mkdir(exist_ok=True)
+        (self.ws / BEST).write_text(text)
+        (self.ws / BEST_RECORD).write_text(json.dumps({"proved": proved,
+                                                       "sha256": hashlib.sha256(text.encode()).hexdigest()}) + "\n")
+
+    def progress(self, text, built, out):
+        """After a build of the candidate (full profile): when it compiles, the required theorems it
+        proves (`#print axioms`), and the best compiling version so far (most required theorems
+        proved, the latest on a tie) kept as .proofforge/best.lean; when it does not, where that
+        version is. The record lives in the workspace, so it carries over to the next session."""
+        t = self.task()
+        n, best = len(t.theorems), self.best_record()
+
+        def names(xs):
+            return ": " + ", ".join(xs) if xs else ""
+        if built:
+            status = self.theorem_status(t)
+            if all(v == "MISSING" for v in status.values()):
+                return ""          # the axiom audit gave no verdict
+            proved = [th for th in t.theorems if status[th] == "PROVED"]
+            open_ = [f"{th} ({status[th].lower()})" for th in t.theorems if status[th] != "PROVED"]
+            line = f"Required theorems proved in this build: {len(proved)} of {n}{names(proved)}."
+            if open_:
+                line += " Not proved yet: " + ", ".join(open_) + "."
+            if best is None or len(proved) >= len(best.get("proved") or []):
+                self.save_best(text, proved)
+                return line + f" Kept as {BEST}, the best compiling version so far."
+            return line + (f" The best compiling version so far, {BEST}, proves {len(best.get('proved') or [])} of {n}"
+                           f"{names(best.get('proved'))}.")
+        if best is None or "error" not in out:
+            return ""
+        return (f"candidate/Solution.lean does not compile. The best compiling version so far, {BEST}, proves "
+                f"{len(best.get('proved') or [])} of {n} required theorems{names(best.get('proved'))}; "
+                f"`cp {BEST} candidate/Solution.lean` restores it.")
 
     def list_tasks(self, split=None):
         rows = []
@@ -429,7 +532,10 @@ class Server:
                  "description": "Run Lean 4.35 (the pinned toolchain, in its container) on this workspace and return Lean's output. "
                                 "Without `file`: `lake build Solution` (the candidate module candidate/Solution.lean). With `file`: "
                                 "`lake env lean <file>` for any .lean file in the workspace, for example a scratch file that imports "
-                                "Solution and runs `#print axioms`.",
+                                "Solution and runs `#print axioms`." + (
+                                    " Without `file`, the result also names the required theorems the build proves "
+                                    "and keeps the best compiling version so far (most required theorems proved) as "
+                                    f"{BEST}; a failed build says how to restore it." if self.profile == "full" else ""),
                  "inputSchema": {"type": "object", "properties": {"file": {"type": "string"}}}}]
         if self.profile == "lean":
             return lean
