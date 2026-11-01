@@ -106,3 +106,9 @@ finds a proof (`try_tactics`) or proved declarations (`prior_attempts`) gives yo
 - `split`, `cases h : e`, `by_cases`, `match` on the shape of the definition keep goals small;
   `simp_all` on a large state is slow and brittle.
 - `decide` is fine on small closed propositions; `native_decide` is rejected.
+- Mathlib tactics do not exist here: `by_contra` (use `apply Classical.byContradiction` then
+  `intro h`, or `by_cases`), `set` (`generalize hx : e = x`), `ring` and `ring_nf` (`grind`, or
+  `Nat.mul_comm`, `Nat.mul_assoc`, `Nat.mul_add` rewrites and `ac_rfl`), `linarith` (`omega`),
+  `interval_cases` (a case split, then `omega`), `norm_num` (`decide`, `simp`, `omega`),
+  `push_neg` (`Nat.not_lt`, `Nat.not_le`, `Classical.not_not`), `positivity` (`Nat.mul_pos`,
+  `Nat.pow_pos`). A file that uses one does not compile.

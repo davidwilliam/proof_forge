@@ -42,6 +42,9 @@ Muse Code starts it from `mcp_servers` with the transport `stdio`. Three profile
                         required theorems proved, the latest on a tie), kept in the workspace as
                         .proofforge/best.lean with .proofforge/best.json; a failed build names it
                         and how to restore it
+  In the full profile, an `unknown tactic` error at a Mathlib tactic (`by_contra`, `set`, `ring`,
+  ...) in lean_build, try_snippet or check_snippet_fast gets a line naming the Lean core
+  replacement (tactic_hints).
 
 `--blind` (measured runs) leaves the task README out of `show_task`: the READMEs of the
 real-world tasks describe the known fixes and earlier repairs.
@@ -133,6 +136,52 @@ def kill_containers(pid):
         ids += r.stdout.split()
     if ids:
         subprocess.run(["docker", "kill"] + ids, capture_output=True)
+
+
+# Mathlib tactics that Lean core (no Mathlib) does not have, with what does the same in core.
+CORE_TACTICS = {
+    "by_contra": "`apply Classical.byContradiction` then `intro h`, or `by_cases h : P`",
+    "set": "`generalize hx : e = x` (replaces `e` by `x` in the goal)",
+    "ring": "`grind`, or rewrites with `Nat.mul_comm`, `Nat.mul_assoc`, `Nat.mul_add`, `Nat.add_mul` and `ac_rfl`",
+    "ring_nf": "`grind`, or rewrites with `Nat.mul_comm`, `Nat.mul_assoc`, `Nat.mul_add`, `Nat.add_mul` and `ac_rfl`",
+    "linarith": "`omega` (linear arithmetic over Nat and Int), or `grind`",
+    "nlinarith": "`Nat.mul_le_mul` and similar lemmas for the nonlinear step, then `omega`",
+    "positivity": "`Nat.mul_pos`, `Nat.pow_pos` or `omega`",
+    "norm_num": "`decide` on a closed proposition, `simp`, or `omega`",
+    "interval_cases": "a case split with `match` or `rcases Nat.lt_or_ge x k`, then `omega`; or `decide` on `∀ x < k, P x`",
+    "push_neg": "`simp only [Nat.not_lt, Nat.not_le]`, `Classical.not_not`, `Classical.not_forall`",
+    "split_ifs": "`split` or `by_cases h : c` then `simp [h]`",
+    "use": "`exact ⟨x, h⟩` or `refine ⟨x, ?_⟩`",
+    "gcongr": "`Nat.mul_le_mul`, `Nat.add_le_add`, `Nat.div_le_div_right` or `Nat.pow_le_pow_left`",
+    "contrapose": "`apply Classical.byContradiction` with the contrapositive as a `have`",
+    "nth_rewrite": "`rw` with the lemma's arguments given explicitly, or `conv`",
+    "nth_rw": "`rw` with the lemma's arguments given explicitly, or `conv`",
+    "tauto": "`simp_all` or `grind`",
+    "aesop": "`simp_all` or `grind`",
+}
+UNKNOWN_TACTIC = re.compile(r"(snippet|[\w./-]+\.lean):(\d+):(\d+):(?: error:)? unknown tactic")
+
+
+def tactic_hints(output, sources):
+    """For each `unknown tactic` error in Lean's output whose position (in `sources`, {file or
+    'snippet': text}) holds a Mathlib tactic, one line naming what Lean core has instead. Lean
+    reports the error one column after the tactic's first character; the start of the line is
+    tried as well."""
+    seen = []
+    for m in UNKNOWN_TACTIC.finditer(output):
+        lines = (sources.get(m.group(1)) or "").splitlines()
+        ln, col = int(m.group(2)), int(m.group(3))
+        if not 0 < ln <= len(lines):
+            continue
+        line = lines[ln - 1]
+        for tok in (re.match(r"([A-Za-z_][\w!?]*)", line[max(0, col - 1):]),
+                    re.match(r"\s*(?:·\s*)?([A-Za-z_][\w!?]*)", line)):
+            name = tok.group(1).rstrip("!?") if tok else None
+            if name in CORE_TACTICS:
+                if name not in seen:
+                    seen.append(name)
+                break
+    return "".join(f"\nHint: `{t}` is a Mathlib tactic; Lean core has no Mathlib. Use {CORE_TACTICS[t]}." for t in seen)
 
 
 def save_best(ws, text, proved):
@@ -290,7 +339,8 @@ class Server:
         head = f"$ {what}\nexit code {r['exit_code']} ({r['elapsed_ms']} ms)\n"
         if self.profile == "full" and not file:
             note = self.progress(text, built, out)
-            return head + (tail(compact_build(out, text)) or "(no output)") + ("\n" + note if note else "")
+            hints = tactic_hints(out, {"candidate/Solution.lean": text})
+            return head + (tail(compact_build(out, text)) or "(no output)") + hints + ("\n" + note if note else "")
         return head + (tail(out) or "(no output)")
 
     # -- full profile: progress across builds --------------------------------------------------
@@ -407,7 +457,8 @@ class Server:
             return "the snippet was stopped at the time limit"
         if not any(re.search(r": (error|warning)", x) for x in msgs):
             return "snippet compiles with no errors or warnings (the candidate file is unchanged)"
-        return tail("\n".join(msgs), 8000)
+        hints = tactic_hints("\n".join(msgs), {"snippet": code}) if self.profile == "full" else ""
+        return tail("\n".join(msgs), 8000) + hints
 
     def theorem_status(self, t):
         """Per required theorem: PROVED, SORRY or MISSING (`#print axioms` on the built candidate)."""
@@ -504,7 +555,8 @@ class Server:
         s = self.session()
         self._idle.touch()
         try:
-            return session_tools.check_snippet_fast(s, code)
+            out = session_tools.check_snippet_fast(s, code)
+            return out + tactic_hints(out, {"snippet": code or ""})
         finally:
             self._idle.touch()
 

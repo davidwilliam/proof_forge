@@ -310,7 +310,7 @@ def progress_prompt(server, task, ws, n, feedback, record, start_text, versions)
         except RuntimeError:
             pick = None
     if broken:
-        errors = first_errors(record["lean"])
+        errors = first_errors(record["lean"]) + proofforge_mcp.tactic_hints(record["lean"], {"candidate/Solution.lean": text})
         if pick is None:
             return msg + "candidate/Solution.lean does not compile. Lean's first errors:\n" + errors + CONTINUE_END
         saved = f".proofforge/unfinished-{n:02d}.lean"
