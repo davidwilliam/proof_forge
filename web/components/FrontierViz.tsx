@@ -90,18 +90,25 @@ export function RunStrips({ items }: { items: Strip[] }) {
   );
 }
 
-/** The ledger's totals as figures. */
-export function KpiStrip({ d }: { d: WinsData }) {
-  const c = d.counts;
-  const items = [
-    { value: c.runs.toLocaleString("en-US"), label: "measured runs" },
-    { value: String(c.comparisons), label: "comparisons, same model and caps" },
-    { value: String(c.wins_group_1), label: "verified only with ProofForge", href: "#group-1" },
-    { value: String(c.wins_group_2), label: "verified either way, cheaper or faster with ProofForge", href: "#group-2" },
-    { value: String(c.wins_group_3), label: "gains of other kinds", href: "#group-3" },
-  ];
+export interface Kpi {
+  value: string;
+  label: string;
+  href?: string;
+}
+
+const ledgerKpis = (c: WinsData["counts"]): Kpi[] => [
+  { value: c.runs.toLocaleString("en-US"), label: "measured runs" },
+  { value: String(c.comparisons), label: "comparisons, same model and caps" },
+  { value: String(c.wins_group_1), label: "verified only with ProofForge", href: "#group-1" },
+  { value: String(c.wins_group_2), label: "verified either way, cheaper or faster with ProofForge", href: "#group-2" },
+  { value: String(c.wins_group_3), label: "gains of other kinds", href: "#group-3" },
+];
+
+/** The ledger's totals as figures, or other figures given as `items` with their own `label`. */
+export function KpiStrip({ d, items: given, label = "The ledger in figures" }: { d?: WinsData; items?: Kpi[]; label?: string }) {
+  const items = given ?? (d ? ledgerKpis(d.counts) : []);
   return (
-    <ul className="kpis" aria-label="The ledger in figures">
+    <ul className="kpis" aria-label={label}>
       {items.map((k) => (
         <li key={k.label}>
           {k.href ? (
