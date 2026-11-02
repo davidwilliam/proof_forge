@@ -452,7 +452,7 @@ export function HeroLenses(props: HeroLensesProps) {
                       ) : null}
                       {x.openInEveryRun ? `; it is open in all ${count(hole.runsMeasured)} ${hole.task.name} runs of that series` : ""}
                       {hole.laterVerified
-                        ? `. Muse Code with ProofForge later proved it, with every other requirement, in ${count(hole.laterVerified.verified)} of ${count(hole.laterVerified.runs)} ${hole.laterVerified.experiment} runs`
+                        ? `. Muse Code with ProofForge later proved it, with every other requirement, in ${hole.laterVerified.verified} of ${hole.laterVerified.runs} ${hole.laterVerified.experiment} runs`
                         : ""}
                       .
                     </p>
