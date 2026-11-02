@@ -2,6 +2,7 @@ import ProofForgeFin.Accumulator.Index
 import ProofForgeFin.Accumulator.Potential
 import ProofForgeFin.Accumulator.Runs
 import ProofForgeFin.Accumulator.Floor
+import ProofForgeFin.Accumulator.Market
 /-!
 # Index-based reward accumulators over sequences of actions
 
@@ -25,4 +26,10 @@ account's term. The modules prove everything above that.
   over a run given by its defining equations with a ghost state and a ghost total, and the
   passage from a scaled potential to an amount.
 * `ProofForgeFin.Accumulator.Floor`: sums of amounts rounded down against the total rounded down.
+* `ProofForgeFin.Accumulator.Market`: the whole argument for a market with two reward sides (a
+  supply side and a borrow side), for any state read as one: settlements, adjustments, retunes and
+  the passage of time as transitions, the invariant and both potentials over every run, and the
+  bounds on the credited amounts of all accounts, of one account, and of an account that holds
+  nothing after a history. A proof supplies how to read its state and one case analysis of its
+  step.
 -/

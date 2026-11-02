@@ -53,7 +53,8 @@ no dependency beyond the Lean core library.
 * `ProofForgeFin.Accumulator`: index-based reward accumulators over sequences of actions: index
   updates covered by the emission they index, potentials over the accounts across an update and a
   settlement, chains of primitive moves inside one action, the induction over a run given by its
-  defining equations, from a scaled potential to an amount, and sums of amounts rounded down.
+  defining equations, from a scaled potential to an amount, sums of amounts rounded down, and
+  the complete bounds for any market with two reward sides from one case analysis of its step.
 * `ProofForgeFin.QuadRoot`: the integer smaller root of `a x² - 2 b x + c` computed with an
   integer square root: the side of the real root it lands on with the root rounded up or down,
   and its order against any rational point where the quadratic is not positive.
