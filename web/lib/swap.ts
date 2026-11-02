@@ -142,6 +142,32 @@ export const MEASURED = {
   failedAloneCases: 2001,
 };
 
+/**
+ * The deployed code on the four-round attack batch (the "attack" preset), as the witness output of
+ * REQ-BATCH-KEEPS-VALUE in results/counterexamples-1/balancer-port/passport.json records it: the
+ * pool's value before the batch and after each of its 12 swaps. Also witnesses/attack_batch.lean,
+ * `value_before` and `value_after`.
+ */
+export const DRAIN = {
+  passport: "results/counterexamples-1/balancer-port/passport.json",
+  before: "4749898000",
+  steps: [
+    "4750372932", "2375399004", "2375657940", "2375895489", "1188054046", "1188183440",
+    "1188302256", "594204295", "594270870", "594330317", "297191751", "297229191",
+  ],
+} as const;
+
+/** How many of the eight requirements a version's Passport gives each status. */
+export function statusCounts(v: VersionInfo): { refuted: number; verified: number; unresolved: number; total: number } {
+  const s = Object.values(v.passport.requirements);
+  return {
+    refuted: s.filter((x) => x === "REFUTED").length,
+    verified: s.filter((x) => x === "VERIFIED").length,
+    unresolved: s.filter((x) => x === "UNRESOLVED").length,
+    total: s.length,
+  };
+}
+
 // Batches
 
 export interface SwapSpec {

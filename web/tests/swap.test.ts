@@ -3,11 +3,13 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  DRAIN,
   MEASURED,
   PRESETS,
   REQUIREMENTS,
   TASK,
   VERSIONS,
+  statusCounts,
   batchFromFields,
   describeSwap,
   fieldsFromBatch,
@@ -134,6 +136,27 @@ describe("summaries", () => {
   const port = JSON.parse(text("results/counterexamples-1/balancer-port/passport.json"));
   const w = port.requirements.find((r: { id: string }) => r.id === "REQ-BATCH-KEEPS-VALUE").witness;
   const result = strings(w.output) as SwapResultOut;
+
+  it("the hero's drain series is the Passport's witness output and the witness file's values", () => {
+    expect(DRAIN.passport).toBe("results/counterexamples-1/balancer-port/passport.json");
+    expect(DRAIN.before).toBe(String(w.output.value_before));
+    expect(DRAIN.steps).toEqual(w.output.steps.map((s: { value: number }) => String(s.value)));
+    expect(DRAIN.steps[DRAIN.steps.length - 1]).toBe(String(w.output.value_after));
+    expect(w.output.ok).toBe(true);
+    const witness = text(`${TASK}/witnesses/attack_batch.lean`);
+    expect(witness).toContain(`value constantProduct startPool = ${DRAIN.before}`);
+    expect(witness).toContain(`value constantProduct afterBatch = ${DRAIN.steps[11]}`);
+    expect(formatPct(pct(BigInt(DRAIN.steps[11]!) - BigInt(DRAIN.before), BigInt(DRAIN.before)), true)).toBe("-93.74%");
+  });
+
+  it("requirement counts per version come from the Passports", () => {
+    expect(VERSIONS.map((v) => statusCounts(v))).toEqual([
+      { refuted: 3, verified: 0, unresolved: 5, total: 8 },
+      { refuted: 2, verified: 0, unresolved: 6, total: 8 },
+      { refuted: 0, verified: 8, unresolved: 0, total: 8 },
+    ]);
+    expect(Object.keys(VERSIONS[0]!.passport.requirements)).toEqual(REQUIREMENTS.map((r) => r.id));
+  });
 
   it("the deployed code loses 93.74% of the pool's value on the attack batch", () => {
     expect(w.input.swaps).toEqual(PRESETS[0]!.batch.swaps.map((s) => ({ ...s, amount: Number(s.amount) })));
