@@ -20,14 +20,13 @@ describe("generated/challenge.json", () => {
     expect(() => execFileSync(process.execPath, [path.join(ROOT, "web/scripts/challenge.mjs"), "--check"], { stdio: "pipe" })).not.toThrow();
   });
 
-  it("lists every hidden variant without its issue report", () => {
+  it("lists every hidden variant with its issue report", () => {
     expect(CHALLENGE.variants.map((v) => v.id)).toEqual(hidden);
     for (const v of CHALLENGE.variants) {
       const t = json(`hidden/${v.id}/task.json`);
       expect(v.requirements).toEqual(t.requirements.map((r: [string, string]) => r[0]));
-      expect(JSON.stringify(v)).not.toContain(t.issue);
+      expect(v.issue).toBe(t.issue);
     }
-    expect(text("web/generated/challenge.json")).not.toMatch(/"issue"/);
   });
 
   it("reads the property cases and deadline from the endpoint", () => {

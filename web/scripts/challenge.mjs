@@ -1,6 +1,6 @@
 // Collects the committed facts about the hidden challenge into generated/challenge.json for the
-// /challenge page: the hidden variants (hidden/<id>/task.json, without the issue report, which
-// stays hidden), how each was validated (hidden/<id>/validation.json), what the endpoint runs
+// /challenge page: the hidden variants (hidden/<id>/task.json, with the issue report, which the page
+// opens only on request after a check of that variant), how each was validated (hidden/<id>/validation.json), what the endpoint runs
 // (server/app.py) and every recorded call of the deployed endpoint (reports/reliability/*.json,
 // made by infra/reliability.py). Nothing is recomputed or run.
 // Usage: node scripts/challenge.mjs           write generated/challenge.json
@@ -44,6 +44,7 @@ const variants = fs
       definitions: t.definitions,
       requirements: t.requirements.map(([rid]) => rid),
       exe: t.exe,
+      issue: t.issue,
       source: `hidden/${id}/task.json`,
       validation: {
         source: vRel,

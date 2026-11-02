@@ -94,7 +94,7 @@ function VariantCards({
                 </>
               ) : (
                 <span className="ch-card-note">
-                  {m ? `${m.requirements.length} locked requirements. ` : ""}The bug and its issue report are hidden; not yet checked in this visit.
+                  {m ? `${m.requirements.length} locked requirements. ` : ""}The bug and its issue report stay hidden until you check it.
                 </span>
               )}
             </span>
@@ -310,6 +310,7 @@ export function ChallengeRunner({
   const within = elapsed != null ? elapsed <= TARGET_MS : null;
   const violations = Object.entries(result?.violations ?? {}).filter(([, n]) => n > 0);
   const reqIds = meta.find((m) => m.id === variant)?.requirements ?? Object.keys(requirementTexts);
+  const issue = meta.find((m) => m.id === variant)?.issue ?? null;
   const pw = w ? payoutWitness(w.input, w.output) : null;
 
   return (
@@ -360,6 +361,16 @@ export function ChallengeRunner({
               <dd>{violations.length ? violations.map(([k, n]) => `${k} in ${n} cases`).join(", ") : "none found"}</dd>
             </dl>
           </div>
+
+          {issue ? (
+            <details className="card ch-issue" key={variant}>
+              <summary>Show the bug this variant hides</summary>
+              <p className="ch-issue-text">
+                Issue report of <span className="mono">{variant}</span>: {issue}
+              </p>
+              <p className="small muted">The check above was run without it, from the locked requirements alone.</p>
+            </details>
+          ) : null}
 
           {w ? (
             <div className="card ch-witness">

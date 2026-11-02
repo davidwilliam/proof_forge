@@ -40,7 +40,7 @@ function Validation() {
       <p className="ch-section-lead">
         Before a variant is served, its metadata, lock and hygiene checks pass, both reference fixes are accepted by the judge with their
         executables passing the property tests, and the buggy start is refuted by the executable check: {f.referencesAccepted} of {f.references}{" "}
-        reference fixes accepted, {f.startsRefuted} of {f.variants} buggy starts refuted. The issue report of each variant stays hidden.
+        reference fixes accepted, {f.startsRefuted} of {f.variants} buggy starts refuted. The check is never given the issue report; the page opens it only on request, after a check of that variant.
       </p>
       <div className="table-scroll">
         <table className="ch-vtable">
@@ -161,9 +161,9 @@ export default async function ChallengePage() {
     <main id="main" className="page ch-page">
       <h1>Challenge a hidden variant</h1>
       <p className="lead">
-        Each variant is a buggy payout component that has not been shown to anyone. ProofForge builds its executable and runs the
+        Each variant is a buggy payout component whose bug is not described to the check. ProofForge builds its executable and runs the
         requirement-derived property tests against it. A violation comes with a concrete witness: the input and the output that breaks a locked
-        requirement. The target is a witness within 20 seconds.
+        requirement. The target is a witness within 20 seconds. After a check, the variant's issue report opens on request, to compare with the witness.
       </p>
       <Facts />
       <section aria-labelledby="ch-run" className="ch-section">

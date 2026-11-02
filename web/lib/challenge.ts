@@ -11,6 +11,8 @@ export interface ChallengeVariant {
   definitions: string[];
   requirements: string[];
   exe: string;
+  /** The variant's issue report; the page shows it only on request, after a check. */
+  issue: string;
   source: string;
   validation: {
     source: string;
