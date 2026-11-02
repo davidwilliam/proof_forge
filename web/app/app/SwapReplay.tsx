@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { postJson } from "@/lib/api";
 import { formatMs, shortHash } from "@/lib/format";
 import {
@@ -23,7 +23,7 @@ import {
 } from "@/lib/swap";
 import { Seal } from "@/components/Seal";
 import { ErrorBox, Status } from "@/components/ui";
-import { ValueChart } from "./ValueChart";
+import { ValueChart, type StepState } from "./ValueChart";
 
 interface Run {
   response: SwapResponse;
@@ -172,6 +172,26 @@ export function SwapReplay() {
 }
 
 const SERIES_COLOR = (k: string) => `var(--series-${k})`;
+/** Drawing order: the dashed plus-one line last, on top of the Muse repair it often overlaps. */
+const ORDER = ["deployed", "repaired", "plus_one"];
+/** Rows of the swap table shown before "Show all". */
+const PREVIEW = 5;
+
+/** What happened to each swap of the batch in one version. */
+function stepStates(r: SwapResultOut, n: number): StepState[] {
+  return Array.from({ length: n }, (_, k) => {
+    const s = r.steps[k];
+    if (!s) return "skipped";
+    if (!s.ok) return "refused";
+    return r.ok ? "kept" : "undone";
+  });
+}
+
+/** The pool's value after the batch in percent of the start; the start when the batch reverted. */
+function endPct(r: SwapResultOut): number | null {
+  const o = outcome(r);
+  return o.after != null && o.before ? pct(o.after, o.before) : null;
+}
 
 function Results({ run }: { run: Run }) {
   const { response, batch, tokens } = run;
@@ -179,6 +199,10 @@ function Results({ run }: { run: Run }) {
   const repaired = response.versions.find((v) => v.version === "repaired") ?? null;
   const labels = batch.swaps.map((s) => describeSwap(s, tokens));
   const showChart = response.versions.some((v) => v.result.steps.length >= 3);
+  const [all, setAll] = useState(false);
+  const shown = all ? n : Math.min(n, PREVIEW);
+  const tableId = useId();
+  const scale = Math.max(100, ...response.versions.map((v) => endPct(v.result) ?? 0));
   return (
     <div aria-live="polite">
       <p className="small muted" style={{ marginTop: 0 }}>
@@ -187,7 +211,7 @@ function Results({ run }: { run: Run }) {
       </p>
       <div className="outcomes">
         {response.versions.map((v) => (
-          <OutcomeCard key={v.version} v={v} repaired={v.version === "repaired" ? null : repaired} batch={batch} tokens={tokens} />
+          <OutcomeCard key={v.version} v={v} repaired={v.version === "repaired" ? null : repaired} batch={batch} tokens={tokens} scale={scale} />
         ))}
       </div>
 
@@ -205,23 +229,45 @@ function Results({ run }: { run: Run }) {
           </div>
           <ValueChart
             stepLabels={labels}
+            stepKinds={batch.swaps.map((s) => s.kind)}
             series={[...response.versions]
-              .sort((a, b) => (a.version === "plus_one" ? 1 : b.version === "plus_one" ? -1 : 0))
-              .map((v) => ({
-                key: v.version,
-                label: versionInfo(v.version).short,
-                color: SERIES_COLOR(v.version),
-                dashed: v.version === "plus_one",
-                values: valueSeries(v.result, n),
-              }))}
+              .sort((a, b) => ORDER.indexOf(a.version) - ORDER.indexOf(b.version))
+              .map((v) => {
+                const o = outcome(v.result);
+                return {
+                  key: v.version,
+                  label: versionInfo(v.version).short,
+                  color: SERIES_COLOR(v.version),
+                  dashed: v.version === "plus_one",
+                  values: valueSeries(v.result, n),
+                  states: stepStates(v.result, n),
+                  quotes: Array.from({ length: n }, (_, k) => (v.result.steps[k]?.ok ? (v.result.steps[k]!.quote ?? null) : null)),
+                  final: endPct(v.result),
+                  refusedAt: o.ok ? null : o.refusedAt,
+                };
+              })}
           />
+          <ul className="strip-legend" aria-label="The strip under the chart, one row per version">
+            <li>
+              <span className="sl sl-kept" aria-hidden="true" /> went through
+            </li>
+            <li>
+              <span className="sl sl-undone" aria-hidden="true" /> went through, undone when the batch reverted
+            </li>
+            <li>
+              <span className="sl sl-refused" aria-hidden="true" /> refused
+            </li>
+            <li>
+              <span className="sl sl-skipped" aria-hidden="true" /> not run
+            </li>
+          </ul>
         </div>
       ) : null}
 
       <div className="steps">
         <h3>Every swap</h3>
         <p className="small muted">Each cell is the amount the version charged (for an exact amount out) or paid (for an exact amount in), in wei, and below it the pool&apos;s value in percent of the start.</p>
-        <div className="table-scroll">
+        <div className="table-scroll" id={tableId}>
           <table className="small">
             <thead>
               <tr>
@@ -235,7 +281,7 @@ function Results({ run }: { run: Run }) {
               </tr>
             </thead>
             <tbody>
-              {batch.swaps.map((s, i) => (
+              {batch.swaps.slice(0, shown).map((s, i) => (
                 <tr key={i}>
                   <td className="num">{i + 1}</td>
                   <td>{labels[i]}</td>
@@ -244,6 +290,13 @@ function Results({ run }: { run: Run }) {
                   ))}
                 </tr>
               ))}
+              {shown < n ? (
+                <tr className="steps-more-row">
+                  <td colSpan={2 + response.versions.length}>
+                    {n - shown} more {n - shown === 1 ? "swap" : "swaps"}, shown with the button below
+                  </td>
+                </tr>
+              ) : null}
               <tr>
                 <th className="num">Batch</th>
                 <th>Value after the batch</th>
@@ -259,6 +312,11 @@ function Results({ run }: { run: Run }) {
             </tbody>
           </table>
         </div>
+        {n > PREVIEW ? (
+          <button type="button" className="steps-toggle" aria-expanded={all} aria-controls={tableId} onClick={() => setAll((x) => !x)}>
+            {all ? `Show the first ${PREVIEW} swaps` : `Show all ${n} swaps`}
+          </button>
+        ) : null}
       </div>
 
       <details style={{ marginTop: 16 }}>
@@ -327,7 +385,7 @@ function firstDifference(v: SwapResultOut, rep: SwapResultOut) {
   return null;
 }
 
-function OutcomeCard({ v, repaired, batch, tokens }: { v: SwapVersionOut; repaired: SwapVersionOut | null; batch: SwapBatch; tokens: [string, string] }) {
+function OutcomeCard({ v, repaired, batch, tokens, scale }: { v: SwapVersionOut; repaired: SwapVersionOut | null; batch: SwapBatch; tokens: [string, string]; scale: number }) {
   const info = versionInfo(v.version);
   const o = outcome(v.result);
   const fell = o.ok && o.changePct != null && o.changePct < 0;
@@ -379,9 +437,29 @@ function OutcomeCard({ v, repaired, batch, tokens }: { v: SwapVersionOut; repair
           </p>
         </>
       )}
+      <ValueBar end={endPct(v.result)} scale={scale} color={SERIES_COLOR(v.version)} reverted={!o.ok} />
       {compare ? <p>{compare}</p> : null}
       <p className="small muted">
         Passport: {info.verdict === "VERIFIED" ? <Seal size={24} /> : null}<Status value={info.verdict} />
+      </p>
+    </div>
+  );
+}
+
+/** The pool's value after the batch as a bar, on one scale for the three cards, with the start marked. */
+function ValueBar({ end, scale, color, reverted }: { end: number | null; scale: number; color: string; reverted: boolean }) {
+  if (end == null) return null;
+  const w = Math.max(0, Math.min(100, (end / scale) * 100));
+  const start = (100 / scale) * 100;
+  return (
+    <div className="vbar" role="img" aria-label={`Value after the batch: ${formatPct(end)} of the start${reverted ? ", kept by the revert" : ""}`}>
+      <div className="vbar-track">
+        <span className="vbar-fill" style={{ width: `${w.toFixed(2)}%`, ["--swatch" as string]: color }} />
+        <span className="vbar-start" style={{ left: `${start.toFixed(2)}%` }} />
+      </div>
+      <p className="vbar-label">
+        <span>{formatPct(end)} of the start after the batch</span>
+        {reverted ? <span>kept by the revert</span> : null}
       </p>
     </div>
   );
