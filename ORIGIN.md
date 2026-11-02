@@ -1,6 +1,6 @@
 # Origin and provenance
 
-ProofForge is being built for the Meta Global AI Developer Hackathon (kickoff 2026-10-26 12:00 ET, submissions due 2026-11-04 21:00 ET).
+ProofForge is being built for the Meta Global AI Developer Hackathon, organized by Meta and Cerebral Valley (kickoff 2026-10-26 12:00 ET, submissions due 2026-11-04 21:00 ET).
 
 ## Built during the hackathon
 

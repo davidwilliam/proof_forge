@@ -192,8 +192,8 @@ export default function AboutPage() {
           <div className="ab-thanks-card ab-thanks-meta">
             <h3>Meta</h3>
             <p className="muted small">
-              For the Muse models, Muse Code and the Meta Model API that every repair, proof and plan here runs on, and, with Cerebral Valley,
-              for the {HACKATHON.event}.
+              For the Muse models, Muse Code and the Meta Model API that every repair, proof and plan here runs on. Meta and Cerebral Valley
+              organize the {HACKATHON.event}.
             </p>
             <ul>
               {META.map((m) => (
