@@ -16,7 +16,10 @@ skill, in this order:
 1. In a resumed run, `prior_attempts` first: the earlier attempts' proved declarations, re-checked
    by Lean against the current file, and their failure notes.
 2. `show_task` and the locked spec; `check_candidate` to see the defect (witnesses and
-   kernel-checked counterexamples); fix the definition.
+   kernel-checked counterexamples); fix the definition. Where the spec gives the result of a call
+   in closed form, write that call as `if <preconditions> then some <that form> else none` with
+   the spec's own definitions (the skill's step 4); a line-by-line port needs an equation lemma
+   to that form per call first.
 3. Decompose each required theorem into helpers stated with `sorry`; `refute_statement` on any
    helper that might be false before proving it.
 4. Prove the required theorems that follow directly from the definitions or from each other

@@ -56,19 +56,31 @@ out the whole proof before the first call.
    kernel. That input is the bug. Fix the definition so the witness no longer violates the
    requirement; do not weaken behavior on valid inputs (requirements that demand success still
    have to hold).
-4. **Decompose.** Put each required theorem in the file with its locked statement and `sorry`,
+4. **Write the fix in the specification's terms.** When the specification states the result of a
+   call in closed form (`s' = { s with ... }` built from its own definitions: an index update, a
+   start, a credit), write that call of the fixed definition as
+   `if <the requirement's preconditions> then some <that closed form> else none`, with the
+   specification's definitions wherever the code computes the same quantity and the corrected
+   condition where the bug was. The effect requirements are then `simp only [impl] at h` and
+   `split at h`, the success requirement is the precondition, and a requirement over sequences of
+   calls rewrites each call with the same equation. A line-by-line port of the deployed code
+   (`Option` binds, checked subtraction, local `let`s, two-phase updates) needs, before any
+   requirement, one equation lemma per call (`impl s c = if ok then some next else none`) proved
+   by unfolding and case splits, and every later proof goes through it; keep the port only if
+   you prove those equations first, one call at a time.
+5. **Decompose.** Put each required theorem in the file with its locked statement and `sorry`,
    and the helper lemmas you plan to use above it, each `:= by sorry`. Compile with `lean_build`.
    Before you spend effort on a helper, run `refute_statement` on it (by `name`, or pass a
    `statement` before writing it), above all for inequalities with subtraction, division, rounding
    or scaling and for claims about every input. A FALSE result gives the values that break it:
    add the missing hypothesis or fix the bound, and sample it again.
-5. **Bank the short requirements first.** Once the fixed definition compiles, run `try_tactics`
+6. **Bank the short requirements first.** Once the fixed definition compiles, run `try_tactics`
    on every required theorem, and prove the ones that follow directly from the definitions, from
    the locked lemmas or from another requirement (a bound given by the routine's last step, an
    equality with the deployed algorithm, a consequence of a requirement already proved) before
    starting a long proof. A long proof can outlast the budget; the requirements already proved
    are kept.
-6. **Prove, cheapest first.** For each open theorem, helpers first:
+7. **Prove, cheapest first.** For each open theorem, helpers first:
    - `try_tactics` on it. If a tactic closes it, put the returned proof in the file.
    - Otherwise `goal_at` to see the exact hypotheses and goal at each `sorry`; then
      `search_library` with `goal` set to the theorem's name for lemmas whose conclusion fits.
@@ -77,18 +89,25 @@ out the whole proof before the first call.
      definitions (and sums restated by recursion) into the library's, so its lemmas apply.
    - Write the proof in steps with `have h : P := by sorry` and iterate with
      `check_snippet_fast` (seconds) until it has no error; then `try_snippet` (a full compile)
-     and put it in the file. Break a step that resists into a new helper and go back to step 4.
-7. **Keep the file compiling.** Move a proof into `candidate/Solution.lean` only once it compiles
+     and put it in the file. Break a step that resists into a new helper and go back to step 5.
+   - When a library module fits the argument (its doc ends with "Using the module", as
+     `ProofForgeFin.Accumulator.Market` does for reward indices over runs of operations), follow
+     that recipe step by step: it names the lemma for each step and the bridges from the
+     specification's definitions to the library's, most of them by `rfl`.
+8. **Keep the file compiling.** Move a proof into `candidate/Solution.lean` only once it compiles
    as a snippet, and run `lean_build` after every edit of the file. Where `lean_build` keeps the
    best compiling version as `.proofforge/best.lean`, restore it
    (`cp .proofforge/best.lean candidate/Solution.lean`) when an edit breaks the file and the error
    is not a quick fix. `#print axioms` in a scratch file that imports `Solution` shows which
-   theorems still depend on `sorryAx`.
-8. **Check and iterate.** `check_candidate`. A new witness or counterexample means the behavior
+   theorems still depend on `sorryAx`. Fix a failed build from its first error; later errors
+   often follow from it. From the third failed build in a row `lean_build` names the declarations
+   with errors: put `sorry` in place of their proofs so that the file compiles, and work each out
+   with `check_snippet_fast`.
+9. **Check and iterate.** `check_candidate`. A new witness or counterexample means the behavior
    is still wrong: go back to step 3 with it. `lean_errors` and `theorem_status` show what is
    not proved; `proof_check.reasons` names scan violations or a Comparator rejection (a statement
    that differs from the lock, a forbidden axiom, a kernel that rejects a declaration).
-9. **Done.** Stop only at `"status": "VERIFIED"`. Report the Passport path and `passport_sha256`;
+10. **Done.** Stop only at `"status": "VERIFIED"`. Report the Passport path and `passport_sha256`;
    `verify_passport` reproduces it.
 
 ## Rules the judge enforces
