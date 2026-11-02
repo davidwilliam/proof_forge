@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { CheckFix } from "@/components/CheckFix";
+import { CreatorBand } from "@/components/CreatorBand";
 import { CatchWaffles, KpiStrip, RunStrips } from "@/components/FrontierViz";
 import { Pipeline } from "@/components/Pipeline";
 import { HeroLenses } from "@/components/HeroLenses";
@@ -124,6 +125,8 @@ export default function Home() {
         <RealWorld projects={rw.projects} pending={pendingProjects(rw)} />
 
         <Evidence />
+
+        <CreatorBand />
       </div>
     </main>
   );

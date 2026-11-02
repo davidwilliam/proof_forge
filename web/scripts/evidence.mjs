@@ -325,7 +325,7 @@ function llms() {
   for (const p of evidence.reproduce.passports) L.push(`    ${p.command}`);
   L.push("");
   L.push("## Pages", "");
-  L.push(`- /: overview with the ${count(flagships.length).toLowerCase()} incidents`, "- /frontier: what Meta's models reach with ProofForge that they do not reach on their own, and every comparison", "- /#check: check a fix; submits a real-world candidate to POST /api/verify on the API, with the committed Passport as fallback", "- /forge: live forge session (replay of a recorded Muse repair, then a fresh check)", "- /results: E1 and E2 per arm, family and case", "");
+  L.push(`- /: overview with the ${count(flagships.length).toLowerCase()} incidents`, "- /frontier: what Meta's models reach with ProofForge that they do not reach on their own, and every comparison", "- /#check: check a fix; submits a real-world candidate to POST /api/verify on the API, with the committed Passport as fallback", "- /forge: live forge session (replay of a recorded Muse repair, then a fresh check)", "- /results: E1 and E2 per arm, family and case", "- /methods: every preregistered experiment, with its question, commit, run count, primary test, status and result", "- /verify: the commands that reproduce a Passport and what bin/proofforge verify compares", "- /brand: the identity kit, with the palette, the rules and every file to download", "- /about: who built ProofForge, why, what was built during the hackathon, and acknowledgments", "");
   return L.join("\n");
 }
 
