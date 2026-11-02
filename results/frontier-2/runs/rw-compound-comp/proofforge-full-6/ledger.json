@@ -1,0 +1,1041 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "rw-compound-comp",
+ "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96",
+ "run_dir": "<proofforge>/results/frontier-2/rw-compound-comp/proofforge-full-6",
+ "arm": "proofforge-full",
+ "loop": "muse-code",
+ "model": "muse-spark-1.3-contributor",
+ "created": "2026-11-02T01:27:24-0500",
+ "reconstructed": false,
+ "final": {
+  "text": "import CompRewards.Spec\nimport ProofForgeFin.DeFi.Rewards\nimport ProofForgeFin.Accumulator.Index\nimport ProofForgeFin.Accumulator.Potential\nimport ProofForgeFin.Ledger\nimport ProofForgeFin.Seq\nnamespace CompRewards\nopen ProofForgeFin ProofForgeFin.DeFi.Rewards ProofForgeFin.Accumulator\n\n/-- `fraction(a, b)` (ExponentialNoError.sol): `Double(div_(mul_(a, doubleScale), b))`. -/\ndef fraction (a b : Nat) : Nat := a * doubleScale / b\n\n/-- `mul_(uint a, Double b)` (ExponentialNoError.sol): `a * b.mantissa / doubleScale`. -/\ndef mulDouble (a mantissa : Nat) : Nat := a * mantissa / doubleScale\n\n/-- `sub_(a, b)` (ExponentialNoError.sol): reverts on underflow. -/\ndef subChecked (a b : Nat) : Option Nat := if b \u2264 a then some (a - b) else none\n\n/-- `updateCompSupplyIndex(cToken)`. -/\ndef updateCompSupplyIndex (s : St) : Option St :=\n  match subChecked s.blockNumber s.supplyState.block with\n  | none => none\n  | some deltaBlocks =>\n    if deltaBlocks > 0 \u2227 s.supplyState.speed > 0 then\n      let supplyTokens := totalSupply s\n      let compAccrued := deltaBlocks * s.supplyState.speed\n      let ratio := if supplyTokens > 0 then fraction compAccrued supplyTokens else 0\n      some { s with supplyState :=\n        { s.supplyState with index := s.supplyState.index + ratio, block := s.blockNumber } }\n    else if deltaBlocks > 0 then\n      some { s with supplyState := { s.supplyState with block := s.blockNumber } }\n    else some s\n\n/-- `updateCompBorrowIndex(cToken, marketBorrowIndex)`. -/\ndef updateCompBorrowIndex (s : St) : Option St :=\n  match subChecked s.blockNumber s.borrowState.block with\n  | none => none\n  | some deltaBlocks =>\n    if deltaBlocks > 0 \u2227 s.borrowState.speed > 0 then\n      let borrowAmount := totalBorrows s\n      let compAccrued := deltaBlocks * s.borrowState.speed\n      let ratio := if borrowAmount > 0 then fraction compAccrued borrowAmount else 0\n      some { s with borrowState :=\n        { s.borrowState with index := s.borrowState.index + ratio, block := s.blockNumber } }\n    else if deltaBlocks > 0 then\n      some { s with borrowState := { s.borrowState with block := s.blockNumber } }\n    else some s\n\n/-- `distributeSupplierComp(cToken, supplier)`. -/\ndef distributeSupplierComp (s : St) (supplier : Account) : Option St :=\n  let supplyIndex := s.supplyState.index\n  let supplierIndex :=\n    if (s.acct supplier).supplierIndex = 0 \u2227 compInitialIndex \u2264 supplyIndex then compInitialIndex\n    else (s.acct supplier).supplierIndex\n  match subChecked supplyIndex supplierIndex with\n  | none => none\n  | some deltaIndex =>\n    let supplierDelta := mulDouble (s.acct supplier).supply deltaIndex\n    some (s.withAcct supplier fun a =>\n      { a with supplierIndex := supplyIndex, accrued := a.accrued + supplierDelta })\n\n/-- `distributeBorrowerComp(cToken, borrower, marketBorrowIndex)`. -/\ndef distributeBorrowerComp (s : St) (borrower : Account) : Option St :=\n  let borrowIndex := s.borrowState.index\n  let borrowerIndex :=\n    if (s.acct borrower).borrowerIndex = 0 \u2227 compInitialIndex \u2264 borrowIndex then compInitialIndex\n    else (s.acct borrower).borrowerIndex\n  match subChecked borrowIndex borrowerIndex with\n  | none => none\n  | some deltaIndex =>\n    let borrowerDelta := mulDouble (s.acct borrower).borrow deltaIndex\n    some (s.withAcct borrower fun a =>\n      { a with borrowerIndex := borrowIndex, accrued := a.accrued + borrowerDelta })\n\n/-- `compAccrued[user] = grantCompInternal(user, compAccrued[user])`. -/\ndef grantCompInternal (s : St) (user : Account) : St :=\n  let amount := (s.acct user).accrued\n  if amount > 0 \u2227 amount \u2264 s.reserve then\n    { s with reserve := s.reserve - amount,\n             accts := s.accts.modify user fun a => { a with accrued := 0, wallet := a.wallet + amount } }\n  else s\n\n/-- `claimComp([holder], [market], true, true)`. -/\ndef claimComp (s : St) (holder : Account) : Option St := do\n  let s \u2190 updateCompBorrowIndex s\n  let s \u2190 distributeBorrowerComp s holder\n  let s \u2190 updateCompSupplyIndex s\n  let s \u2190 distributeSupplierComp s holder\n  return grantCompInternal s holder\n\n/-- The supply branch of `setCompSpeedInternal`: when the supply speed changes, accrue at the\nold speed, then store the new one. -/\ndef setSupplySpeed (s : St) (supplySpeed : Nat) : Option St :=\n  if s.supplyState.speed \u2260 supplySpeed then\n    (updateCompSupplyIndex s).map fun s =>\n      { s with supplyState := { s.supplyState with speed := supplySpeed } }\n  else some s\n\n/-- The borrow branch of `setCompSpeedInternal`. -/\ndef setBorrowSpeed (s : St) (borrowSpeed : Nat) : Option St :=\n  if s.borrowState.speed \u2260 borrowSpeed then\n    (updateCompBorrowIndex s).map fun s =>\n      { s with borrowState := { s.borrowState with speed := borrowSpeed } }\n  else some s\n\n/-- `setCompSpeedInternal(cToken, supplySpeed, borrowSpeed)`: the supply branch, then the borrow\nbranch. -/\ndef setCompSpeedInternal (s : St) (supplySpeed borrowSpeed : Nat) : Option St :=\n  (setSupplySpeed s supplySpeed).bind fun s => setBorrowSpeed s borrowSpeed\n\ndef comptroller : Impl := fun s c =>\n  match c with\n  | .supplyHook who => do\n    let s \u2190 updateCompSupplyIndex s\n    distributeSupplierComp s who\n  | .borrowHook who => do\n    let s \u2190 updateCompBorrowIndex s\n    distributeBorrowerComp s who\n  | .claim who => claimComp s who\n  | .setSpeeds a b => setCompSpeedInternal s a b\n\n-- Helper: modify congruence\ntheorem modify_congr_acct (l : List Acct) (w : Nat) (f1 f2 : Acct \u2192 Acct)\n    (h : f1 (l.getD w noAcct) = f2 (l.getD w noAcct)) : l.modify w f1 = l.modify w f2 := by\n  induction l generalizing w with\n  | nil =>\n    cases w <;> rfl\n  | cons hd tl ih =>\n    cases w with\n    | zero =>\n      have h' : f1 hd = f2 hd := h\n      show f1 hd :: tl = f2 hd :: tl\n      rw [h']\n    | succ w =>\n      have h' : f1 (tl.getD w noAcct) = f2 (tl.getD w noAcct) := h\n      show hd :: tl.modify w f1 = hd :: tl.modify w f2\n      rw [ih w h']\n\ntheorem updateSupply_some (s : St) (hle : s.supplyState.block \u2264 s.blockNumber) :\n    updateCompSupplyIndex s = some { s with supplyState := accrueSide s.supplyState s.blockNumber (totalSupply s) } := by\n  unfold updateCompSupplyIndex accrueSide totalSupply subChecked fraction\n  simp only [hle, \u2193reduceIte]\n  by_cases hd : 0 < s.blockNumber - s.supplyState.block \u2227 0 < s.supplyState.speed \u2227 0 < (List.map Acct.supply s.accts).sum\n  \u00b7 obtain \u27e8hd1, hd2, hd3\u27e9 := hd\n    simp only [hd1, hd2, hd3, and_self, \u2193reduceIte]\n  \u00b7 simp only [hd, \u2193reduceIte]\n    by_cases h1 : s.blockNumber - s.supplyState.block > 0 \u2227 s.supplyState.speed > 0\n    \u00b7 obtain \u27e8h1a, h1b\u27e9 := h1\n      simp only [h1a, h1b, and_self, \u2193reduceIte]\n      by_cases h2 : 0 < (List.map Acct.supply s.accts).sum\n      \u00b7 exact absurd \u27e8h1a, h1b, h2\u27e9 hd\n      \u00b7 have hz : (List.map Acct.supply s.accts).sum = 0 := by omega\n        simp only [hz, Nat.lt_irrefl, \u2193reduceIte, Nat.add_zero]\n    \u00b7 simp only [h1]\n      by_cases h3 : s.blockNumber - s.supplyState.block > 0\n      \u00b7 simp only [h3, \u2193reduceIte]\n      \u00b7 simp only [h3, \u2193reduceIte]\n        have heq : s.supplyState.block = s.blockNumber := by omega\n        obtain \u27e8bn, sup, bor, res, accts\u27e9 := s\n        simp only at heq hle \u22a2\n        subst heq\n        rfl\n\ntheorem updateBorrow_some (s : St) (hle : s.borrowState.block \u2264 s.blockNumber) :\n    updateCompBorrowIndex s = some { s with borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s) } := by\n  unfold updateCompBorrowIndex accrueSide totalBorrows subChecked fraction\n  simp only [hle, \u2193reduceIte]\n  by_cases hd : 0 < s.blockNumber - s.borrowState.block \u2227 0 < s.borrowState.speed \u2227 0 < (List.map Acct.borrow s.accts).sum\n  \u00b7 obtain \u27e8hd1, hd2, hd3\u27e9 := hd\n    simp only [hd1, hd2, hd3, and_self, \u2193reduceIte]\n  \u00b7 simp only [hd, \u2193reduceIte]\n    by_cases h1 : s.blockNumber - s.borrowState.block > 0 \u2227 s.borrowState.speed > 0\n    \u00b7 obtain \u27e8h1a, h1b\u27e9 := h1\n      simp only [h1a, h1b, and_self, \u2193reduceIte]\n      by_cases h2 : 0 < (List.map Acct.borrow s.accts).sum\n      \u00b7 exact absurd \u27e8h1a, h1b, h2\u27e9 hd\n      \u00b7 have hz : (List.map Acct.borrow s.accts).sum = 0 := by omega\n        simp only [hz, Nat.lt_irrefl, \u2193reduceIte, Nat.add_zero]\n    \u00b7 simp only [h1]\n      by_cases h3 : s.blockNumber - s.borrowState.block > 0\n      \u00b7 simp only [h3, \u2193reduceIte]\n      \u00b7 simp only [h3, \u2193reduceIte]\n        have heq : s.borrowState.block = s.blockNumber := by omega\n        obtain \u27e8bn, sup, bor, res, accts\u27e9 := s\n        simp only at heq hle \u22a2\n        subst heq\n        rfl\n\ntheorem updateSupply_of_some (s s1 : St) (h : updateCompSupplyIndex s = some s1) :\n    s.supplyState.block \u2264 s.blockNumber \u2227 s1 = { s with supplyState := accrueSide s.supplyState s.blockNumber (totalSupply s) } := by\n  by_cases hle : s.supplyState.block \u2264 s.blockNumber\n  \u00b7 have heq := updateSupply_some s hle\n    rw [heq] at h\n    refine \u27e8hle, ?_\u27e9\n    cases h\n    rfl\n  \u00b7 unfold updateCompSupplyIndex subChecked at h\n    simp only [hle, \u2193reduceIte] at h\n    cases h\n\ntheorem updateBorrow_of_some (s s1 : St) (h : updateCompBorrowIndex s = some s1) :\n    s.borrowState.block \u2264 s.blockNumber \u2227 s1 = { s with borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s) } := by\n  by_cases hle : s.borrowState.block \u2264 s.blockNumber\n  \u00b7 have heq := updateBorrow_some s hle\n    rw [heq] at h\n    refine \u27e8hle, ?_\u27e9\n    cases h\n    rfl\n  \u00b7 unfold updateCompBorrowIndex subChecked at h\n    simp only [hle, \u2193reduceIte] at h\n    cases h\n\ntheorem supplyStart_eq (rec idx : Nat) :\n    (if rec = 0 \u2227 compInitialIndex \u2264 idx then compInitialIndex else rec) = accrualStart rec idx := by\n  unfold accrualStart\n  by_cases h0 : rec = 0 <;> simp [h0]\n\ntheorem borrowStart_eq (rec idx : Nat) :\n    (if rec = 0 \u2227 compInitialIndex \u2264 idx then compInitialIndex else rec) = accrualStart rec idx := supplyStart_eq rec idx\n\ntheorem distributeSupply_of_some (s1 : St) (who : Account) (s' : St)\n    (h : distributeSupplierComp s1 who = some s') :\n    accrualStart (s1.acct who).supplierIndex s1.supplyState.index \u2264 s1.supplyState.index \u2227\n    s' = { s1 with accts := s1.accts.modify who fun a => { a with supplierIndex := s1.supplyState.index, accrued := a.accrued + creditFor a.supply (accrualStart a.supplierIndex s1.supplyState.index) s1.supplyState.index } } := by\n  unfold distributeSupplierComp subChecked St.acct at h\n  simp only at h\n  have hsup : (if (s1.accts.getD who noAcct).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.accts.getD who noAcct).supplierIndex) = accrualStart (s1.accts.getD who noAcct).supplierIndex s1.supplyState.index := supplyStart_eq _ _\n  -- analyze the match\n  by_cases hle : (if (s1.accts.getD who noAcct).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.accts.getD who noAcct).supplierIndex) \u2264 s1.supplyState.index\n  \u00b7 simp only [hle, \u2193reduceIte] at h\n    have hle2 : accrualStart (s1.accts.getD who noAcct).supplierIndex s1.supplyState.index \u2264 s1.supplyState.index := by\n      rw [\u2190 hsup]; exact hle\n    refine \u27e8hle2, ?_\u27e9\n    have hs' : s' = s1.withAcct who fun a => { a with supplierIndex := s1.supplyState.index, accrued := a.accrued + mulDouble (s1.accts.getD who noAcct).supply (s1.supplyState.index - (if (s1.accts.getD who noAcct).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.accts.getD who noAcct).supplierIndex)) } := by\n      cases h\n      rfl\n    rw [hs']\n    unfold St.withAcct creditFor mulDouble\n    congr 1\n    apply modify_congr_acct\n    have hdelta : (s1.supplyState.index - (if (s1.accts.getD who noAcct).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.accts.getD who noAcct).supplierIndex)) = (s1.supplyState.index - accrualStart (s1.accts.getD who noAcct).supplierIndex s1.supplyState.index) := by rw [hsup]\n    have harg : (fun a : Acct => { a with supplierIndex := s1.supplyState.index, accrued := a.accrued + (s1.accts.getD who noAcct).supply * (s1.supplyState.index - (if (s1.accts.getD who noAcct).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.accts.getD who noAcct).supplierIndex)) / doubleScale }) (s1.accts.getD who noAcct) = (fun a : Acct => { a with supplierIndex := s1.supplyState.index, accrued := a.accrued + a.supply * (s1.supplyState.index - accrualStart a.supplierIndex s1.supplyState.index) / doubleScale }) (s1.accts.getD who noAcct) := by\n      simp only [hdelta]\n    exact harg\n  \u00b7 simp only [hle, \u2193reduceIte] at h\n    cases h\n\ntheorem distributeBorrow_of_some (s1 : St) (who : Account) (s' : St)\n    (h : distributeBorrowerComp s1 who = some s') :\n    accrualStart (s1.acct who).borrowerIndex s1.borrowState.index \u2264 s1.borrowState.index \u2227\n    s' = { s1 with accts := s1.accts.modify who fun a => { a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + creditFor a.borrow (accrualStart a.borrowerIndex s1.borrowState.index) s1.borrowState.index } } := by\n  unfold distributeBorrowerComp subChecked St.acct at h\n  simp only at h\n  have hsup : (if (s1.accts.getD who noAcct).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.accts.getD who noAcct).borrowerIndex) = accrualStart (s1.accts.getD who noAcct).borrowerIndex s1.borrowState.index := borrowStart_eq _ _\n  by_cases hle : (if (s1.accts.getD who noAcct).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.accts.getD who noAcct).borrowerIndex) \u2264 s1.borrowState.index\n  \u00b7 simp only [hle, \u2193reduceIte] at h\n    have hle2 : accrualStart (s1.accts.getD who noAcct).borrowerIndex s1.borrowState.index \u2264 s1.borrowState.index := by\n      rw [\u2190 hsup]; exact hle\n    refine \u27e8hle2, ?_\u27e9\n    have hs' : s' = s1.withAcct who fun a => { a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + mulDouble (s1.accts.getD who noAcct).borrow (s1.borrowState.index - (if (s1.accts.getD who noAcct).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.accts.getD who noAcct).borrowerIndex)) } := by\n      cases h\n      rfl\n    rw [hs']\n    unfold St.withAcct creditFor mulDouble\n    congr 1\n    apply modify_congr_acct\n    have hdelta : (s1.borrowState.index - (if (s1.accts.getD who noAcct).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.accts.getD who noAcct).borrowerIndex)) = (s1.borrowState.index - accrualStart (s1.accts.getD who noAcct).borrowerIndex s1.borrowState.index) := by rw [hsup]\n    have harg : (fun a : Acct => { a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + (s1.accts.getD who noAcct).borrow * (s1.borrowState.index - (if (s1.accts.getD who noAcct).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.accts.getD who noAcct).borrowerIndex)) / doubleScale }) (s1.accts.getD who noAcct) = (fun a : Acct => { a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + a.borrow * (s1.borrowState.index - accrualStart a.borrowerIndex s1.borrowState.index) / doubleScale }) (s1.accts.getD who noAcct) := by\n      simp only [hdelta]\n    exact harg\n  \u00b7 simp only [hle, \u2193reduceIte] at h\n    cases h\n\ntheorem grant_eq (s : St) (who : Account) : grantCompInternal s who = grant s who := by\n  unfold grantCompInternal grant St.acct\n  by_cases h : 0 < (s.accts.getD who noAcct).accrued \u2227 (s.accts.getD who noAcct).accrued \u2264 s.reserve\n  \u00b7 simp only [h, \u2193reduceIte]\n    have harg : (fun a : Acct => ({ a with accrued := 0, wallet := a.wallet + (s.accts.getD who noAcct).accrued } : Acct)) (s.accts.getD who noAcct) = (fun a : Acct => ({ a with accrued := 0, wallet := a.wallet + a.accrued } : Acct)) (s.accts.getD who noAcct) := by rfl\n    have hmod : s.accts.modify who (fun a : Acct => ({ a with accrued := 0, wallet := a.wallet + (s.accts.getD who noAcct).accrued } : Acct)) = s.accts.modify who (fun a : Acct => ({ a with accrued := 0, wallet := a.wallet + a.accrued } : Acct)) :=\n      modify_congr_acct _ _ _ _ harg\n    simp only [hmod]\n  \u00b7 simp only [h, \u2193reduceIte]\n\ntheorem accrueSupply_ge (sd : Side) (now total : Nat) : sd.index \u2264 (accrueSide sd now total).index := by\n  unfold accrueSide\n  split\n  \u00b7 exact Nat.le_add_right _ _\n  \u00b7 exact Nat.le_refl _\n\ntheorem accrueBorrow_ge (sd : Side) (now total : Nat) : sd.index \u2264 (accrueSide sd now total).index :=\n  accrueSupply_ge sd now total\n\ntheorem recorded_supply_le (s : St) (who : Account) (hc : Consistent s) :\n    (s.acct who).supplierIndex \u2264 s.supplyState.index := by\n  unfold Consistent at hc\n  obtain \u27e8_, _, hmem\u27e9 := hc\n  unfold St.acct\n  have hor := ProofForgeFin.Ledger.getD_mem_or s.accts who noAcct\n  rcases hor with hm | heq\n  \u00b7 exact (hmem _ hm).1\n  \u00b7 rw [heq]\n    exact Nat.zero_le _\n\ntheorem recorded_borrow_le (s : St) (who : Account) (hc : Consistent s) :\n    (s.acct who).borrowerIndex \u2264 s.borrowState.index := by\n  unfold Consistent at hc\n  obtain \u27e8_, _, hmem\u27e9 := hc\n  unfold St.acct\n  have hor := ProofForgeFin.Ledger.getD_mem_or s.accts who noAcct\n  rcases hor with hm | heq\n  \u00b7 exact (hmem _ hm).2\n  \u00b7 rw [heq]\n    exact Nat.zero_le _\n\ntheorem accrualStart_le_of_le (rec idx : Nat) (h : rec \u2264 idx) :\n    accrualStart rec idx \u2264 idx := by\n  unfold accrualStart\n  by_cases h0 : rec = 0\n  \u00b7 simp only [h0, \u2193reduceIte]\n    by_cases hi : compInitialIndex \u2264 idx\n    \u00b7 simp [hi]\n    \u00b7 simp [hi]\n  \u00b7 simp only [h0, \u2193reduceIte]\n    exact h\n\ntheorem distributeSupply_isSome (s1 : St) (who : Account)\n    (hle : accrualStart (s1.acct who).supplierIndex s1.supplyState.index \u2264 s1.supplyState.index) :\n    (distributeSupplierComp s1 who).isSome = true := by\n  have hsup : (if (s1.acct who).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.acct who).supplierIndex) = accrualStart (s1.acct who).supplierIndex s1.supplyState.index := supplyStart_eq _ _\n  have hcond : (if (s1.acct who).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.acct who).supplierIndex) \u2264 s1.supplyState.index := by\n    rw [hsup]; exact hle\n  unfold distributeSupplierComp subChecked\n  simp [hcond]\n\ntheorem distributeBorrow_isSome (s1 : St) (who : Account)\n    (hle : accrualStart (s1.acct who).borrowerIndex s1.borrowState.index \u2264 s1.borrowState.index) :\n    (distributeBorrowerComp s1 who).isSome = true := by\n  have hsup : (if (s1.acct who).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.acct who).borrowerIndex) = accrualStart (s1.acct who).borrowerIndex s1.borrowState.index := borrowStart_eq _ _\n  have hcond : (if (s1.acct who).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.acct who).borrowerIndex) \u2264 s1.borrowState.index := by\n    rw [hsup]; exact hle\n  unfold distributeBorrowerComp subChecked\n  simp [hcond]\n\ntheorem setSupply_isSome (s : St) (a : Nat) (hle : s.supplyState.block \u2264 s.blockNumber) :\n    (setSupplySpeed s a).isSome = true := by\n  unfold setSupplySpeed\n  by_cases heq : s.supplyState.speed = a\n  \u00b7 simp [heq]\n  \u00b7 simp [heq, updateSupply_some s hle]\n\ntheorem setBorrow_isSome (t : St) (b : Nat) (hle : t.borrowState.block \u2264 t.blockNumber) :\n    (setBorrowSpeed t b).isSome = true := by\n  unfold setBorrowSpeed\n  by_cases heq : t.borrowState.speed = b\n  \u00b7 simp [heq]\n  \u00b7 simp [heq, updateBorrow_some t hle]\n\ntheorem req_supply_hook : SupplyHookEffects comptroller := by\n  intro s who s' h\n  unfold comptroller at h\n  cases hu : updateCompSupplyIndex s with\n  | none =>\n    simp only [hu] at h\n    simp at h\n  | some s1 =>\n    simp only [hu] at h\n    simp at h\n    obtain \u27e8hle, heq1\u27e9 := updateSupply_of_some s s1 hu\n    obtain \u27e8hle2, heq2\u27e9 := distributeSupply_of_some s1 who s' h\n    unfold SupplyDistributed\n    refine \u27e8hle, ?_, ?_\u27e9\n    \u00b7 rw [heq1] at hle2\n      simpa [St.acct] using hle2\n    \u00b7 rw [heq1] at heq2\n      exact heq2\n\ntheorem req_borrow_hook : BorrowHookEffects comptroller := by\n  intro s who s' h\n  unfold comptroller at h\n  cases hu : updateCompBorrowIndex s with\n  | none =>\n    simp only [hu] at h\n    simp at h\n  | some s1 =>\n    simp only [hu] at h\n    simp at h\n    obtain \u27e8hle, heq1\u27e9 := updateBorrow_of_some s s1 hu\n    obtain \u27e8hle2, heq2\u27e9 := distributeBorrow_of_some s1 who s' h\n    unfold BorrowDistributed\n    refine \u27e8hle, ?_, ?_\u27e9\n    \u00b7 rw [heq1] at hle2\n      simpa [St.acct] using hle2\n    \u00b7 rw [heq1] at heq2\n      exact heq2\n\ntheorem req_claim : ClaimEffects comptroller := by\n  intro s who s' h\n  unfold comptroller claimComp at h\n  simp only at h\n  cases hu1 : updateCompBorrowIndex s with\n  | none =>\n    simp only [hu1] at h\n    simp at h\n  | some s1 =>\n    simp only [hu1] at h\n    simp at h\n    cases hd1 : distributeBorrowerComp s1 who with\n    | none =>\n      simp only [hd1] at h\n      simp at h\n    | some m1 =>\n      simp only [hd1] at h\n      simp at h\n      cases hu2 : updateCompSupplyIndex m1 with\n      | none =>\n        simp only [hu2] at h\n        simp at h\n      | some s2 =>\n        simp only [hu2] at h\n        simp at h\n        cases hd2 : distributeSupplierComp s2 who with\n        | none =>\n          simp only [hd2] at h\n          simp at h\n        | some m2 =>\n          simp only [hd2] at h\n          simp at h\n          obtain \u27e8hble, heq_b1\u27e9 := updateBorrow_of_some s s1 hu1\n          obtain \u27e8hble2, heq_b2\u27e9 := distributeBorrow_of_some s1 who m1 hd1\n          obtain \u27e8hsle, heq_s1\u27e9 := updateSupply_of_some m1 s2 hu2\n          obtain \u27e8hsle2, heq_s2\u27e9 := distributeSupply_of_some s2 who m2 hd2\n          have hgrant : grantCompInternal m2 who = grant m2 who := grant_eq m2 who\n          rw [hgrant] at h\n          cases h\n          -- Build Claimed witnesses\n          refine \u27e8m1, m2, ?_, ?_, rfl\u27e9\n          \u00b7 unfold BorrowDistributed\n            refine \u27e8hble, ?_, ?_\u27e9\n            \u00b7 rw [heq_b1] at hble2\n              simpa [St.acct] using hble2\n            \u00b7 rw [heq_b1] at heq_b2\n              exact heq_b2\n          \u00b7 unfold SupplyDistributed\n            -- need totals: totalSupply m1 = totalSupply s? supply balances unchanged by borrow steps\n            -- m1 accts = s1 accts modified on borrowerIndex/accrued only, so supply sum same\n            -- s1 accts = s accts, so totalSupply m1 = totalSupply s; similarly s2 supplyState = accrue of m1\n            -- We show m2 equation matches with m1 as base: heq_s2 already states m2 = {s2 with ...}\n            -- and s2 = {m1 with supplyState := accrue ... (totalSupply m1)}\n            -- Need to rewrite totalSupply m1 = totalSupply s? Actually BorrowDistributed uses totalBorrows s,\n            -- SupplyDistributed uses totalSupply m1. Our heq_b1 uses totalBorrows s, heq_s1 uses totalSupply m1.\n            -- So they already match the required statements with the right totals.\n            -- heq_s1 : s2 = {m1 with supplyState := accrueSide m1.supplyState m1.blockNumber (totalSupply m1)}\n            -- heq_s2 : m2 = {s2 with accts := ... (accrueSide s2... )}\n            -- But SupplyDistributed m1 who m2 requires accrue over totalSupply m1 and s2's block = m1.blockNumber.\n            -- Since s2.blockNumber = m1.blockNumber (update preserves blockNumber), this holds.\n            -- heq_s1 already gives s2's supplyState = accrueSide ..., and blockNumber preserved.\n            -- So we can use heq_s1/heq_s2 directly after showing blockNumber equalities.\n            refine \u27e8hsle, ?_, ?_\u27e9\n            \u00b7 have h2 := hsle2\n              rw [heq_s1] at h2\n              simpa [St.acct] using h2\n            \u00b7 rw [heq_s1] at heq_s2\n              simpa using heq_s2\n\ntheorem setSupply_of_some (s t : St) (a : Nat) (h : setSupplySpeed s a = some t) :\n    (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n    t = (if s.supplyState.speed = a then s else { s with supplyState := { accrueSide s.supplyState s.blockNumber (totalSupply s) with speed := a } }) := by\n  unfold setSupplySpeed at h\n  by_cases heq : s.supplyState.speed = a\n  \u00b7 simp [heq] at h\n    cases h\n    refine \u27e8fun hn => absurd heq hn, ?_\u27e9\n    simp [heq]\n  \u00b7 simp [heq] at h\n    cases hu : updateCompSupplyIndex s with\n    | none =>\n      simp only [hu] at h\n      simp at h\n    | some s1 =>\n      simp only [hu] at h\n      simp at h\n      obtain \u27e8hle, heq1\u27e9 := updateSupply_of_some s s1 hu\n      cases h\n      refine \u27e8fun _ => hle, ?_\u27e9\n      simp [heq, heq1]\n\ntheorem setBorrow_of_some (t s2 : St) (b : Nat) (h : setBorrowSpeed t b = some s2) :\n    (t.borrowState.speed \u2260 b \u2192 t.borrowState.block \u2264 t.blockNumber) \u2227\n    s2 = (if t.borrowState.speed = b then t else { t with borrowState := { accrueSide t.borrowState t.blockNumber (totalBorrows t) with speed := b } }) := by\n  unfold setBorrowSpeed at h\n  by_cases heq : t.borrowState.speed = b\n  \u00b7 simp [heq] at h\n    cases h\n    refine \u27e8fun hn => absurd heq hn, ?_\u27e9\n    simp [heq]\n  \u00b7 simp [heq] at h\n    cases hu : updateCompBorrowIndex t with\n    | none =>\n      simp only [hu] at h\n      simp at h\n    | some s1 =>\n      simp only [hu] at h\n      simp at h\n      obtain \u27e8hle, heq1\u27e9 := updateBorrow_of_some t s1 hu\n      cases h\n      refine \u27e8fun _ => hle, ?_\u27e9\n      simp [heq, heq1]\n\ntheorem req_set_speeds : SetSpeedsEffects comptroller := by\n  intro s a b s' h\n  unfold comptroller setCompSpeedInternal at h\n  simp only at h\n  cases hs : setSupplySpeed s a with\n  | none =>\n    simp only [hs] at h\n    simp at h\n  | some t =>\n    simp only [hs] at h\n    simp at h\n    cases hb : setBorrowSpeed t b with\n    | none =>\n      simp only [hb] at h\n      simp at h\n    | some s2 =>\n      simp only [hb] at h\n      simp at h\n      obtain \u27e8hs_le, hs_eq\u27e9 := setSupply_of_some s t a hs\n      obtain \u27e8hb_le, hb_eq\u27e9 := setBorrow_of_some t s2 b hb\n      cases h\n      unfold SpeedsSet\n      refine \u27e8?_, ?_, ?_\u27e9\n      \u00b7 intro hne\n        exact hs_le hne\n      \u00b7 intro hne_s\n        have ht_bn : t.blockNumber = s.blockNumber := by\n          rw [hs_eq]\n          split\n          \u00b7 rfl\n          \u00b7 rfl\n        have ht_bor : t.borrowState = s.borrowState := by\n          rw [hs_eq]\n          split\n          \u00b7 rfl\n          \u00b7 rfl\n        have hspeed : t.borrowState.speed = s.borrowState.speed := by rw [ht_bor]\n        have hne_t : t.borrowState.speed \u2260 b := by simpa [hspeed] using hne_s\n        have hle := hb_le hne_t\n        simpa [ht_bn, ht_bor] using hle\n      \u00b7 by_cases heq_sup : s.supplyState.speed = a\n        \u00b7 simp [heq_sup] at hs_eq\n          have ht : t = s := hs_eq\n          rw [ht] at hb_eq\n          by_cases heq_bor : s.borrowState.speed = b\n          \u00b7 simp [heq_sup, heq_bor] at hb_eq \u22a2\n            exact hb_eq\n          \u00b7 simp [heq_sup, heq_bor] at hb_eq \u22a2\n            exact hb_eq\n        \u00b7 simp [heq_sup] at hs_eq\n          have ht_bn : t.blockNumber = s.blockNumber := by rw [hs_eq]\n          have ht_bor : t.borrowState = s.borrowState := by rw [hs_eq]\n          have ht_accts : t.accts = s.accts := by rw [hs_eq]\n          have htot_bor : totalBorrows t = totalBorrows s := by simp [totalBorrows, ht_accts]\n          have hspeed_eq : s.borrowState.speed = t.borrowState.speed := by rw [ht_bor]\n          have hacc : accrueSide t.borrowState t.blockNumber (totalBorrows t) = accrueSide s.borrowState s.blockNumber (totalBorrows s) := by\n            rw [ht_bor, ht_bn, htot_bor]\n          by_cases heq_bor : t.borrowState.speed = b\n          \u00b7 simp [heq_bor] at hb_eq\n            have heq_bor_s : s.borrowState.speed = b := hspeed_eq.trans heq_bor\n            simp [heq_sup, heq_bor_s] at \u22a2\n            simp [hb_eq, hs_eq]\n          \u00b7 simp [heq_bor] at hb_eq\n            have heq_bor_s : s.borrowState.speed \u2260 b := by simpa [hspeed_eq] using heq_bor\n            simp [heq_sup, heq_bor_s] at \u22a2\n            simp [hb_eq, hs_eq, hacc, totalBorrows, totalSupply]\n\ntheorem req_calls_succeed : CallsSucceed comptroller := by\n  intro s c hc\n  unfold Consistent at hc\n  obtain \u27e8hsup, hbor, hmem\u27e9 := hc\n  have hsup_le : \u2200 who : Account, (s.acct who).supplierIndex \u2264 s.supplyState.index := fun who => recorded_supply_le s who \u27e8hsup, hbor, hmem\u27e9\n  have hbor_le : \u2200 who : Account, (s.acct who).borrowerIndex \u2264 s.borrowState.index := fun who => recorded_borrow_le s who \u27e8hsup, hbor, hmem\u27e9\n  unfold comptroller\n  cases c with\n  | supplyHook who =>\n    simp only [updateSupply_some s hsup]\n    simp\n    have hnew : (accrueSide s.supplyState s.blockNumber (totalSupply s)).index \u2265 s.supplyState.index :=\n      accrueSupply_ge s.supplyState s.blockNumber (totalSupply s)\n    have hrec : (s.acct who).supplierIndex \u2264 (accrueSide s.supplyState s.blockNumber (totalSupply s)).index :=\n      Nat.le_trans (hsup_le who) hnew\n    have hstart' := accrualStart_le_of_le _ _ hrec\n    have hsome := distributeSupply_isSome ({ s with supplyState := accrueSide s.supplyState s.blockNumber (totalSupply s) } : St) who (by simpa [St.acct] using hstart')\n    exact hsome\n  | borrowHook who =>\n    simp only [updateBorrow_some s hbor]\n    simp\n    have hnew := accrueBorrow_ge s.borrowState s.blockNumber (totalBorrows s)\n    have hrec : (s.acct who).borrowerIndex \u2264 (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index :=\n      Nat.le_trans (hbor_le who) hnew\n    have hstart' := accrualStart_le_of_le _ _ hrec\n    have hsome := distributeBorrow_isSome ({ s with borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s) } : St) who (by simpa [St.acct] using hstart')\n    exact hsome\n  | claim who =>\n    -- Use intermediate states via isSome existence\n    let s1 : St := { s with borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s) }\n    have hs1 : updateCompBorrowIndex s = some s1 := updateBorrow_some s hbor\n    have hnew_b := accrueBorrow_ge s.borrowState s.blockNumber (totalBorrows s)\n    have hrec_b : (s.acct who).borrowerIndex \u2264 (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index :=\n      Nat.le_trans (hbor_le who) hnew_b\n    have hstart_b' := accrualStart_le_of_le _ _ hrec_b\n    have hle_b : accrualStart (s1.acct who).borrowerIndex s1.borrowState.index \u2264 s1.borrowState.index := by\n      simpa [s1, St.acct] using hstart_b'\n    have hdist_b := distributeBorrow_isSome s1 who hle_b\n    obtain \u27e8m1, hm1\u27e9 := Option.isSome_iff_exists.mp hdist_b\n    obtain \u27e8_, heq_m1\u27e9 := distributeBorrow_of_some s1 who m1 hm1\n    -- m1 preserves supply side and supplierIndex\n    have hm1_sup : m1.supplyState = s.supplyState := by simp [heq_m1, s1]\n    have hm1_bn : m1.blockNumber = s.blockNumber := by simp [heq_m1, s1]\n    have hm1_suppIdx : (m1.acct who).supplierIndex = (s.acct who).supplierIndex := by\n      have hmod : (((s1.accts.modify who fun a => ({ a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + creditFor a.borrow (accrualStart a.borrowerIndex s1.borrowState.index) s1.borrowState.index } : Acct)).getD who noAcct).supplierIndex = (s1.accts.getD who noAcct).supplierIndex) := by\n        rw [ProofForgeFin.Ledger.getD_modify]\n        split\n        \u00b7 rfl\n        \u00b7 rfl\n      have h1 : (m1.acct who).supplierIndex = (((s1.accts.modify who fun a => ({ a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + creditFor a.borrow (accrualStart a.borrowerIndex s1.borrowState.index) s1.borrowState.index } : Acct)).getD who noAcct).supplierIndex) := by\n        rw [heq_m1]\n        simp [St.withAcct, St.acct]\n      have h2 : (s1.acct who).supplierIndex = (s1.accts.getD who noAcct).supplierIndex := by\n        simp [St.acct]\n      have h3 : (s1.acct who).supplierIndex = (s.acct who).supplierIndex := by\n        simp [s1, St.acct]\n      rw [h1, hmod, \u2190h2, h3]\n    have hsup_m1 : m1.supplyState.block \u2264 m1.blockNumber := by rw [hm1_sup, hm1_bn]; exact hsup\n    let s2 : St := { m1 with supplyState := accrueSide m1.supplyState m1.blockNumber (totalSupply m1) }\n    have hs2 : updateCompSupplyIndex m1 = some s2 :=\n      updateSupply_some m1 hsup_m1\n    have hnew_s : (accrueSide m1.supplyState m1.blockNumber (totalSupply m1)).index \u2265 m1.supplyState.index :=\n      accrueSupply_ge _ _ _\n    have hrec_s : (m1.acct who).supplierIndex \u2264 (accrueSide m1.supplyState m1.blockNumber (totalSupply m1)).index := by\n      have h0 : (m1.acct who).supplierIndex \u2264 m1.supplyState.index := by\n        rw [hm1_suppIdx]\n        rw [hm1_sup]\n        exact hsup_le who\n      exact Nat.le_trans h0 hnew_s\n    have hstart_s' := accrualStart_le_of_le _ _ hrec_s\n    have hle_s : accrualStart (s2.acct who).supplierIndex s2.supplyState.index \u2264 s2.supplyState.index := by\n      simpa [s2, St.acct] using hstart_s'\n    have hdist_s := distributeSupply_isSome s2 who hle_s\n    obtain \u27e8m2, hm2\u27e9 := Option.isSome_iff_exists.mp hdist_s\n    simp [claimComp, hs1, hm1, hs2, hm2]\n  | setSpeeds a b =>\n    unfold setCompSpeedInternal\n    have hs_some := setSupply_isSome s a hsup\n    obtain \u27e8t, ht\u27e9 := Option.isSome_iff_exists.mp hs_some\n    have ht_bn : t.blockNumber = s.blockNumber := by\n      obtain \u27e8_, heq\u27e9 := setSupply_of_some s t a ht\n      rw [heq]\n      split\n      \u00b7 rfl\n      \u00b7 rfl\n    have ht_bor : t.borrowState = s.borrowState := by\n      obtain \u27e8_, heq\u27e9 := setSupply_of_some s t a ht\n      rw [heq]\n      split\n      \u00b7 rfl\n      \u00b7 rfl\n    have hbor_t : t.borrowState.block \u2264 t.blockNumber := by rw [ht_bor, ht_bn]; exact hbor\n    have hb_some := setBorrow_isSome t b hbor_t\n    obtain \u27e8s2, hs2\u27e9 := Option.isSome_iff_exists.mp hb_some\n    simp [ht, hs2]\n-- Potentials for boundedness\ndef pendSup (gS : Nat) (s : St) (a : Acct) : Nat :=\n  a.supply * (s.supplyState.index - effStart gS a.supplierIndex)\ndef pendBor (gB : Nat) (s : St) (a : Acct) : Nat :=\n  a.borrow * (s.borrowState.index - effStart gB a.borrowerIndex)\ndef unindexedSup (s : St) : Nat := (s.blockNumber - s.supplyState.block) * s.supplyState.speed\ndef unindexedBor (s : St) : Nat := (s.blockNumber - s.borrowState.block) * s.borrowState.speed\ndef Pot (gS gB : Nat) (s : St) : Nat :=\n  (s.credited * doubleScale + ((s.accts.map (pendSup gS s)).sum + (s.accts.map (pendBor gB s)).sum) + doubleScale * (unindexedSup s + unindexedBor s))\ndef PotTo (gS gB : Nat) (s : St) (who : Account) : Nat :=\n  ((s.creditedTo who) * doubleScale + (pendSup gS s (s.acct who) + pendBor gB s (s.acct who)) + doubleScale * ((if 0 < (s.acct who).supply then unindexedSup s else 0) + (if 0 < (s.acct who).borrow then unindexedBor s else 0)))\n\ntheorem legacyStart_eq_effStart (g rec : Nat) : legacyStart g rec = effStart g rec := by\n  unfold legacyStart effStart\n  rfl\n\ntheorem accrualStart_eq_firstStart (rec idx : Nat) :\n    accrualStart rec idx = firstStart compInitialIndex rec idx := by\n  unfold accrualStart firstStart\n  rfl\n\ntheorem creditFor_eq_credit (u st idx : Nat) :\n    creditFor u st idx = credit doubleScale u st idx := by\n  unfold creditFor credit\n  rfl\n\n-- Invariant for runs from upgrade\ndef Inv (gS gB : Nat) (sp : Nat \u00d7 Nat) (s : St) : Prop :=\n  Consistent s \u2227 gS \u2264 s.supplyState.index \u2227 gB \u2264 s.borrowState.index \u2227\n  s.supplyState.speed = sp.1 \u2227 s.borrowState.speed = sp.2 \u2227\n  (gS = 0 \u2228 gS = compInitialIndex) \u2227 (gB = 0 \u2228 gB = compInitialIndex)\n\ntheorem accrueSide_index_eq_catchUp (sd : Side) (now total : Nat) :\n    (accrueSide sd now total).index = catchUp doubleScale sd.index sd.block sd.speed now total := by\n  by_cases h : 0 < now - sd.block \u2227 0 < sd.speed \u2227 0 < total\n  \u00b7 simp [h, accrueSide, catchUp]\n  \u00b7 simp [h, accrueSide, catchUp]\n\ntheorem unindexedSup_eq (s : St) : unindexedSup s = unindexed s.supplyState.block s.supplyState.speed s.blockNumber := by\n  unfold unindexedSup unindexed\n  rfl\n\ntheorem unindexedBor_eq (s : St) : unindexedBor s = unindexed s.borrowState.block s.borrowState.speed s.blockNumber := by\n  unfold unindexedBor unindexed\n  rfl\n\ntheorem pot_supplyHook_le (gS gB : Nat) (s s' : St) (who : Account)\n    (hgS_or : gS = 0 \u2228 gS = compInitialIndex) (hgB_or : gB = 0 \u2228 gB = compInitialIndex)\n    (hgS_le : gS \u2264 s.supplyState.index) (hgB_le : gB \u2264 s.borrowState.index)\n    (hDist : SupplyDistributed s who s') : Pot gS gB s' \u2264 Pot gS gB s := by\n  unfold SupplyDistributed at hDist\n  obtain \u27e8hblk, hstart_le, heq\u27e9 := hDist\n  -- Explicit new index and settle function\n  let newSupIdx : Nat := (accrueSide s.supplyState s.blockNumber (totalSupply s)).index\n  have h_old_le_new : s.supplyState.index \u2264 newSupIdx := accrueSupply_ge _ _ _\n  have hgS_le_new : gS \u2264 newSupIdx := Nat.le_trans hgS_le h_old_le_new\n  -- Use library: define term t, units, etc.\n  -- t idx a = (accrued+wallet)*one + supplyPending(idx) + borrowPending (fixed borrow idx)\n  let t : Nat \u2192 Acct \u2192 Nat := fun idx a =>\n    (a.accrued + a.wallet) * doubleScale + (a.supply * (idx - effStart gS a.supplierIndex) + a.borrow * (s.borrowState.index - effStart gB a.borrowerIndex))\n  let f : Acct \u2192 Acct := fun a =>\n    { a with supplierIndex := newSupIdx, accrued := a.accrued + creditFor a.supply (accrualStart a.supplierIndex newSupIdx) newSupIdx }\n  have heq_accts : s'.accts = s.accts.modify who f := by\n    rw [heq]\n  have heq_supIdx : s'.supplyState.index = newSupIdx := by rw [heq]\n  have heq_borIdx : s'.borrowState.index = s.borrowState.index := by rw [heq]\n  have heq_bn : s'.blockNumber = s.blockNumber := by rw [heq]\n  have heq_borBlk : s'.borrowState.block = s.borrowState.block := by rw [heq]\n  have heq_supBlk : s'.supplyState.block = s.blockNumber := by\n    rw [heq]\n    unfold accrueSide\n    split\n    \u00b7 rfl\n    \u00b7 rfl\n  -- Pot equality rewrites\n  have hPot_s : Pot gS gB s = ((s.accts.map (t s.supplyState.index)).sum + doubleScale * (unindexedSup s + unindexedBor s)) := by\n    sorry\n  have hPot_s' : Pot gS gB s' = (((s.accts.modify who f).map (t newSupIdx)).sum + doubleScale * (0 + unindexedBor s)) := by\n    sorry\n  have ht : \u2200 a \u2208 s.accts, t newSupIdx a \u2264 t s.supplyState.index a + a.supply * (newSupIdx - s.supplyState.index) := by\n    sorry\n  have hU : (s.accts.map Acct.supply).sum * (newSupIdx - s.supplyState.index) + doubleScale * (0 + unindexedBor s) \u2264 doubleScale * (unindexedSup s + unindexedBor s) := by\n    sorry\n  have hf : who < s.accts.length \u2192 t newSupIdx (f (s.accts.getD who noAcct)) \u2264 t newSupIdx (s.accts.getD who noAcct) := by\n    sorry\n  have hpot := pot_accrue_settle_le s.accts who f noAcct t Acct.supply ht hU hf\n  sorry\n\ntheorem pot_borrowHook_le (gS gB : Nat) (s s' : St) (who : Account)\n    (hgS_or : gS = 0 \u2228 gS = compInitialIndex) (hgB_or : gB = 0 \u2228 gB = compInitialIndex)\n    (hgS_le : gS \u2264 s.supplyState.index) (hgB_le : gB \u2264 s.borrowState.index)\n    (hDist : BorrowDistributed s who s') : Pot gS gB s' \u2264 Pot gS gB s := by\n  sorry\n\ntheorem pot_advance (s : St) (k : Nat) (gS gB : Nat)\n    (hsup : s.supplyState.block \u2264 s.blockNumber) (hbor : s.borrowState.block \u2264 s.blockNumber) :\n    Pot gS gB ({ s with blockNumber := s.blockNumber + k } : St) = Pot gS gB s + doubleScale * (k * (s.supplyState.speed + s.borrowState.speed)) := by\n  unfold Pot St.credited pendSup pendBor unindexedSup unindexedBor\n  simp only\n  have hsup_eq : (s.blockNumber + k - s.supplyState.block) * s.supplyState.speed = (s.blockNumber - s.supplyState.block) * s.supplyState.speed + k * s.supplyState.speed := by\n    rw [Nat.sub_add_comm hsup, Nat.add_mul]\n  have hbor_eq : (s.blockNumber + k - s.borrowState.block) * s.borrowState.speed = (s.blockNumber - s.borrowState.block) * s.borrowState.speed + k * s.borrowState.speed := by\n    rw [Nat.sub_add_comm hbor, Nat.add_mul]\n  simp only [hsup_eq, hbor_eq]\n  grind\n\ntheorem pot_drip (s : St) (x : Nat) (gS gB : Nat) : Pot gS gB ({ s with reserve := s.reserve + x } : St) = Pot gS gB s := by\n  rfl\n\ntheorem pot_exec_le (gS gB : Nat) (sp : Nat \u00d7 Nat) (s : St) (op : Op) (hInv : Inv gS gB sp s) :\n    Pot gS gB (exec comptroller s op) \u2264 Pot gS gB s + doubleScale * emittedBy sp op \u2227 Inv gS gB (nextSpeeds sp op) (exec comptroller s op) := by\n  obtain \u27e8hc, hgS_le, hgB_le, hsp1, hsp2, hgS_or, hgB_or\u27e9 := hInv\n  unfold Consistent at hc\n  obtain \u27e8hsup_blk, hbor_blk, hmem\u27e9 := hc\n  cases op with\n  | advance k =>\n    simp only [exec, emittedBy, nextSpeeds]\n    have hPot := pot_advance s k gS gB hsup_blk hbor_blk\n    rw [hPot, hsp1, hsp2]\n    refine \u27e8Nat.le_refl _, ?_\u27e9\n    -- Inv preserved: blockNumber grows, others same\n    unfold Inv Consistent\n    simp only\n    refine \u27e8\u27e8?_, ?_, ?_\u27e9, hgS_le, hgB_le, hsp1, hsp2, hgS_or, hgB_or\u27e9\n    \u00b7 omega\n    \u00b7 omega\n    \u00b7 intro a ha\n      have hm := hmem a ha\n      exact hm\n  | drip x =>\n    simp only [exec, emittedBy, nextSpeeds]\n    have hPot := pot_drip s x gS gB\n    rw [hPot]\n    simp only [Nat.mul_zero, Nat.add_zero]\n    exact \u27e8Nat.le_refl _, \u27e8\u27e8hsup_blk, hbor_blk, hmem\u27e9, hgS_le, hgB_le, hsp1, hsp2, hgS_or, hgB_or\u27e9\u27e9\n  | setSpeeds a b =>\n    -- In Inv states, comptroller succeeds via req_calls_succeed\n    have hc_inv : Consistent s := \u27e8hsup_blk, hbor_blk, hmem\u27e9\n    have hsome : (comptroller s (.setSpeeds a b)).isSome = true := req_calls_succeed s _ \u27e8hsup_blk, hbor_blk, hmem\u27e9\n    obtain \u27e8s', hs'\u27e9 := Option.isSome_iff_exists.mp hsome\n    have hsSet := req_set_speeds s a b s' hs'\n    -- exec returns s' (since getD with some)\n    have hexec : exec comptroller s (.setSpeeds a b) = s' := by\n      simp [exec, hs']\n    rw [hexec]\n    simp only [emittedBy, nextSpeeds, Nat.mul_zero, Nat.add_zero]\n    -- Need Pot s' \u2264 Pot s and Inv for (a,b)\n    sorry\n  | claim who =>\n    sorry\n  | mint who x =>\n    sorry\n  | redeem who x =>\n    sorry\n  | transfer src dst x =>\n    sorry\n  | borrow who x =>\n    sorry\n  | repay who x =>\n    sorry\n\ntheorem upgrade_Consistent (L : Legacy) (h : L.WellFormed) : Consistent (upgrade L) := by\n  unfold Legacy.WellFormed at h\n  obtain \u27e8hs_or, hs_le, hb_or, hb_le, hsup_blk, hbor_blk, hmem\u27e9 := h\n  unfold Consistent upgrade initSide\n  simp only\n  refine \u27e8?_, ?_, ?_\u27e9\n  \u00b7 by_cases hs0 : L.supplyIndex = 0\n    \u00b7 simp [hs0]\n    \u00b7 simp [hs0]\n      exact hsup_blk\n  \u00b7 by_cases hb0 : L.borrowIndex = 0\n    \u00b7 simp [hb0]\n    \u00b7 simp [hb0]\n      exact hbor_blk\n  \u00b7 intro a ha\n    have hm := hmem a ha\n    obtain \u27e8hs_rec, hb_rec\u27e9 := hm\n    refine \u27e8?_, ?_\u27e9\n    \u00b7 by_cases hs0 : L.supplyIndex = 0\n      \u00b7 simp [hs0] at hs_rec \u22a2\n        have : a.supplierIndex = 0 := by omega\n        simp [this]\n      \u00b7 simp [hs0]\n        exact hs_rec\n    \u00b7 by_cases hb0 : L.borrowIndex = 0\n      \u00b7 simp [hb0] at hb_rec \u22a2\n        have : a.borrowerIndex = 0 := by omega\n        simp [this]\n      \u00b7 simp [hb0]\n        exact hb_rec\n\ntheorem upgrade_Inv (L : Legacy) (h : L.WellFormed) :\n    Inv L.supplyStart L.borrowStart (L.compSpeed, L.compSpeed) (upgrade L) := by\n  have hc' : Consistent (upgrade L) := upgrade_Consistent L h\n  unfold Legacy.WellFormed at h\n  obtain \u27e8hs_or, hs_le, hb_or, hb_le, hsup_blk, hbor_blk, hmem\u27e9 := h\n  unfold Inv\n  refine \u27e8hc', ?_, ?_, ?_, ?_, hs_or, hb_or\u27e9\n  \u00b7 unfold upgrade initSide\n    simp only\n    by_cases hs0 : L.supplyIndex = 0\n    \u00b7 simp [hs0]\n      rcases hs_or with h0 | h0\n      \u00b7 rw [h0]\n        exact Nat.zero_le _\n      \u00b7 rw [h0]\n        exact Nat.le_refl _\n    \u00b7 simp [hs0]\n      exact hs_le\n  \u00b7 unfold upgrade initSide\n    simp only\n    by_cases hb0 : L.borrowIndex = 0\n    \u00b7 simp [hb0]\n      rcases hb_or with h0 | h0\n      \u00b7 rw [h0]\n        exact Nat.zero_le _\n      \u00b7 rw [h0]\n        exact Nat.le_refl _\n    \u00b7 simp [hb0]\n      exact hb_le\n  \u00b7 unfold upgrade initSide\n    simp only\n    by_cases hs0 : L.supplyIndex = 0\n    \u00b7 simp [hs0]\n    \u00b7 simp [hs0]\n  \u00b7 unfold upgrade initSide\n    simp only\n    by_cases hb0 : L.borrowIndex = 0\n    \u00b7 simp [hb0]\n    \u00b7 simp [hb0]\n\ntheorem req_rewards_bounded : RewardsBounded comptroller := sorry\ntheorem req_account_bounded : AccountBounded comptroller := sorry\ntheorem req_no_backdated : NoBackdatedRewards comptroller := sorry\n\nend CompRewards\n",
+  "sha256": "59e023f899d320b2ec952ea820c9b774cde3f7aaaa82f1e1b4b0534f35f9b9c0",
+  "proved_required": [
+   "req_borrow_hook",
+   "req_calls_succeed",
+   "req_claim",
+   "req_set_speeds",
+   "req_supply_hook"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_borrow_hook",
+   "req_calls_succeed",
+   "req_claim",
+   "req_set_speeds",
+   "req_supply_hook"
+  ],
+  "text": "import CompRewards.Spec\nimport ProofForgeFin.DeFi.Rewards\nimport ProofForgeFin.Accumulator.Index\nimport ProofForgeFin.Accumulator.Potential\nimport ProofForgeFin.Ledger\nimport ProofForgeFin.Seq\nnamespace CompRewards\nopen ProofForgeFin ProofForgeFin.DeFi.Rewards ProofForgeFin.Accumulator\n\n/-- `fraction(a, b)` (ExponentialNoError.sol): `Double(div_(mul_(a, doubleScale), b))`. -/\ndef fraction (a b : Nat) : Nat := a * doubleScale / b\n\n/-- `mul_(uint a, Double b)` (ExponentialNoError.sol): `a * b.mantissa / doubleScale`. -/\ndef mulDouble (a mantissa : Nat) : Nat := a * mantissa / doubleScale\n\n/-- `sub_(a, b)` (ExponentialNoError.sol): reverts on underflow. -/\ndef subChecked (a b : Nat) : Option Nat := if b \u2264 a then some (a - b) else none\n\n/-- `updateCompSupplyIndex(cToken)`. -/\ndef updateCompSupplyIndex (s : St) : Option St :=\n  match subChecked s.blockNumber s.supplyState.block with\n  | none => none\n  | some deltaBlocks =>\n    if deltaBlocks > 0 \u2227 s.supplyState.speed > 0 then\n      let supplyTokens := totalSupply s\n      let compAccrued := deltaBlocks * s.supplyState.speed\n      let ratio := if supplyTokens > 0 then fraction compAccrued supplyTokens else 0\n      some { s with supplyState :=\n        { s.supplyState with index := s.supplyState.index + ratio, block := s.blockNumber } }\n    else if deltaBlocks > 0 then\n      some { s with supplyState := { s.supplyState with block := s.blockNumber } }\n    else some s\n\n/-- `updateCompBorrowIndex(cToken, marketBorrowIndex)`. -/\ndef updateCompBorrowIndex (s : St) : Option St :=\n  match subChecked s.blockNumber s.borrowState.block with\n  | none => none\n  | some deltaBlocks =>\n    if deltaBlocks > 0 \u2227 s.borrowState.speed > 0 then\n      let borrowAmount := totalBorrows s\n      let compAccrued := deltaBlocks * s.borrowState.speed\n      let ratio := if borrowAmount > 0 then fraction compAccrued borrowAmount else 0\n      some { s with borrowState :=\n        { s.borrowState with index := s.borrowState.index + ratio, block := s.blockNumber } }\n    else if deltaBlocks > 0 then\n      some { s with borrowState := { s.borrowState with block := s.blockNumber } }\n    else some s\n\n/-- `distributeSupplierComp(cToken, supplier)`. -/\ndef distributeSupplierComp (s : St) (supplier : Account) : Option St :=\n  let supplyIndex := s.supplyState.index\n  let supplierIndex :=\n    if (s.acct supplier).supplierIndex = 0 \u2227 compInitialIndex \u2264 supplyIndex then compInitialIndex\n    else (s.acct supplier).supplierIndex\n  match subChecked supplyIndex supplierIndex with\n  | none => none\n  | some deltaIndex =>\n    let supplierDelta := mulDouble (s.acct supplier).supply deltaIndex\n    some (s.withAcct supplier fun a =>\n      { a with supplierIndex := supplyIndex, accrued := a.accrued + supplierDelta })\n\n/-- `distributeBorrowerComp(cToken, borrower, marketBorrowIndex)`. -/\ndef distributeBorrowerComp (s : St) (borrower : Account) : Option St :=\n  let borrowIndex := s.borrowState.index\n  let borrowerIndex :=\n    if (s.acct borrower).borrowerIndex = 0 \u2227 compInitialIndex \u2264 borrowIndex then compInitialIndex\n    else (s.acct borrower).borrowerIndex\n  match subChecked borrowIndex borrowerIndex with\n  | none => none\n  | some deltaIndex =>\n    let borrowerDelta := mulDouble (s.acct borrower).borrow deltaIndex\n    some (s.withAcct borrower fun a =>\n      { a with borrowerIndex := borrowIndex, accrued := a.accrued + borrowerDelta })\n\n/-- `compAccrued[user] = grantCompInternal(user, compAccrued[user])`. -/\ndef grantCompInternal (s : St) (user : Account) : St :=\n  let amount := (s.acct user).accrued\n  if amount > 0 \u2227 amount \u2264 s.reserve then\n    { s with reserve := s.reserve - amount,\n             accts := s.accts.modify user fun a => { a with accrued := 0, wallet := a.wallet + amount } }\n  else s\n\n/-- `claimComp([holder], [market], true, true)`. -/\ndef claimComp (s : St) (holder : Account) : Option St := do\n  let s \u2190 updateCompBorrowIndex s\n  let s \u2190 distributeBorrowerComp s holder\n  let s \u2190 updateCompSupplyIndex s\n  let s \u2190 distributeSupplierComp s holder\n  return grantCompInternal s holder\n\n/-- The supply branch of `setCompSpeedInternal`: when the supply speed changes, accrue at the\nold speed, then store the new one. -/\ndef setSupplySpeed (s : St) (supplySpeed : Nat) : Option St :=\n  if s.supplyState.speed \u2260 supplySpeed then\n    (updateCompSupplyIndex s).map fun s =>\n      { s with supplyState := { s.supplyState with speed := supplySpeed } }\n  else some s\n\n/-- The borrow branch of `setCompSpeedInternal`. -/\ndef setBorrowSpeed (s : St) (borrowSpeed : Nat) : Option St :=\n  if s.borrowState.speed \u2260 borrowSpeed then\n    (updateCompBorrowIndex s).map fun s =>\n      { s with borrowState := { s.borrowState with speed := borrowSpeed } }\n  else some s\n\n/-- `setCompSpeedInternal(cToken, supplySpeed, borrowSpeed)`: the supply branch, then the borrow\nbranch. -/\ndef setCompSpeedInternal (s : St) (supplySpeed borrowSpeed : Nat) : Option St :=\n  (setSupplySpeed s supplySpeed).bind fun s => setBorrowSpeed s borrowSpeed\n\ndef comptroller : Impl := fun s c =>\n  match c with\n  | .supplyHook who => do\n    let s \u2190 updateCompSupplyIndex s\n    distributeSupplierComp s who\n  | .borrowHook who => do\n    let s \u2190 updateCompBorrowIndex s\n    distributeBorrowerComp s who\n  | .claim who => claimComp s who\n  | .setSpeeds a b => setCompSpeedInternal s a b\n\n-- Helper: modify congruence\ntheorem modify_congr_acct (l : List Acct) (w : Nat) (f1 f2 : Acct \u2192 Acct)\n    (h : f1 (l.getD w noAcct) = f2 (l.getD w noAcct)) : l.modify w f1 = l.modify w f2 := by\n  induction l generalizing w with\n  | nil =>\n    cases w <;> rfl\n  | cons hd tl ih =>\n    cases w with\n    | zero =>\n      have h' : f1 hd = f2 hd := h\n      show f1 hd :: tl = f2 hd :: tl\n      rw [h']\n    | succ w =>\n      have h' : f1 (tl.getD w noAcct) = f2 (tl.getD w noAcct) := h\n      show hd :: tl.modify w f1 = hd :: tl.modify w f2\n      rw [ih w h']\n\ntheorem updateSupply_some (s : St) (hle : s.supplyState.block \u2264 s.blockNumber) :\n    updateCompSupplyIndex s = some { s with supplyState := accrueSide s.supplyState s.blockNumber (totalSupply s) } := by\n  unfold updateCompSupplyIndex accrueSide totalSupply subChecked fraction\n  simp only [hle, \u2193reduceIte]\n  by_cases hd : 0 < s.blockNumber - s.supplyState.block \u2227 0 < s.supplyState.speed \u2227 0 < (List.map Acct.supply s.accts).sum\n  \u00b7 obtain \u27e8hd1, hd2, hd3\u27e9 := hd\n    simp only [hd1, hd2, hd3, and_self, \u2193reduceIte]\n  \u00b7 simp only [hd, \u2193reduceIte]\n    by_cases h1 : s.blockNumber - s.supplyState.block > 0 \u2227 s.supplyState.speed > 0\n    \u00b7 obtain \u27e8h1a, h1b\u27e9 := h1\n      simp only [h1a, h1b, and_self, \u2193reduceIte]\n      by_cases h2 : 0 < (List.map Acct.supply s.accts).sum\n      \u00b7 exact absurd \u27e8h1a, h1b, h2\u27e9 hd\n      \u00b7 have hz : (List.map Acct.supply s.accts).sum = 0 := by omega\n        simp only [hz, Nat.lt_irrefl, \u2193reduceIte, Nat.add_zero]\n    \u00b7 simp only [h1]\n      by_cases h3 : s.blockNumber - s.supplyState.block > 0\n      \u00b7 simp only [h3, \u2193reduceIte]\n      \u00b7 simp only [h3, \u2193reduceIte]\n        have heq : s.supplyState.block = s.blockNumber := by omega\n        obtain \u27e8bn, sup, bor, res, accts\u27e9 := s\n        simp only at heq hle \u22a2\n        subst heq\n        rfl\n\ntheorem updateBorrow_some (s : St) (hle : s.borrowState.block \u2264 s.blockNumber) :\n    updateCompBorrowIndex s = some { s with borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s) } := by\n  unfold updateCompBorrowIndex accrueSide totalBorrows subChecked fraction\n  simp only [hle, \u2193reduceIte]\n  by_cases hd : 0 < s.blockNumber - s.borrowState.block \u2227 0 < s.borrowState.speed \u2227 0 < (List.map Acct.borrow s.accts).sum\n  \u00b7 obtain \u27e8hd1, hd2, hd3\u27e9 := hd\n    simp only [hd1, hd2, hd3, and_self, \u2193reduceIte]\n  \u00b7 simp only [hd, \u2193reduceIte]\n    by_cases h1 : s.blockNumber - s.borrowState.block > 0 \u2227 s.borrowState.speed > 0\n    \u00b7 obtain \u27e8h1a, h1b\u27e9 := h1\n      simp only [h1a, h1b, and_self, \u2193reduceIte]\n      by_cases h2 : 0 < (List.map Acct.borrow s.accts).sum\n      \u00b7 exact absurd \u27e8h1a, h1b, h2\u27e9 hd\n      \u00b7 have hz : (List.map Acct.borrow s.accts).sum = 0 := by omega\n        simp only [hz, Nat.lt_irrefl, \u2193reduceIte, Nat.add_zero]\n    \u00b7 simp only [h1]\n      by_cases h3 : s.blockNumber - s.borrowState.block > 0\n      \u00b7 simp only [h3, \u2193reduceIte]\n      \u00b7 simp only [h3, \u2193reduceIte]\n        have heq : s.borrowState.block = s.blockNumber := by omega\n        obtain \u27e8bn, sup, bor, res, accts\u27e9 := s\n        simp only at heq hle \u22a2\n        subst heq\n        rfl\n\ntheorem updateSupply_of_some (s s1 : St) (h : updateCompSupplyIndex s = some s1) :\n    s.supplyState.block \u2264 s.blockNumber \u2227 s1 = { s with supplyState := accrueSide s.supplyState s.blockNumber (totalSupply s) } := by\n  by_cases hle : s.supplyState.block \u2264 s.blockNumber\n  \u00b7 have heq := updateSupply_some s hle\n    rw [heq] at h\n    refine \u27e8hle, ?_\u27e9\n    cases h\n    rfl\n  \u00b7 unfold updateCompSupplyIndex subChecked at h\n    simp only [hle, \u2193reduceIte] at h\n    cases h\n\ntheorem updateBorrow_of_some (s s1 : St) (h : updateCompBorrowIndex s = some s1) :\n    s.borrowState.block \u2264 s.blockNumber \u2227 s1 = { s with borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s) } := by\n  by_cases hle : s.borrowState.block \u2264 s.blockNumber\n  \u00b7 have heq := updateBorrow_some s hle\n    rw [heq] at h\n    refine \u27e8hle, ?_\u27e9\n    cases h\n    rfl\n  \u00b7 unfold updateCompBorrowIndex subChecked at h\n    simp only [hle, \u2193reduceIte] at h\n    cases h\n\ntheorem supplyStart_eq (rec idx : Nat) :\n    (if rec = 0 \u2227 compInitialIndex \u2264 idx then compInitialIndex else rec) = accrualStart rec idx := by\n  unfold accrualStart\n  by_cases h0 : rec = 0 <;> simp [h0]\n\ntheorem borrowStart_eq (rec idx : Nat) :\n    (if rec = 0 \u2227 compInitialIndex \u2264 idx then compInitialIndex else rec) = accrualStart rec idx := supplyStart_eq rec idx\n\ntheorem distributeSupply_of_some (s1 : St) (who : Account) (s' : St)\n    (h : distributeSupplierComp s1 who = some s') :\n    accrualStart (s1.acct who).supplierIndex s1.supplyState.index \u2264 s1.supplyState.index \u2227\n    s' = { s1 with accts := s1.accts.modify who fun a => { a with supplierIndex := s1.supplyState.index, accrued := a.accrued + creditFor a.supply (accrualStart a.supplierIndex s1.supplyState.index) s1.supplyState.index } } := by\n  unfold distributeSupplierComp subChecked St.acct at h\n  simp only at h\n  have hsup : (if (s1.accts.getD who noAcct).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.accts.getD who noAcct).supplierIndex) = accrualStart (s1.accts.getD who noAcct).supplierIndex s1.supplyState.index := supplyStart_eq _ _\n  -- analyze the match\n  by_cases hle : (if (s1.accts.getD who noAcct).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.accts.getD who noAcct).supplierIndex) \u2264 s1.supplyState.index\n  \u00b7 simp only [hle, \u2193reduceIte] at h\n    have hle2 : accrualStart (s1.accts.getD who noAcct).supplierIndex s1.supplyState.index \u2264 s1.supplyState.index := by\n      rw [\u2190 hsup]; exact hle\n    refine \u27e8hle2, ?_\u27e9\n    have hs' : s' = s1.withAcct who fun a => { a with supplierIndex := s1.supplyState.index, accrued := a.accrued + mulDouble (s1.accts.getD who noAcct).supply (s1.supplyState.index - (if (s1.accts.getD who noAcct).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.accts.getD who noAcct).supplierIndex)) } := by\n      cases h\n      rfl\n    rw [hs']\n    unfold St.withAcct creditFor mulDouble\n    congr 1\n    apply modify_congr_acct\n    have hdelta : (s1.supplyState.index - (if (s1.accts.getD who noAcct).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.accts.getD who noAcct).supplierIndex)) = (s1.supplyState.index - accrualStart (s1.accts.getD who noAcct).supplierIndex s1.supplyState.index) := by rw [hsup]\n    have harg : (fun a : Acct => { a with supplierIndex := s1.supplyState.index, accrued := a.accrued + (s1.accts.getD who noAcct).supply * (s1.supplyState.index - (if (s1.accts.getD who noAcct).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.accts.getD who noAcct).supplierIndex)) / doubleScale }) (s1.accts.getD who noAcct) = (fun a : Acct => { a with supplierIndex := s1.supplyState.index, accrued := a.accrued + a.supply * (s1.supplyState.index - accrualStart a.supplierIndex s1.supplyState.index) / doubleScale }) (s1.accts.getD who noAcct) := by\n      simp only [hdelta]\n    exact harg\n  \u00b7 simp only [hle, \u2193reduceIte] at h\n    cases h\n\ntheorem distributeBorrow_of_some (s1 : St) (who : Account) (s' : St)\n    (h : distributeBorrowerComp s1 who = some s') :\n    accrualStart (s1.acct who).borrowerIndex s1.borrowState.index \u2264 s1.borrowState.index \u2227\n    s' = { s1 with accts := s1.accts.modify who fun a => { a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + creditFor a.borrow (accrualStart a.borrowerIndex s1.borrowState.index) s1.borrowState.index } } := by\n  unfold distributeBorrowerComp subChecked St.acct at h\n  simp only at h\n  have hsup : (if (s1.accts.getD who noAcct).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.accts.getD who noAcct).borrowerIndex) = accrualStart (s1.accts.getD who noAcct).borrowerIndex s1.borrowState.index := borrowStart_eq _ _\n  by_cases hle : (if (s1.accts.getD who noAcct).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.accts.getD who noAcct).borrowerIndex) \u2264 s1.borrowState.index\n  \u00b7 simp only [hle, \u2193reduceIte] at h\n    have hle2 : accrualStart (s1.accts.getD who noAcct).borrowerIndex s1.borrowState.index \u2264 s1.borrowState.index := by\n      rw [\u2190 hsup]; exact hle\n    refine \u27e8hle2, ?_\u27e9\n    have hs' : s' = s1.withAcct who fun a => { a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + mulDouble (s1.accts.getD who noAcct).borrow (s1.borrowState.index - (if (s1.accts.getD who noAcct).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.accts.getD who noAcct).borrowerIndex)) } := by\n      cases h\n      rfl\n    rw [hs']\n    unfold St.withAcct creditFor mulDouble\n    congr 1\n    apply modify_congr_acct\n    have hdelta : (s1.borrowState.index - (if (s1.accts.getD who noAcct).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.accts.getD who noAcct).borrowerIndex)) = (s1.borrowState.index - accrualStart (s1.accts.getD who noAcct).borrowerIndex s1.borrowState.index) := by rw [hsup]\n    have harg : (fun a : Acct => { a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + (s1.accts.getD who noAcct).borrow * (s1.borrowState.index - (if (s1.accts.getD who noAcct).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.accts.getD who noAcct).borrowerIndex)) / doubleScale }) (s1.accts.getD who noAcct) = (fun a : Acct => { a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + a.borrow * (s1.borrowState.index - accrualStart a.borrowerIndex s1.borrowState.index) / doubleScale }) (s1.accts.getD who noAcct) := by\n      simp only [hdelta]\n    exact harg\n  \u00b7 simp only [hle, \u2193reduceIte] at h\n    cases h\n\ntheorem grant_eq (s : St) (who : Account) : grantCompInternal s who = grant s who := by\n  unfold grantCompInternal grant St.acct\n  by_cases h : 0 < (s.accts.getD who noAcct).accrued \u2227 (s.accts.getD who noAcct).accrued \u2264 s.reserve\n  \u00b7 simp only [h, \u2193reduceIte]\n    have harg : (fun a : Acct => ({ a with accrued := 0, wallet := a.wallet + (s.accts.getD who noAcct).accrued } : Acct)) (s.accts.getD who noAcct) = (fun a : Acct => ({ a with accrued := 0, wallet := a.wallet + a.accrued } : Acct)) (s.accts.getD who noAcct) := by rfl\n    have hmod : s.accts.modify who (fun a : Acct => ({ a with accrued := 0, wallet := a.wallet + (s.accts.getD who noAcct).accrued } : Acct)) = s.accts.modify who (fun a : Acct => ({ a with accrued := 0, wallet := a.wallet + a.accrued } : Acct)) :=\n      modify_congr_acct _ _ _ _ harg\n    simp only [hmod]\n  \u00b7 simp only [h, \u2193reduceIte]\n\ntheorem accrueSupply_ge (sd : Side) (now total : Nat) : sd.index \u2264 (accrueSide sd now total).index := by\n  unfold accrueSide\n  split\n  \u00b7 exact Nat.le_add_right _ _\n  \u00b7 exact Nat.le_refl _\n\ntheorem accrueBorrow_ge (sd : Side) (now total : Nat) : sd.index \u2264 (accrueSide sd now total).index :=\n  accrueSupply_ge sd now total\n\ntheorem recorded_supply_le (s : St) (who : Account) (hc : Consistent s) :\n    (s.acct who).supplierIndex \u2264 s.supplyState.index := by\n  unfold Consistent at hc\n  obtain \u27e8_, _, hmem\u27e9 := hc\n  unfold St.acct\n  have hor := ProofForgeFin.Ledger.getD_mem_or s.accts who noAcct\n  rcases hor with hm | heq\n  \u00b7 exact (hmem _ hm).1\n  \u00b7 rw [heq]\n    exact Nat.zero_le _\n\ntheorem recorded_borrow_le (s : St) (who : Account) (hc : Consistent s) :\n    (s.acct who).borrowerIndex \u2264 s.borrowState.index := by\n  unfold Consistent at hc\n  obtain \u27e8_, _, hmem\u27e9 := hc\n  unfold St.acct\n  have hor := ProofForgeFin.Ledger.getD_mem_or s.accts who noAcct\n  rcases hor with hm | heq\n  \u00b7 exact (hmem _ hm).2\n  \u00b7 rw [heq]\n    exact Nat.zero_le _\n\ntheorem accrualStart_le_of_le (rec idx : Nat) (h : rec \u2264 idx) :\n    accrualStart rec idx \u2264 idx := by\n  unfold accrualStart\n  by_cases h0 : rec = 0\n  \u00b7 simp only [h0, \u2193reduceIte]\n    by_cases hi : compInitialIndex \u2264 idx\n    \u00b7 simp [hi]\n    \u00b7 simp [hi]\n  \u00b7 simp only [h0, \u2193reduceIte]\n    exact h\n\ntheorem distributeSupply_isSome (s1 : St) (who : Account)\n    (hle : accrualStart (s1.acct who).supplierIndex s1.supplyState.index \u2264 s1.supplyState.index) :\n    (distributeSupplierComp s1 who).isSome = true := by\n  have hsup : (if (s1.acct who).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.acct who).supplierIndex) = accrualStart (s1.acct who).supplierIndex s1.supplyState.index := supplyStart_eq _ _\n  have hcond : (if (s1.acct who).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.acct who).supplierIndex) \u2264 s1.supplyState.index := by\n    rw [hsup]; exact hle\n  unfold distributeSupplierComp subChecked\n  simp [hcond]\n\ntheorem distributeBorrow_isSome (s1 : St) (who : Account)\n    (hle : accrualStart (s1.acct who).borrowerIndex s1.borrowState.index \u2264 s1.borrowState.index) :\n    (distributeBorrowerComp s1 who).isSome = true := by\n  have hsup : (if (s1.acct who).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.acct who).borrowerIndex) = accrualStart (s1.acct who).borrowerIndex s1.borrowState.index := borrowStart_eq _ _\n  have hcond : (if (s1.acct who).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.acct who).borrowerIndex) \u2264 s1.borrowState.index := by\n    rw [hsup]; exact hle\n  unfold distributeBorrowerComp subChecked\n  simp [hcond]\n\ntheorem setSupply_isSome (s : St) (a : Nat) (hle : s.supplyState.block \u2264 s.blockNumber) :\n    (setSupplySpeed s a).isSome = true := by\n  unfold setSupplySpeed\n  by_cases heq : s.supplyState.speed = a\n  \u00b7 simp [heq]\n  \u00b7 simp [heq, updateSupply_some s hle]\n\ntheorem setBorrow_isSome (t : St) (b : Nat) (hle : t.borrowState.block \u2264 t.blockNumber) :\n    (setBorrowSpeed t b).isSome = true := by\n  unfold setBorrowSpeed\n  by_cases heq : t.borrowState.speed = b\n  \u00b7 simp [heq]\n  \u00b7 simp [heq, updateBorrow_some t hle]\n\ntheorem req_supply_hook : SupplyHookEffects comptroller := by\n  intro s who s' h\n  unfold comptroller at h\n  cases hu : updateCompSupplyIndex s with\n  | none =>\n    simp only [hu] at h\n    simp at h\n  | some s1 =>\n    simp only [hu] at h\n    simp at h\n    obtain \u27e8hle, heq1\u27e9 := updateSupply_of_some s s1 hu\n    obtain \u27e8hle2, heq2\u27e9 := distributeSupply_of_some s1 who s' h\n    unfold SupplyDistributed\n    refine \u27e8hle, ?_, ?_\u27e9\n    \u00b7 rw [heq1] at hle2\n      simpa [St.acct] using hle2\n    \u00b7 rw [heq1] at heq2\n      exact heq2\n\ntheorem req_borrow_hook : BorrowHookEffects comptroller := by\n  intro s who s' h\n  unfold comptroller at h\n  cases hu : updateCompBorrowIndex s with\n  | none =>\n    simp only [hu] at h\n    simp at h\n  | some s1 =>\n    simp only [hu] at h\n    simp at h\n    obtain \u27e8hle, heq1\u27e9 := updateBorrow_of_some s s1 hu\n    obtain \u27e8hle2, heq2\u27e9 := distributeBorrow_of_some s1 who s' h\n    unfold BorrowDistributed\n    refine \u27e8hle, ?_, ?_\u27e9\n    \u00b7 rw [heq1] at hle2\n      simpa [St.acct] using hle2\n    \u00b7 rw [heq1] at heq2\n      exact heq2\n\ntheorem req_claim : ClaimEffects comptroller := by\n  intro s who s' h\n  unfold comptroller claimComp at h\n  simp only at h\n  cases hu1 : updateCompBorrowIndex s with\n  | none =>\n    simp only [hu1] at h\n    simp at h\n  | some s1 =>\n    simp only [hu1] at h\n    simp at h\n    cases hd1 : distributeBorrowerComp s1 who with\n    | none =>\n      simp only [hd1] at h\n      simp at h\n    | some m1 =>\n      simp only [hd1] at h\n      simp at h\n      cases hu2 : updateCompSupplyIndex m1 with\n      | none =>\n        simp only [hu2] at h\n        simp at h\n      | some s2 =>\n        simp only [hu2] at h\n        simp at h\n        cases hd2 : distributeSupplierComp s2 who with\n        | none =>\n          simp only [hd2] at h\n          simp at h\n        | some m2 =>\n          simp only [hd2] at h\n          simp at h\n          obtain \u27e8hble, heq_b1\u27e9 := updateBorrow_of_some s s1 hu1\n          obtain \u27e8hble2, heq_b2\u27e9 := distributeBorrow_of_some s1 who m1 hd1\n          obtain \u27e8hsle, heq_s1\u27e9 := updateSupply_of_some m1 s2 hu2\n          obtain \u27e8hsle2, heq_s2\u27e9 := distributeSupply_of_some s2 who m2 hd2\n          have hgrant : grantCompInternal m2 who = grant m2 who := grant_eq m2 who\n          rw [hgrant] at h\n          cases h\n          -- Build Claimed witnesses\n          refine \u27e8m1, m2, ?_, ?_, rfl\u27e9\n          \u00b7 unfold BorrowDistributed\n            refine \u27e8hble, ?_, ?_\u27e9\n            \u00b7 rw [heq_b1] at hble2\n              simpa [St.acct] using hble2\n            \u00b7 rw [heq_b1] at heq_b2\n              exact heq_b2\n          \u00b7 unfold SupplyDistributed\n            -- need totals: totalSupply m1 = totalSupply s? supply balances unchanged by borrow steps\n            -- m1 accts = s1 accts modified on borrowerIndex/accrued only, so supply sum same\n            -- s1 accts = s accts, so totalSupply m1 = totalSupply s; similarly s2 supplyState = accrue of m1\n            -- We show m2 equation matches with m1 as base: heq_s2 already states m2 = {s2 with ...}\n            -- and s2 = {m1 with supplyState := accrue ... (totalSupply m1)}\n            -- Need to rewrite totalSupply m1 = totalSupply s? Actually BorrowDistributed uses totalBorrows s,\n            -- SupplyDistributed uses totalSupply m1. Our heq_b1 uses totalBorrows s, heq_s1 uses totalSupply m1.\n            -- So they already match the required statements with the right totals.\n            -- heq_s1 : s2 = {m1 with supplyState := accrueSide m1.supplyState m1.blockNumber (totalSupply m1)}\n            -- heq_s2 : m2 = {s2 with accts := ... (accrueSide s2... )}\n            -- But SupplyDistributed m1 who m2 requires accrue over totalSupply m1 and s2's block = m1.blockNumber.\n            -- Since s2.blockNumber = m1.blockNumber (update preserves blockNumber), this holds.\n            -- heq_s1 already gives s2's supplyState = accrueSide ..., and blockNumber preserved.\n            -- So we can use heq_s1/heq_s2 directly after showing blockNumber equalities.\n            refine \u27e8hsle, ?_, ?_\u27e9\n            \u00b7 have h2 := hsle2\n              rw [heq_s1] at h2\n              simpa [St.acct] using h2\n            \u00b7 rw [heq_s1] at heq_s2\n              simpa using heq_s2\n\ntheorem setSupply_of_some (s t : St) (a : Nat) (h : setSupplySpeed s a = some t) :\n    (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n    t = (if s.supplyState.speed = a then s else { s with supplyState := { accrueSide s.supplyState s.blockNumber (totalSupply s) with speed := a } }) := by\n  unfold setSupplySpeed at h\n  by_cases heq : s.supplyState.speed = a\n  \u00b7 simp [heq] at h\n    cases h\n    refine \u27e8fun hn => absurd heq hn, ?_\u27e9\n    simp [heq]\n  \u00b7 simp [heq] at h\n    cases hu : updateCompSupplyIndex s with\n    | none =>\n      simp only [hu] at h\n      simp at h\n    | some s1 =>\n      simp only [hu] at h\n      simp at h\n      obtain \u27e8hle, heq1\u27e9 := updateSupply_of_some s s1 hu\n      cases h\n      refine \u27e8fun _ => hle, ?_\u27e9\n      simp [heq, heq1]\n\ntheorem setBorrow_of_some (t s2 : St) (b : Nat) (h : setBorrowSpeed t b = some s2) :\n    (t.borrowState.speed \u2260 b \u2192 t.borrowState.block \u2264 t.blockNumber) \u2227\n    s2 = (if t.borrowState.speed = b then t else { t with borrowState := { accrueSide t.borrowState t.blockNumber (totalBorrows t) with speed := b } }) := by\n  unfold setBorrowSpeed at h\n  by_cases heq : t.borrowState.speed = b\n  \u00b7 simp [heq] at h\n    cases h\n    refine \u27e8fun hn => absurd heq hn, ?_\u27e9\n    simp [heq]\n  \u00b7 simp [heq] at h\n    cases hu : updateCompBorrowIndex t with\n    | none =>\n      simp only [hu] at h\n      simp at h\n    | some s1 =>\n      simp only [hu] at h\n      simp at h\n      obtain \u27e8hle, heq1\u27e9 := updateBorrow_of_some t s1 hu\n      cases h\n      refine \u27e8fun _ => hle, ?_\u27e9\n      simp [heq, heq1]\n\ntheorem req_set_speeds : SetSpeedsEffects comptroller := by\n  intro s a b s' h\n  unfold comptroller setCompSpeedInternal at h\n  simp only at h\n  cases hs : setSupplySpeed s a with\n  | none =>\n    simp only [hs] at h\n    simp at h\n  | some t =>\n    simp only [hs] at h\n    simp at h\n    cases hb : setBorrowSpeed t b with\n    | none =>\n      simp only [hb] at h\n      simp at h\n    | some s2 =>\n      simp only [hb] at h\n      simp at h\n      obtain \u27e8hs_le, hs_eq\u27e9 := setSupply_of_some s t a hs\n      obtain \u27e8hb_le, hb_eq\u27e9 := setBorrow_of_some t s2 b hb\n      cases h\n      unfold SpeedsSet\n      refine \u27e8?_, ?_, ?_\u27e9\n      \u00b7 intro hne\n        exact hs_le hne\n      \u00b7 intro hne_s\n        have ht_bn : t.blockNumber = s.blockNumber := by\n          rw [hs_eq]\n          split\n          \u00b7 rfl\n          \u00b7 rfl\n        have ht_bor : t.borrowState = s.borrowState := by\n          rw [hs_eq]\n          split\n          \u00b7 rfl\n          \u00b7 rfl\n        have hspeed : t.borrowState.speed = s.borrowState.speed := by rw [ht_bor]\n        have hne_t : t.borrowState.speed \u2260 b := by simpa [hspeed] using hne_s\n        have hle := hb_le hne_t\n        simpa [ht_bn, ht_bor] using hle\n      \u00b7 by_cases heq_sup : s.supplyState.speed = a\n        \u00b7 simp [heq_sup] at hs_eq\n          have ht : t = s := hs_eq\n          rw [ht] at hb_eq\n          by_cases heq_bor : s.borrowState.speed = b\n          \u00b7 simp [heq_sup, heq_bor] at hb_eq \u22a2\n            exact hb_eq\n          \u00b7 simp [heq_sup, heq_bor] at hb_eq \u22a2\n            exact hb_eq\n        \u00b7 simp [heq_sup] at hs_eq\n          have ht_bn : t.blockNumber = s.blockNumber := by rw [hs_eq]\n          have ht_bor : t.borrowState = s.borrowState := by rw [hs_eq]\n          have ht_accts : t.accts = s.accts := by rw [hs_eq]\n          have htot_bor : totalBorrows t = totalBorrows s := by simp [totalBorrows, ht_accts]\n          have hspeed_eq : s.borrowState.speed = t.borrowState.speed := by rw [ht_bor]\n          have hacc : accrueSide t.borrowState t.blockNumber (totalBorrows t) = accrueSide s.borrowState s.blockNumber (totalBorrows s) := by\n            rw [ht_bor, ht_bn, htot_bor]\n          by_cases heq_bor : t.borrowState.speed = b\n          \u00b7 simp [heq_bor] at hb_eq\n            have heq_bor_s : s.borrowState.speed = b := hspeed_eq.trans heq_bor\n            simp [heq_sup, heq_bor_s] at \u22a2\n            simp [hb_eq, hs_eq]\n          \u00b7 simp [heq_bor] at hb_eq\n            have heq_bor_s : s.borrowState.speed \u2260 b := by simpa [hspeed_eq] using heq_bor\n            simp [heq_sup, heq_bor_s] at \u22a2\n            simp [hb_eq, hs_eq, hacc, totalBorrows, totalSupply]\n\ntheorem req_calls_succeed : CallsSucceed comptroller := by\n  intro s c hc\n  unfold Consistent at hc\n  obtain \u27e8hsup, hbor, hmem\u27e9 := hc\n  have hsup_le : \u2200 who : Account, (s.acct who).supplierIndex \u2264 s.supplyState.index := fun who => recorded_supply_le s who \u27e8hsup, hbor, hmem\u27e9\n  have hbor_le : \u2200 who : Account, (s.acct who).borrowerIndex \u2264 s.borrowState.index := fun who => recorded_borrow_le s who \u27e8hsup, hbor, hmem\u27e9\n  unfold comptroller\n  cases c with\n  | supplyHook who =>\n    simp only [updateSupply_some s hsup]\n    simp\n    have hnew : (accrueSide s.supplyState s.blockNumber (totalSupply s)).index \u2265 s.supplyState.index :=\n      accrueSupply_ge s.supplyState s.blockNumber (totalSupply s)\n    have hrec : (s.acct who).supplierIndex \u2264 (accrueSide s.supplyState s.blockNumber (totalSupply s)).index :=\n      Nat.le_trans (hsup_le who) hnew\n    have hstart' := accrualStart_le_of_le _ _ hrec\n    have hsome := distributeSupply_isSome ({ s with supplyState := accrueSide s.supplyState s.blockNumber (totalSupply s) } : St) who (by simpa [St.acct] using hstart')\n    exact hsome\n  | borrowHook who =>\n    simp only [updateBorrow_some s hbor]\n    simp\n    have hnew := accrueBorrow_ge s.borrowState s.blockNumber (totalBorrows s)\n    have hrec : (s.acct who).borrowerIndex \u2264 (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index :=\n      Nat.le_trans (hbor_le who) hnew\n    have hstart' := accrualStart_le_of_le _ _ hrec\n    have hsome := distributeBorrow_isSome ({ s with borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s) } : St) who (by simpa [St.acct] using hstart')\n    exact hsome\n  | claim who =>\n    -- Use intermediate states via isSome existence\n    let s1 : St := { s with borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s) }\n    have hs1 : updateCompBorrowIndex s = some s1 := updateBorrow_some s hbor\n    have hnew_b := accrueBorrow_ge s.borrowState s.blockNumber (totalBorrows s)\n    have hrec_b : (s.acct who).borrowerIndex \u2264 (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index :=\n      Nat.le_trans (hbor_le who) hnew_b\n    have hstart_b' := accrualStart_le_of_le _ _ hrec_b\n    have hle_b : accrualStart (s1.acct who).borrowerIndex s1.borrowState.index \u2264 s1.borrowState.index := by\n      simpa [s1, St.acct] using hstart_b'\n    have hdist_b := distributeBorrow_isSome s1 who hle_b\n    obtain \u27e8m1, hm1\u27e9 := Option.isSome_iff_exists.mp hdist_b\n    obtain \u27e8_, heq_m1\u27e9 := distributeBorrow_of_some s1 who m1 hm1\n    -- m1 preserves supply side and supplierIndex\n    have hm1_sup : m1.supplyState = s.supplyState := by simp [heq_m1, s1]\n    have hm1_bn : m1.blockNumber = s.blockNumber := by simp [heq_m1, s1]\n    have hm1_suppIdx : (m1.acct who).supplierIndex = (s.acct who).supplierIndex := by\n      have hmod : (((s1.accts.modify who fun a => ({ a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + creditFor a.borrow (accrualStart a.borrowerIndex s1.borrowState.index) s1.borrowState.index } : Acct)).getD who noAcct).supplierIndex = (s1.accts.getD who noAcct).supplierIndex) := by\n        rw [ProofForgeFin.Ledger.getD_modify]\n        split\n        \u00b7 rfl\n        \u00b7 rfl\n      have h1 : (m1.acct who).supplierIndex = (((s1.accts.modify who fun a => ({ a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + creditFor a.borrow (accrualStart a.borrowerIndex s1.borrowState.index) s1.borrowState.index } : Acct)).getD who noAcct).supplierIndex) := by\n        rw [heq_m1]\n        simp [St.withAcct, St.acct]\n      have h2 : (s1.acct who).supplierIndex = (s1.accts.getD who noAcct).supplierIndex := by\n        simp [St.acct]\n      have h3 : (s1.acct who).supplierIndex = (s.acct who).supplierIndex := by\n        simp [s1, St.acct]\n      rw [h1, hmod, \u2190h2, h3]\n    have hsup_m1 : m1.supplyState.block \u2264 m1.blockNumber := by rw [hm1_sup, hm1_bn]; exact hsup\n    let s2 : St := { m1 with supplyState := accrueSide m1.supplyState m1.blockNumber (totalSupply m1) }\n    have hs2 : updateCompSupplyIndex m1 = some s2 :=\n      updateSupply_some m1 hsup_m1\n    have hnew_s : (accrueSide m1.supplyState m1.blockNumber (totalSupply m1)).index \u2265 m1.supplyState.index :=\n      accrueSupply_ge _ _ _\n    have hrec_s : (m1.acct who).supplierIndex \u2264 (accrueSide m1.supplyState m1.blockNumber (totalSupply m1)).index := by\n      have h0 : (m1.acct who).supplierIndex \u2264 m1.supplyState.index := by\n        rw [hm1_suppIdx]\n        rw [hm1_sup]\n        exact hsup_le who\n      exact Nat.le_trans h0 hnew_s\n    have hstart_s' := accrualStart_le_of_le _ _ hrec_s\n    have hle_s : accrualStart (s2.acct who).supplierIndex s2.supplyState.index \u2264 s2.supplyState.index := by\n      simpa [s2, St.acct] using hstart_s'\n    have hdist_s := distributeSupply_isSome s2 who hle_s\n    obtain \u27e8m2, hm2\u27e9 := Option.isSome_iff_exists.mp hdist_s\n    simp [claimComp, hs1, hm1, hs2, hm2]\n  | setSpeeds a b =>\n    unfold setCompSpeedInternal\n    have hs_some := setSupply_isSome s a hsup\n    obtain \u27e8t, ht\u27e9 := Option.isSome_iff_exists.mp hs_some\n    have ht_bn : t.blockNumber = s.blockNumber := by\n      obtain \u27e8_, heq\u27e9 := setSupply_of_some s t a ht\n      rw [heq]\n      split\n      \u00b7 rfl\n      \u00b7 rfl\n    have ht_bor : t.borrowState = s.borrowState := by\n      obtain \u27e8_, heq\u27e9 := setSupply_of_some s t a ht\n      rw [heq]\n      split\n      \u00b7 rfl\n      \u00b7 rfl\n    have hbor_t : t.borrowState.block \u2264 t.blockNumber := by rw [ht_bor, ht_bn]; exact hbor\n    have hb_some := setBorrow_isSome t b hbor_t\n    obtain \u27e8s2, hs2\u27e9 := Option.isSome_iff_exists.mp hb_some\n    simp [ht, hs2]\n-- Potentials for boundedness\ndef pendSup (gS : Nat) (s : St) (a : Acct) : Nat :=\n  a.supply * (s.supplyState.index - effStart gS a.supplierIndex)\ndef pendBor (gB : Nat) (s : St) (a : Acct) : Nat :=\n  a.borrow * (s.borrowState.index - effStart gB a.borrowerIndex)\ndef unindexedSup (s : St) : Nat := (s.blockNumber - s.supplyState.block) * s.supplyState.speed\ndef unindexedBor (s : St) : Nat := (s.blockNumber - s.borrowState.block) * s.borrowState.speed\ndef Pot (gS gB : Nat) (s : St) : Nat :=\n  (s.credited * doubleScale + ((s.accts.map (pendSup gS s)).sum + (s.accts.map (pendBor gB s)).sum) + doubleScale * (unindexedSup s + unindexedBor s))\ndef PotTo (gS gB : Nat) (s : St) (who : Account) : Nat :=\n  ((s.creditedTo who) * doubleScale + (pendSup gS s (s.acct who) + pendBor gB s (s.acct who)) + doubleScale * ((if 0 < (s.acct who).supply then unindexedSup s else 0) + (if 0 < (s.acct who).borrow then unindexedBor s else 0)))\n\ntheorem legacyStart_eq_effStart (g rec : Nat) : legacyStart g rec = effStart g rec := by\n  unfold legacyStart effStart\n  rfl\n\ntheorem accrualStart_eq_firstStart (rec idx : Nat) :\n    accrualStart rec idx = firstStart compInitialIndex rec idx := by\n  unfold accrualStart firstStart\n  rfl\n\ntheorem creditFor_eq_credit (u st idx : Nat) :\n    creditFor u st idx = credit doubleScale u st idx := by\n  unfold creditFor credit\n  rfl\n\n-- Invariant for runs from upgrade\ndef Inv (gS gB : Nat) (sp : Nat \u00d7 Nat) (s : St) : Prop :=\n  Consistent s \u2227 gS \u2264 s.supplyState.index \u2227 gB \u2264 s.borrowState.index \u2227\n  s.supplyState.speed = sp.1 \u2227 s.borrowState.speed = sp.2 \u2227\n  (gS = 0 \u2228 gS = compInitialIndex) \u2227 (gB = 0 \u2228 gB = compInitialIndex)\n\ntheorem accrueSide_index_eq_catchUp (sd : Side) (now total : Nat) :\n    (accrueSide sd now total).index = catchUp doubleScale sd.index sd.block sd.speed now total := by\n  by_cases h : 0 < now - sd.block \u2227 0 < sd.speed \u2227 0 < total\n  \u00b7 simp [h, accrueSide, catchUp]\n  \u00b7 simp [h, accrueSide, catchUp]\n\ntheorem unindexedSup_eq (s : St) : unindexedSup s = unindexed s.supplyState.block s.supplyState.speed s.blockNumber := by\n  unfold unindexedSup unindexed\n  rfl\n\ntheorem unindexedBor_eq (s : St) : unindexedBor s = unindexed s.borrowState.block s.borrowState.speed s.blockNumber := by\n  unfold unindexedBor unindexed\n  rfl\n\ntheorem pot_supplyHook_le (gS gB : Nat) (s s' : St) (who : Account)\n    (hgS_or : gS = 0 \u2228 gS = compInitialIndex) (hgB_or : gB = 0 \u2228 gB = compInitialIndex)\n    (hgS_le : gS \u2264 s.supplyState.index) (hgB_le : gB \u2264 s.borrowState.index)\n    (hDist : SupplyDistributed s who s') : Pot gS gB s' \u2264 Pot gS gB s := by\n  unfold SupplyDistributed at hDist\n  obtain \u27e8hblk, hstart_le, heq\u27e9 := hDist\n  -- Explicit new index and settle function\n  let newSupIdx : Nat := (accrueSide s.supplyState s.blockNumber (totalSupply s)).index\n  have h_old_le_new : s.supplyState.index \u2264 newSupIdx := accrueSupply_ge _ _ _\n  have hgS_le_new : gS \u2264 newSupIdx := Nat.le_trans hgS_le h_old_le_new\n  -- Use library: define term t, units, etc.\n  -- t idx a = (accrued+wallet)*one + supplyPending(idx) + borrowPending (fixed borrow idx)\n  let t : Nat \u2192 Acct \u2192 Nat := fun idx a =>\n    (a.accrued + a.wallet) * doubleScale + (a.supply * (idx - effStart gS a.supplierIndex) + a.borrow * (s.borrowState.index - effStart gB a.borrowerIndex))\n  let f : Acct \u2192 Acct := fun a =>\n    { a with supplierIndex := newSupIdx, accrued := a.accrued + creditFor a.supply (accrualStart a.supplierIndex newSupIdx) newSupIdx }\n  have heq_accts : s'.accts = s.accts.modify who f := by\n    rw [heq]\n  have heq_supIdx : s'.supplyState.index = newSupIdx := by rw [heq]\n  have heq_borIdx : s'.borrowState.index = s.borrowState.index := by rw [heq]\n  have heq_bn : s'.blockNumber = s.blockNumber := by rw [heq]\n  have heq_borBlk : s'.borrowState.block = s.borrowState.block := by rw [heq]\n  have heq_supBlk : s'.supplyState.block = s.blockNumber := by\n    rw [heq]\n    unfold accrueSide\n    split\n    \u00b7 rfl\n    \u00b7 rfl\n  -- Pot equality rewrites\n  have hPot_s : Pot gS gB s = ((s.accts.map (t s.supplyState.index)).sum + doubleScale * (unindexedSup s + unindexedBor s)) := by\n    sorry\n  have hPot_s' : Pot gS gB s' = (((s.accts.modify who f).map (t newSupIdx)).sum + doubleScale * (0 + unindexedBor s)) := by\n    sorry\n  have ht : \u2200 a \u2208 s.accts, t newSupIdx a \u2264 t s.supplyState.index a + a.supply * (newSupIdx - s.supplyState.index) := by\n    sorry\n  have hU : (s.accts.map Acct.supply).sum * (newSupIdx - s.supplyState.index) + doubleScale * (0 + unindexedBor s) \u2264 doubleScale * (unindexedSup s + unindexedBor s) := by\n    sorry\n  have hf : who < s.accts.length \u2192 t newSupIdx (f (s.accts.getD who noAcct)) \u2264 t newSupIdx (s.accts.getD who noAcct) := by\n    sorry\n  have hpot := pot_accrue_settle_le s.accts who f noAcct t Acct.supply ht hU hf\n  sorry\n\ntheorem pot_borrowHook_le (gS gB : Nat) (s s' : St) (who : Account)\n    (hgS_or : gS = 0 \u2228 gS = compInitialIndex) (hgB_or : gB = 0 \u2228 gB = compInitialIndex)\n    (hgS_le : gS \u2264 s.supplyState.index) (hgB_le : gB \u2264 s.borrowState.index)\n    (hDist : BorrowDistributed s who s') : Pot gS gB s' \u2264 Pot gS gB s := by\n  sorry\n\ntheorem pot_advance (s : St) (k : Nat) (gS gB : Nat)\n    (hsup : s.supplyState.block \u2264 s.blockNumber) (hbor : s.borrowState.block \u2264 s.blockNumber) :\n    Pot gS gB ({ s with blockNumber := s.blockNumber + k } : St) = Pot gS gB s + doubleScale * (k * (s.supplyState.speed + s.borrowState.speed)) := by\n  unfold Pot St.credited pendSup pendBor unindexedSup unindexedBor\n  simp only\n  have hsup_eq : (s.blockNumber + k - s.supplyState.block) * s.supplyState.speed = (s.blockNumber - s.supplyState.block) * s.supplyState.speed + k * s.supplyState.speed := by\n    rw [Nat.sub_add_comm hsup, Nat.add_mul]\n  have hbor_eq : (s.blockNumber + k - s.borrowState.block) * s.borrowState.speed = (s.blockNumber - s.borrowState.block) * s.borrowState.speed + k * s.borrowState.speed := by\n    rw [Nat.sub_add_comm hbor, Nat.add_mul]\n  simp only [hsup_eq, hbor_eq]\n  grind\n\ntheorem pot_drip (s : St) (x : Nat) (gS gB : Nat) : Pot gS gB ({ s with reserve := s.reserve + x } : St) = Pot gS gB s := by\n  rfl\n\ntheorem pot_exec_le (gS gB : Nat) (sp : Nat \u00d7 Nat) (s : St) (op : Op) (hInv : Inv gS gB sp s) :\n    Pot gS gB (exec comptroller s op) \u2264 Pot gS gB s + doubleScale * emittedBy sp op \u2227 Inv gS gB (nextSpeeds sp op) (exec comptroller s op) := by\n  obtain \u27e8hc, hgS_le, hgB_le, hsp1, hsp2, hgS_or, hgB_or\u27e9 := hInv\n  unfold Consistent at hc\n  obtain \u27e8hsup_blk, hbor_blk, hmem\u27e9 := hc\n  cases op with\n  | advance k =>\n    simp only [exec, emittedBy, nextSpeeds]\n    have hPot := pot_advance s k gS gB hsup_blk hbor_blk\n    rw [hPot, hsp1, hsp2]\n    refine \u27e8Nat.le_refl _, ?_\u27e9\n    -- Inv preserved: blockNumber grows, others same\n    unfold Inv Consistent\n    simp only\n    refine \u27e8\u27e8?_, ?_, ?_\u27e9, hgS_le, hgB_le, hsp1, hsp2, hgS_or, hgB_or\u27e9\n    \u00b7 omega\n    \u00b7 omega\n    \u00b7 intro a ha\n      have hm := hmem a ha\n      exact hm\n  | drip x =>\n    simp only [exec, emittedBy, nextSpeeds]\n    have hPot := pot_drip s x gS gB\n    rw [hPot]\n    simp only [Nat.mul_zero, Nat.add_zero]\n    exact \u27e8Nat.le_refl _, \u27e8\u27e8hsup_blk, hbor_blk, hmem\u27e9, hgS_le, hgB_le, hsp1, hsp2, hgS_or, hgB_or\u27e9\u27e9\n  | setSpeeds a b =>\n    -- In Inv states, comptroller succeeds via req_calls_succeed\n    have hc_inv : Consistent s := \u27e8hsup_blk, hbor_blk, hmem\u27e9\n    have hsome : (comptroller s (.setSpeeds a b)).isSome = true := req_calls_succeed s _ \u27e8hsup_blk, hbor_blk, hmem\u27e9\n    obtain \u27e8s', hs'\u27e9 := Option.isSome_iff_exists.mp hsome\n    have hsSet := req_set_speeds s a b s' hs'\n    -- exec returns s' (since getD with some)\n    have hexec : exec comptroller s (.setSpeeds a b) = s' := by\n      simp [exec, hs']\n    rw [hexec]\n    simp only [emittedBy, nextSpeeds, Nat.mul_zero, Nat.add_zero]\n    -- Need Pot s' \u2264 Pot s and Inv for (a,b)\n    sorry\n  | claim who =>\n    sorry\n  | mint who x =>\n    sorry\n  | redeem who x =>\n    sorry\n  | transfer src dst x =>\n    sorry\n  | borrow who x =>\n    sorry\n  | repay who x =>\n    sorry\n\ntheorem upgrade_Consistent (L : Legacy) (h : L.WellFormed) : Consistent (upgrade L) := by\n  unfold Legacy.WellFormed at h\n  obtain \u27e8hs_or, hs_le, hb_or, hb_le, hsup_blk, hbor_blk, hmem\u27e9 := h\n  unfold Consistent upgrade initSide\n  simp only\n  refine \u27e8?_, ?_, ?_\u27e9\n  \u00b7 by_cases hs0 : L.supplyIndex = 0\n    \u00b7 simp [hs0]\n    \u00b7 simp [hs0]\n      exact hsup_blk\n  \u00b7 by_cases hb0 : L.borrowIndex = 0\n    \u00b7 simp [hb0]\n    \u00b7 simp [hb0]\n      exact hbor_blk\n  \u00b7 intro a ha\n    have hm := hmem a ha\n    obtain \u27e8hs_rec, hb_rec\u27e9 := hm\n    refine \u27e8?_, ?_\u27e9\n    \u00b7 by_cases hs0 : L.supplyIndex = 0\n      \u00b7 simp [hs0] at hs_rec \u22a2\n        have : a.supplierIndex = 0 := by omega\n        simp [this]\n      \u00b7 simp [hs0]\n        exact hs_rec\n    \u00b7 by_cases hb0 : L.borrowIndex = 0\n      \u00b7 simp [hb0] at hb_rec \u22a2\n        have : a.borrowerIndex = 0 := by omega\n        simp [this]\n      \u00b7 simp [hb0]\n        exact hb_rec\n\ntheorem upgrade_Inv (L : Legacy) (h : L.WellFormed) :\n    Inv L.supplyStart L.borrowStart (L.compSpeed, L.compSpeed) (upgrade L) := by\n  have hc' : Consistent (upgrade L) := upgrade_Consistent L h\n  unfold Legacy.WellFormed at h\n  obtain \u27e8hs_or, hs_le, hb_or, hb_le, hsup_blk, hbor_blk, hmem\u27e9 := h\n  unfold Inv\n  refine \u27e8hc', ?_, ?_, ?_, ?_, hs_or, hb_or\u27e9\n  \u00b7 unfold upgrade initSide\n    simp only\n    by_cases hs0 : L.supplyIndex = 0\n    \u00b7 simp [hs0]\n      rcases hs_or with h0 | h0\n      \u00b7 rw [h0]\n        exact Nat.zero_le _\n      \u00b7 rw [h0]\n        exact Nat.le_refl _\n    \u00b7 simp [hs0]\n      exact hs_le\n  \u00b7 unfold upgrade initSide\n    simp only\n    by_cases hb0 : L.borrowIndex = 0\n    \u00b7 simp [hb0]\n      rcases hb_or with h0 | h0\n      \u00b7 rw [h0]\n        exact Nat.zero_le _\n      \u00b7 rw [h0]\n        exact Nat.le_refl _\n    \u00b7 simp [hb0]\n      exact hb_le\n  \u00b7 unfold upgrade initSide\n    simp only\n    by_cases hs0 : L.supplyIndex = 0\n    \u00b7 simp [hs0]\n    \u00b7 simp [hs0]\n  \u00b7 unfold upgrade initSide\n    simp only\n    by_cases hb0 : L.borrowIndex = 0\n    \u00b7 simp [hb0]\n    \u00b7 simp [hb0]\n\ntheorem req_rewards_bounded : RewardsBounded comptroller := sorry\ntheorem req_account_bounded : AccountBounded comptroller := sorry\ntheorem req_no_backdated : NoBackdatedRewards comptroller := sorry\n\nend CompRewards\n"
+ },
+ "proved": [
+  {
+   "name": "comptroller",
+   "kind": "def",
+   "text": "def comptroller : Impl := fun s c =>\n  match c with\n  | .supplyHook who => do\n    let s \u2190 updateCompSupplyIndex s\n    distributeSupplierComp s who\n  | .borrowHook who => do\n    let s \u2190 updateCompBorrowIndex s\n    distributeBorrowerComp s who\n  | .claim who => claimComp s who\n  | .setSpeeds a b => setCompSpeedInternal s a b",
+   "deps": [
+    "claimComp",
+    "distributeBorrowerComp",
+    "distributeSupplierComp",
+    "fraction",
+    "grantCompInternal",
+    "mulDouble",
+    "setBorrowSpeed",
+    "setCompSpeedInternal",
+    "setSupplySpeed",
+    "subChecked",
+    "updateCompBorrowIndex",
+    "updateCompSupplyIndex"
+   ],
+   "statement": "def comptroller : Impl := fun s c =>\n  match c with\n  | .supplyHook who => do\n    let s \u2190 updateCompSupplyIndex s\n    distributeSupplierComp s who\n  | .borrowHook who => do\n    let s \u2190 updateCompBorrowIndex s\n    distributeBorrowerComp s who\n  | .claim who => claimComp s who\n  | .setSpeeds a b => setCompSpeedInternal s a b",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "setCompSpeedInternal",
+   "kind": "def",
+   "text": "def setCompSpeedInternal (s : St) (supplySpeed borrowSpeed : Nat) : Option St :=\n  (setSupplySpeed s supplySpeed).bind fun s => setBorrowSpeed s borrowSpeed",
+   "deps": [
+    "fraction",
+    "setBorrowSpeed",
+    "setSupplySpeed",
+    "subChecked",
+    "updateCompBorrowIndex",
+    "updateCompSupplyIndex"
+   ],
+   "statement": "def setCompSpeedInternal (s : St) (supplySpeed borrowSpeed : Nat) : Option St :=\n  (setSupplySpeed s supplySpeed).bind fun s => setBorrowSpeed s borrowSpeed",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "setBorrowSpeed",
+   "kind": "def",
+   "text": "def setBorrowSpeed (s : St) (borrowSpeed : Nat) : Option St :=\n  if s.borrowState.speed \u2260 borrowSpeed then\n    (updateCompBorrowIndex s).map fun s =>\n      { s with borrowState := { s.borrowState with speed := borrowSpeed } }\n  else some s",
+   "deps": [
+    "fraction",
+    "subChecked",
+    "updateCompBorrowIndex"
+   ],
+   "statement": "def setBorrowSpeed (s : St) (borrowSpeed : Nat) : Option St :=\n  if s.borrowState.speed \u2260 borrowSpeed then\n    (updateCompBorrowIndex s).map fun s =>\n      { s with borrowState := { s.borrowState with speed := borrowSpeed } }\n  else some s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "setSupplySpeed",
+   "kind": "def",
+   "text": "def setSupplySpeed (s : St) (supplySpeed : Nat) : Option St :=\n  if s.supplyState.speed \u2260 supplySpeed then\n    (updateCompSupplyIndex s).map fun s =>\n      { s with supplyState := { s.supplyState with speed := supplySpeed } }\n  else some s",
+   "deps": [
+    "fraction",
+    "subChecked",
+    "updateCompSupplyIndex"
+   ],
+   "statement": "def setSupplySpeed (s : St) (supplySpeed : Nat) : Option St :=\n  if s.supplyState.speed \u2260 supplySpeed then\n    (updateCompSupplyIndex s).map fun s =>\n      { s with supplyState := { s.supplyState with speed := supplySpeed } }\n  else some s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "claimComp",
+   "kind": "def",
+   "text": "def claimComp (s : St) (holder : Account) : Option St := do\n  let s \u2190 updateCompBorrowIndex s\n  let s \u2190 distributeBorrowerComp s holder\n  let s \u2190 updateCompSupplyIndex s\n  let s \u2190 distributeSupplierComp s holder\n  return grantCompInternal s holder",
+   "deps": [
+    "distributeBorrowerComp",
+    "distributeSupplierComp",
+    "fraction",
+    "grantCompInternal",
+    "mulDouble",
+    "subChecked",
+    "updateCompBorrowIndex",
+    "updateCompSupplyIndex"
+   ],
+   "statement": "def claimComp (s : St) (holder : Account) : Option St := do\n  let s \u2190 updateCompBorrowIndex s\n  let s \u2190 distributeBorrowerComp s holder\n  let s \u2190 updateCompSupplyIndex s\n  let s \u2190 distributeSupplierComp s holder\n  return grantCompInternal s holder",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "grantCompInternal",
+   "kind": "def",
+   "text": "def grantCompInternal (s : St) (user : Account) : St :=\n  let amount := (s.acct user).accrued\n  if amount > 0 \u2227 amount \u2264 s.reserve then\n    { s with reserve := s.reserve - amount,\n             accts := s.accts.modify user fun a => { a with accrued := 0, wallet := a.wallet + amount } }\n  else s",
+   "deps": [],
+   "statement": "def grantCompInternal (s : St) (user : Account) : St :=\n  let amount := (s.acct user).accrued\n  if amount > 0 \u2227 amount \u2264 s.reserve then\n    { s with reserve := s.reserve - amount,\n             accts := s.accts.modify user fun a => { a with accrued := 0, wallet := a.wallet + amount } }\n  else s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "distributeBorrowerComp",
+   "kind": "def",
+   "text": "def distributeBorrowerComp (s : St) (borrower : Account) : Option St :=\n  let borrowIndex := s.borrowState.index\n  let borrowerIndex :=\n    if (s.acct borrower).borrowerIndex = 0 \u2227 compInitialIndex \u2264 borrowIndex then compInitialIndex\n    else (s.acct borrower).borrowerIndex\n  match subChecked borrowIndex borrowerIndex with\n  | none => none\n  | some deltaIndex =>\n    let borrowerDelta := mulDouble (s.acct borrower).borrow deltaIndex\n    some (s.withAcct borrower fun a =>\n      { a with borrowerIndex := borrowIndex, accrued := a.accrued + borrowerDelta })",
+   "deps": [
+    "mulDouble",
+    "subChecked"
+   ],
+   "statement": "def distributeBorrowerComp (s : St) (borrower : Account) : Option St :=\n  let borrowIndex := s.borrowState.index\n  let borrowerIndex :=\n    if (s.acct borrower).borrowerIndex = 0 \u2227 compInitialIndex \u2264 borrowIndex then compInitialIndex\n    else (s.acct borrower).borrowerIndex\n  match subChecked borrowIndex borrowerIndex with\n  | none => none\n  | some deltaIndex =>\n    let borrowerDelta := mulDouble (s.acct borrower).borrow deltaIndex\n    some (s.withAcct borrower fun a =>\n      { a with borrowerIndex := borrowIndex, accrued := a.accrued + borrowerDelta })",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "distributeSupplierComp",
+   "kind": "def",
+   "text": "def distributeSupplierComp (s : St) (supplier : Account) : Option St :=\n  let supplyIndex := s.supplyState.index\n  let supplierIndex :=\n    if (s.acct supplier).supplierIndex = 0 \u2227 compInitialIndex \u2264 supplyIndex then compInitialIndex\n    else (s.acct supplier).supplierIndex\n  match subChecked supplyIndex supplierIndex with\n  | none => none\n  | some deltaIndex =>\n    let supplierDelta := mulDouble (s.acct supplier).supply deltaIndex\n    some (s.withAcct supplier fun a =>\n      { a with supplierIndex := supplyIndex, accrued := a.accrued + supplierDelta })",
+   "deps": [
+    "mulDouble",
+    "subChecked"
+   ],
+   "statement": "def distributeSupplierComp (s : St) (supplier : Account) : Option St :=\n  let supplyIndex := s.supplyState.index\n  let supplierIndex :=\n    if (s.acct supplier).supplierIndex = 0 \u2227 compInitialIndex \u2264 supplyIndex then compInitialIndex\n    else (s.acct supplier).supplierIndex\n  match subChecked supplyIndex supplierIndex with\n  | none => none\n  | some deltaIndex =>\n    let supplierDelta := mulDouble (s.acct supplier).supply deltaIndex\n    some (s.withAcct supplier fun a =>\n      { a with supplierIndex := supplyIndex, accrued := a.accrued + supplierDelta })",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "updateCompBorrowIndex",
+   "kind": "def",
+   "text": "def updateCompBorrowIndex (s : St) : Option St :=\n  match subChecked s.blockNumber s.borrowState.block with\n  | none => none\n  | some deltaBlocks =>\n    if deltaBlocks > 0 \u2227 s.borrowState.speed > 0 then\n      let borrowAmount := totalBorrows s\n      let compAccrued := deltaBlocks * s.borrowState.speed\n      let ratio := if borrowAmount > 0 then fraction compAccrued borrowAmount else 0\n      some { s with borrowState :=\n        { s.borrowState with index := s.borrowState.index + ratio, block := s.blockNumber } }\n    else if deltaBlocks > 0 then\n      some { s with borrowState := { s.borrowState with block := s.blockNumber } }\n    else some s",
+   "deps": [
+    "fraction",
+    "subChecked"
+   ],
+   "statement": "def updateCompBorrowIndex (s : St) : Option St :=\n  match subChecked s.blockNumber s.borrowState.block with\n  | none => none\n  | some deltaBlocks =>\n    if deltaBlocks > 0 \u2227 s.borrowState.speed > 0 then\n      let borrowAmount := totalBorrows s\n      let compAccrued := deltaBlocks * s.borrowState.speed\n      let ratio := if borrowAmount > 0 then fraction compAccrued borrowAmount else 0\n      some { s with borrowState :=\n        { s.borrowState with index := s.borrowState.index + ratio, block := s.blockNumber } }\n    else if deltaBlocks > 0 then\n      some { s with borrowState := { s.borrowState with block := s.blockNumber } }\n    else some s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "updateCompSupplyIndex",
+   "kind": "def",
+   "text": "def updateCompSupplyIndex (s : St) : Option St :=\n  match subChecked s.blockNumber s.supplyState.block with\n  | none => none\n  | some deltaBlocks =>\n    if deltaBlocks > 0 \u2227 s.supplyState.speed > 0 then\n      let supplyTokens := totalSupply s\n      let compAccrued := deltaBlocks * s.supplyState.speed\n      let ratio := if supplyTokens > 0 then fraction compAccrued supplyTokens else 0\n      some { s with supplyState :=\n        { s.supplyState with index := s.supplyState.index + ratio, block := s.blockNumber } }\n    else if deltaBlocks > 0 then\n      some { s with supplyState := { s.supplyState with block := s.blockNumber } }\n    else some s",
+   "deps": [
+    "fraction",
+    "subChecked"
+   ],
+   "statement": "def updateCompSupplyIndex (s : St) : Option St :=\n  match subChecked s.blockNumber s.supplyState.block with\n  | none => none\n  | some deltaBlocks =>\n    if deltaBlocks > 0 \u2227 s.supplyState.speed > 0 then\n      let supplyTokens := totalSupply s\n      let compAccrued := deltaBlocks * s.supplyState.speed\n      let ratio := if supplyTokens > 0 then fraction compAccrued supplyTokens else 0\n      some { s with supplyState :=\n        { s.supplyState with index := s.supplyState.index + ratio, block := s.blockNumber } }\n    else if deltaBlocks > 0 then\n      some { s with supplyState := { s.supplyState with block := s.blockNumber } }\n    else some s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "subChecked",
+   "kind": "def",
+   "text": "def subChecked (a b : Nat) : Option Nat := if b \u2264 a then some (a - b) else none",
+   "deps": [],
+   "statement": "def subChecked (a b : Nat) : Option Nat := if b \u2264 a then some (a - b) else none",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "mulDouble",
+   "kind": "def",
+   "text": "def mulDouble (a mantissa : Nat) : Nat := a * mantissa / doubleScale",
+   "deps": [],
+   "statement": "def mulDouble (a mantissa : Nat) : Nat := a * mantissa / doubleScale",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "fraction",
+   "kind": "def",
+   "text": "def fraction (a b : Nat) : Nat := a * doubleScale / b",
+   "deps": [],
+   "statement": "def fraction (a b : Nat) : Nat := a * doubleScale / b",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "grant_eq",
+   "kind": "theorem",
+   "text": "theorem grant_eq (s : St) (who : Account) : grantCompInternal s who = grant s who := by\n  unfold grantCompInternal grant St.acct\n  by_cases h : 0 < (s.accts.getD who noAcct).accrued \u2227 (s.accts.getD who noAcct).accrued \u2264 s.reserve\n  \u00b7 simp only [h, \u2193reduceIte]\n    have harg : (fun a : Acct => ({ a with accrued := 0, wallet := a.wallet + (s.accts.getD who noAcct).accrued } : Acct)) (s.accts.getD who noAcct) = (fun a : Acct => ({ a with accrued := 0, wallet := a.wallet + a.accrued } : Acct)) (s.accts.getD who noAcct) := by rfl\n    have hmod : s.accts.modify who (fun a : Acct => ({ a with accrued := 0, wallet := a.wallet + (s.accts.getD who noAcct).accrued } : Acct)) = s.accts.modify who (fun a : Acct => ({ a with accrued := 0, wallet := a.wallet + a.accrued } : Acct)) :=\n      modify_congr_acct _ _ _ _ harg\n    simp only [hmod]\n  \u00b7 simp only [h, \u2193reduceIte]",
+   "deps": [
+    "grantCompInternal",
+    "modify_congr_acct"
+   ],
+   "statement": "theorem grant_eq (s : St) (who : Account) : grantCompInternal s who = grant s who",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "distributeBorrow_of_some",
+   "kind": "theorem",
+   "text": "theorem distributeBorrow_of_some (s1 : St) (who : Account) (s' : St)\n    (h : distributeBorrowerComp s1 who = some s') :\n    accrualStart (s1.acct who).borrowerIndex s1.borrowState.index \u2264 s1.borrowState.index \u2227\n    s' = { s1 with accts := s1.accts.modify who fun a => { a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + creditFor a.borrow (accrualStart a.borrowerIndex s1.borrowState.index) s1.borrowState.index } } := by\n  unfold distributeBorrowerComp subChecked St.acct at h\n  simp only at h\n  have hsup : (if (s1.accts.getD who noAcct).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.accts.getD who noAcct).borrowerIndex) = accrualStart (s1.accts.getD who noAcct).borrowerIndex s1.borrowState.index := borrowStart_eq _ _\n  by_cases hle : (if (s1.accts.getD who noAcct).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.accts.getD who noAcct).borrowerIndex) \u2264 s1.borrowState.index\n  \u00b7 simp only [hle, \u2193reduceIte] at h\n    have hle2 : accrualStart (s1.accts.getD who noAcct).borrowerIndex s1.borrowState.index \u2264 s1.borrowState.index := by\n      rw [\u2190 hsup]; exact hle\n    refine \u27e8hle2, ?_\u27e9\n    have hs' : s' = s1.withAcct who fun a => { a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + mulDouble (s1.accts.getD who noAcct).borrow (s1.borrowState.index - (if (s1.accts.getD who noAcct).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.accts.getD who noAcct).borrowerIndex)) } := by\n      cases h\n      rfl\n    rw [hs']\n    unfold St.withAcct creditFor mulDouble\n    congr 1\n    apply modify_congr_acct\n    have hdelta : (s1.borrowState.index - (if (s1.accts.getD who noAcct).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.accts.getD who noAcct).borrowerIndex)) = (s1.borrowState.index - accrualStart (s1.accts.getD who noAcct).borrowerIndex s1.borrowState.index) := by rw [hsup]\n    have harg : (fun a : Acct => { a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + (s1.accts.getD who noAcct).borrow * (s1.borrowState.index - (if (s1.accts.getD who noAcct).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.accts.getD who noAcct).borrowerIndex)) / doubleScale }) (s1.accts.getD who noAcct) = (fun a : Acct => { a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + a.borrow * (s1.borrowState.index - accrualStart a.borrowerIndex s1.borrowState.index) / doubleScale }) (s1.accts.getD who noAcct) := by\n      simp only [hdelta]\n    exact harg\n  \u00b7 simp only [hle, \u2193reduceIte] at h\n    cases h",
+   "deps": [
+    "borrowStart_eq",
+    "distributeBorrowerComp",
+    "modify_congr_acct",
+    "mulDouble",
+    "subChecked",
+    "supplyStart_eq"
+   ],
+   "statement": "theorem distributeBorrow_of_some (s1 : St) (who : Account) (s' : St)\n    (h : distributeBorrowerComp s1 who = some s') :\n    accrualStart (s1.acct who).borrowerIndex s1.borrowState.index \u2264 s1.borrowState.index \u2227\n    s' = { s1 with accts := s1.accts.modify who fun a => { a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + creditFor a.borrow (accrualStart a.borrowerIndex s1.borrowState.index) s1.borrowState.index } }",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "distributeSupply_of_some",
+   "kind": "theorem",
+   "text": "theorem distributeSupply_of_some (s1 : St) (who : Account) (s' : St)\n    (h : distributeSupplierComp s1 who = some s') :\n    accrualStart (s1.acct who).supplierIndex s1.supplyState.index \u2264 s1.supplyState.index \u2227\n    s' = { s1 with accts := s1.accts.modify who fun a => { a with supplierIndex := s1.supplyState.index, accrued := a.accrued + creditFor a.supply (accrualStart a.supplierIndex s1.supplyState.index) s1.supplyState.index } } := by\n  unfold distributeSupplierComp subChecked St.acct at h\n  simp only at h\n  have hsup : (if (s1.accts.getD who noAcct).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.accts.getD who noAcct).supplierIndex) = accrualStart (s1.accts.getD who noAcct).supplierIndex s1.supplyState.index := supplyStart_eq _ _\n  -- analyze the match\n  by_cases hle : (if (s1.accts.getD who noAcct).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.accts.getD who noAcct).supplierIndex) \u2264 s1.supplyState.index\n  \u00b7 simp only [hle, \u2193reduceIte] at h\n    have hle2 : accrualStart (s1.accts.getD who noAcct).supplierIndex s1.supplyState.index \u2264 s1.supplyState.index := by\n      rw [\u2190 hsup]; exact hle\n    refine \u27e8hle2, ?_\u27e9\n    have hs' : s' = s1.withAcct who fun a => { a with supplierIndex := s1.supplyState.index, accrued := a.accrued + mulDouble (s1.accts.getD who noAcct).supply (s1.supplyState.index - (if (s1.accts.getD who noAcct).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.accts.getD who noAcct).supplierIndex)) } := by\n      cases h\n      rfl\n    rw [hs']\n    unfold St.withAcct creditFor mulDouble\n    congr 1\n    apply modify_congr_acct\n    have hdelta : (s1.supplyState.index - (if (s1.accts.getD who noAcct).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.accts.getD who noAcct).supplierIndex)) = (s1.supplyState.index - accrualStart (s1.accts.getD who noAcct).supplierIndex s1.supplyState.index) := by rw [hsup]\n    have harg : (fun a : Acct => { a with supplierIndex := s1.supplyState.index, accrued := a.accrued + (s1.accts.getD who noAcct).supply * (s1.supplyState.index - (if (s1.accts.getD who noAcct).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.accts.getD who noAcct).supplierIndex)) / doubleScale }) (s1.accts.getD who noAcct) = (fun a : Acct => { a with supplierIndex := s1.supplyState.index, accrued := a.accrued + a.supply * (s1.supplyState.index - accrualStart a.supplierIndex s1.supplyState.index) / doubleScale }) (s1.accts.getD who noAcct) := by\n      simp only [hdelta]\n    exact harg\n  \u00b7 simp only [hle, \u2193reduceIte] at h\n    cases h",
+   "deps": [
+    "distributeSupplierComp",
+    "modify_congr_acct",
+    "mulDouble",
+    "subChecked",
+    "supplyStart_eq"
+   ],
+   "statement": "theorem distributeSupply_of_some (s1 : St) (who : Account) (s' : St)\n    (h : distributeSupplierComp s1 who = some s') :\n    accrualStart (s1.acct who).supplierIndex s1.supplyState.index \u2264 s1.supplyState.index \u2227\n    s' = { s1 with accts := s1.accts.modify who fun a => { a with supplierIndex := s1.supplyState.index, accrued := a.accrued + creditFor a.supply (accrualStart a.supplierIndex s1.supplyState.index) s1.supplyState.index } }",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "borrowStart_eq",
+   "kind": "theorem",
+   "text": "theorem borrowStart_eq (rec idx : Nat) :\n    (if rec = 0 \u2227 compInitialIndex \u2264 idx then compInitialIndex else rec) = accrualStart rec idx := supplyStart_eq rec idx",
+   "deps": [
+    "supplyStart_eq"
+   ],
+   "statement": "theorem borrowStart_eq (rec idx : Nat) :\n    (if rec = 0 \u2227 compInitialIndex \u2264 idx then compInitialIndex else rec) = accrualStart rec idx",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "supplyStart_eq",
+   "kind": "theorem",
+   "text": "theorem supplyStart_eq (rec idx : Nat) :\n    (if rec = 0 \u2227 compInitialIndex \u2264 idx then compInitialIndex else rec) = accrualStart rec idx := by\n  unfold accrualStart\n  by_cases h0 : rec = 0 <;> simp [h0]",
+   "deps": [],
+   "statement": "theorem supplyStart_eq (rec idx : Nat) :\n    (if rec = 0 \u2227 compInitialIndex \u2264 idx then compInitialIndex else rec) = accrualStart rec idx",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "updateBorrow_of_some",
+   "kind": "theorem",
+   "text": "theorem updateBorrow_of_some (s s1 : St) (h : updateCompBorrowIndex s = some s1) :\n    s.borrowState.block \u2264 s.blockNumber \u2227 s1 = { s with borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s) } := by\n  by_cases hle : s.borrowState.block \u2264 s.blockNumber\n  \u00b7 have heq := updateBorrow_some s hle\n    rw [heq] at h\n    refine \u27e8hle, ?_\u27e9\n    cases h\n    rfl\n  \u00b7 unfold updateCompBorrowIndex subChecked at h\n    simp only [hle, \u2193reduceIte] at h\n    cases h",
+   "deps": [
+    "fraction",
+    "subChecked",
+    "updateBorrow_some",
+    "updateCompBorrowIndex"
+   ],
+   "statement": "theorem updateBorrow_of_some (s s1 : St) (h : updateCompBorrowIndex s = some s1) :\n    s.borrowState.block \u2264 s.blockNumber \u2227 s1 = { s with borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s) }",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "updateSupply_of_some",
+   "kind": "theorem",
+   "text": "theorem updateSupply_of_some (s s1 : St) (h : updateCompSupplyIndex s = some s1) :\n    s.supplyState.block \u2264 s.blockNumber \u2227 s1 = { s with supplyState := accrueSide s.supplyState s.blockNumber (totalSupply s) } := by\n  by_cases hle : s.supplyState.block \u2264 s.blockNumber\n  \u00b7 have heq := updateSupply_some s hle\n    rw [heq] at h\n    refine \u27e8hle, ?_\u27e9\n    cases h\n    rfl\n  \u00b7 unfold updateCompSupplyIndex subChecked at h\n    simp only [hle, \u2193reduceIte] at h\n    cases h",
+   "deps": [
+    "fraction",
+    "subChecked",
+    "updateCompSupplyIndex",
+    "updateSupply_some"
+   ],
+   "statement": "theorem updateSupply_of_some (s s1 : St) (h : updateCompSupplyIndex s = some s1) :\n    s.supplyState.block \u2264 s.blockNumber \u2227 s1 = { s with supplyState := accrueSide s.supplyState s.blockNumber (totalSupply s) }",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "updateBorrow_some",
+   "kind": "theorem",
+   "text": "theorem updateBorrow_some (s : St) (hle : s.borrowState.block \u2264 s.blockNumber) :\n    updateCompBorrowIndex s = some { s with borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s) } := by\n  unfold updateCompBorrowIndex accrueSide totalBorrows subChecked fraction\n  simp only [hle, \u2193reduceIte]\n  by_cases hd : 0 < s.blockNumber - s.borrowState.block \u2227 0 < s.borrowState.speed \u2227 0 < (List.map Acct.borrow s.accts).sum\n  \u00b7 obtain \u27e8hd1, hd2, hd3\u27e9 := hd\n    simp only [hd1, hd2, hd3, and_self, \u2193reduceIte]\n  \u00b7 simp only [hd, \u2193reduceIte]\n    by_cases h1 : s.blockNumber - s.borrowState.block > 0 \u2227 s.borrowState.speed > 0\n    \u00b7 obtain \u27e8h1a, h1b\u27e9 := h1\n      simp only [h1a, h1b, and_self, \u2193reduceIte]\n      by_cases h2 : 0 < (List.map Acct.borrow s.accts).sum\n      \u00b7 exact absurd \u27e8h1a, h1b, h2\u27e9 hd\n      \u00b7 have hz : (List.map Acct.borrow s.accts).sum = 0 := by omega\n        simp only [hz, Nat.lt_irrefl, \u2193reduceIte, Nat.add_zero]\n    \u00b7 simp only [h1]\n      by_cases h3 : s.blockNumber - s.borrowState.block > 0\n      \u00b7 simp only [h3, \u2193reduceIte]\n      \u00b7 simp only [h3, \u2193reduceIte]\n        have heq : s.borrowState.block = s.blockNumber := by omega\n        obtain \u27e8bn, sup, bor, res, accts\u27e9 := s\n        simp only at heq hle \u22a2\n        subst heq\n        rfl",
+   "deps": [
+    "fraction",
+    "subChecked",
+    "updateCompBorrowIndex"
+   ],
+   "statement": "theorem updateBorrow_some (s : St) (hle : s.borrowState.block \u2264 s.blockNumber) :\n    updateCompBorrowIndex s = some { s with borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s) }",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "updateSupply_some",
+   "kind": "theorem",
+   "text": "theorem updateSupply_some (s : St) (hle : s.supplyState.block \u2264 s.blockNumber) :\n    updateCompSupplyIndex s = some { s with supplyState := accrueSide s.supplyState s.blockNumber (totalSupply s) } := by\n  unfold updateCompSupplyIndex accrueSide totalSupply subChecked fraction\n  simp only [hle, \u2193reduceIte]\n  by_cases hd : 0 < s.blockNumber - s.supplyState.block \u2227 0 < s.supplyState.speed \u2227 0 < (List.map Acct.supply s.accts).sum\n  \u00b7 obtain \u27e8hd1, hd2, hd3\u27e9 := hd\n    simp only [hd1, hd2, hd3, and_self, \u2193reduceIte]\n  \u00b7 simp only [hd, \u2193reduceIte]\n    by_cases h1 : s.blockNumber - s.supplyState.block > 0 \u2227 s.supplyState.speed > 0\n    \u00b7 obtain \u27e8h1a, h1b\u27e9 := h1\n      simp only [h1a, h1b, and_self, \u2193reduceIte]\n      by_cases h2 : 0 < (List.map Acct.supply s.accts).sum\n      \u00b7 exact absurd \u27e8h1a, h1b, h2\u27e9 hd\n      \u00b7 have hz : (List.map Acct.supply s.accts).sum = 0 := by omega\n        simp only [hz, Nat.lt_irrefl, \u2193reduceIte, Nat.add_zero]\n    \u00b7 simp only [h1]\n      by_cases h3 : s.blockNumber - s.supplyState.block > 0\n      \u00b7 simp only [h3, \u2193reduceIte]\n      \u00b7 simp only [h3, \u2193reduceIte]\n        have heq : s.supplyState.block = s.blockNumber := by omega\n        obtain \u27e8bn, sup, bor, res, accts\u27e9 := s\n        simp only at heq hle \u22a2\n        subst heq\n        rfl",
+   "deps": [
+    "fraction",
+    "subChecked",
+    "updateCompSupplyIndex"
+   ],
+   "statement": "theorem updateSupply_some (s : St) (hle : s.supplyState.block \u2264 s.blockNumber) :\n    updateCompSupplyIndex s = some { s with supplyState := accrueSide s.supplyState s.blockNumber (totalSupply s) }",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "modify_congr_acct",
+   "kind": "theorem",
+   "text": "theorem modify_congr_acct (l : List Acct) (w : Nat) (f1 f2 : Acct \u2192 Acct)\n    (h : f1 (l.getD w noAcct) = f2 (l.getD w noAcct)) : l.modify w f1 = l.modify w f2 := by\n  induction l generalizing w with\n  | nil =>\n    cases w <;> rfl\n  | cons hd tl ih =>\n    cases w with\n    | zero =>\n      have h' : f1 hd = f2 hd := h\n      show f1 hd :: tl = f2 hd :: tl\n      rw [h']\n    | succ w =>\n      have h' : f1 (tl.getD w noAcct) = f2 (tl.getD w noAcct) := h\n      show hd :: tl.modify w f1 = hd :: tl.modify w f2\n      rw [ih w h']",
+   "deps": [],
+   "statement": "theorem modify_congr_acct (l : List Acct) (w : Nat) (f1 f2 : Acct \u2192 Acct)\n    (h : f1 (l.getD w noAcct) = f2 (l.getD w noAcct)) : l.modify w f1 = l.modify w f2",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "comptroller",
+   "kind": "def",
+   "text": "def comptroller : Impl := fun s c =>\n  match c with\n  | .supplyHook who => do\n    let s \u2190 updateCompSupplyIndex s\n    distributeSupplierComp s who\n  | .borrowHook who => do\n    let s \u2190 updateCompBorrowIndex s\n    distributeBorrowerComp s who\n  | .claim who => claimComp s who\n  | .setSpeeds a b => setCompSpeedInternal s a b\n\n-- Helper: modify congruence",
+   "deps": [
+    "claimComp",
+    "distributeBorrowerComp",
+    "distributeSupplierComp",
+    "fraction",
+    "grantCompInternal",
+    "mulDouble",
+    "setBorrowSpeed",
+    "setCompSpeedInternal",
+    "setSupplySpeed",
+    "subChecked",
+    "updateCompBorrowIndex",
+    "updateCompSupplyIndex"
+   ],
+   "statement": "def comptroller : Impl := fun s c =>\n  match c with\n  | .supplyHook who => do\n    let s \u2190 updateCompSupplyIndex s\n    distributeSupplierComp s who\n  | .borrowHook who => do\n    let s \u2190 updateCompBorrowIndex s\n    distributeBorrowerComp s who\n  | .claim who => claimComp s who\n  | .setSpeeds a b => setCompSpeedInternal s a b\n\n-- Helper: modify congruence",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "req_set_speeds",
+   "kind": "theorem",
+   "text": "theorem req_set_speeds : SetSpeedsEffects comptroller := by\n  intro s a b s' h\n  unfold comptroller setCompSpeedInternal at h\n  simp only at h\n  cases hs : setSupplySpeed s a with\n  | none =>\n    simp only [hs] at h\n    simp at h\n  | some t =>\n    simp only [hs] at h\n    simp at h\n    cases hb : setBorrowSpeed t b with\n    | none =>\n      simp only [hb] at h\n      simp at h\n    | some s2 =>\n      simp only [hb] at h\n      simp at h\n      obtain \u27e8hs_le, hs_eq\u27e9 := setSupply_of_some s t a hs\n      obtain \u27e8hb_le, hb_eq\u27e9 := setBorrow_of_some t s2 b hb\n      cases h\n      unfold SpeedsSet\n      refine \u27e8?_, ?_, ?_\u27e9\n      \u00b7 intro hne\n        exact hs_le hne\n      \u00b7 intro hne_s\n        have ht_bn : t.blockNumber = s.blockNumber := by\n          rw [hs_eq]\n          split\n          \u00b7 rfl\n          \u00b7 rfl\n        have ht_bor : t.borrowState = s.borrowState := by\n          rw [hs_eq]\n          split\n          \u00b7 rfl\n          \u00b7 rfl\n        have hspeed : t.borrowState.speed = s.borrowState.speed := by rw [ht_bor]\n        have hne_t : t.borrowState.speed \u2260 b := by simpa [hspeed] using hne_s\n        have hle := hb_le hne_t\n        simpa [ht_bn, ht_bor] using hle\n      \u00b7 by_cases heq_sup : s.supplyState.speed = a\n        \u00b7 simp [heq_sup] at hs_eq\n          have ht : t = s := hs_eq\n          rw [ht] at hb_eq\n          by_cases heq_bor : s.borrowState.speed = b\n          \u00b7 simp [heq_sup, heq_bor] at hb_eq \u22a2\n            exact hb_eq\n          \u00b7 simp [heq_sup, heq_bor] at hb_eq \u22a2\n            exact hb_eq\n        \u00b7 simp [heq_sup] at hs_eq\n          have ht_bn : t.blockNumber = s.blockNumber := by rw [hs_eq]\n          have ht_bor : t.borrowState = s.borrowState := by rw [hs_eq]\n          have ht_accts : t.accts = s.accts := by rw [hs_eq]\n          have htot_bor : totalBorrows t = totalBorrows s := by simp [totalBorrows, ht_accts]\n          have hspeed_eq : s.borrowState.speed = t.borrowState.speed := by rw [ht_bor]\n          have hacc : accrueSide t.borrowState t.blockNumber (totalBorrows t) = accrueSide s.borrowState s.blockNumber (totalBorrows s) := by\n            rw [ht_bor, ht_bn, htot_bor]\n          by_cases heq_bor : t.borrowState.speed = b\n          \u00b7 simp [heq_bor] at hb_eq\n            have heq_bor_s : s.borrowState.speed = b := hspeed_eq.trans heq_bor\n            simp [heq_sup, heq_bor_s] at \u22a2\n            simp [hb_eq, hs_eq]\n          \u00b7 simp [heq_bor] at hb_eq\n            have heq_bor_s : s.borrowState.speed \u2260 b := by simpa [hspeed_eq] using heq_bor\n            simp [heq_sup, heq_bor_s] at \u22a2\n            simp [hb_eq, hs_eq, hacc, totalBorrows, totalSupply]",
+   "deps": [
+    "claimComp",
+    "comptroller",
+    "distributeBorrowerComp",
+    "distributeSupplierComp",
+    "fraction",
+    "grantCompInternal",
+    "mulDouble",
+    "setBorrowSpeed",
+    "setBorrow_of_some",
+    "setCompSpeedInternal",
+    "setSupplySpeed",
+    "setSupply_of_some",
+    "subChecked",
+    "updateBorrow_of_some",
+    "updateBorrow_some",
+    "updateCompBorrowIndex",
+    "updateCompSupplyIndex",
+    "updateSupply_of_some",
+    "updateSupply_some"
+   ],
+   "statement": "theorem req_set_speeds : SetSpeedsEffects comptroller",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "setBorrow_of_some",
+   "kind": "theorem",
+   "text": "theorem setBorrow_of_some (t s2 : St) (b : Nat) (h : setBorrowSpeed t b = some s2) :\n    (t.borrowState.speed \u2260 b \u2192 t.borrowState.block \u2264 t.blockNumber) \u2227\n    s2 = (if t.borrowState.speed = b then t else { t with borrowState := { accrueSide t.borrowState t.blockNumber (totalBorrows t) with speed := b } }) := by\n  unfold setBorrowSpeed at h\n  by_cases heq : t.borrowState.speed = b\n  \u00b7 simp [heq] at h\n    cases h\n    refine \u27e8fun hn => absurd heq hn, ?_\u27e9\n    simp [heq]\n  \u00b7 simp [heq] at h\n    cases hu : updateCompBorrowIndex t with\n    | none =>\n      simp only [hu] at h\n      simp at h\n    | some s1 =>\n      simp only [hu] at h\n      simp at h\n      obtain \u27e8hle, heq1\u27e9 := updateBorrow_of_some t s1 hu\n      cases h\n      refine \u27e8fun _ => hle, ?_\u27e9\n      simp [heq, heq1]",
+   "deps": [
+    "fraction",
+    "setBorrowSpeed",
+    "subChecked",
+    "updateBorrow_of_some",
+    "updateBorrow_some",
+    "updateCompBorrowIndex"
+   ],
+   "statement": "theorem setBorrow_of_some (t s2 : St) (b : Nat) (h : setBorrowSpeed t b = some s2) :\n    (t.borrowState.speed \u2260 b \u2192 t.borrowState.block \u2264 t.blockNumber) \u2227\n    s2 = (if t.borrowState.speed = b then t else { t with borrowState := { accrueSide t.borrowState t.blockNumber (totalBorrows t) with speed := b } })",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "setSupply_of_some",
+   "kind": "theorem",
+   "text": "theorem setSupply_of_some (s t : St) (a : Nat) (h : setSupplySpeed s a = some t) :\n    (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n    t = (if s.supplyState.speed = a then s else { s with supplyState := { accrueSide s.supplyState s.blockNumber (totalSupply s) with speed := a } }) := by\n  unfold setSupplySpeed at h\n  by_cases heq : s.supplyState.speed = a\n  \u00b7 simp [heq] at h\n    cases h\n    refine \u27e8fun hn => absurd heq hn, ?_\u27e9\n    simp [heq]\n  \u00b7 simp [heq] at h\n    cases hu : updateCompSupplyIndex s with\n    | none =>\n      simp only [hu] at h\n      simp at h\n    | some s1 =>\n      simp only [hu] at h\n      simp at h\n      obtain \u27e8hle, heq1\u27e9 := updateSupply_of_some s s1 hu\n      cases h\n      refine \u27e8fun _ => hle, ?_\u27e9\n      simp [heq, heq1]",
+   "deps": [
+    "fraction",
+    "setSupplySpeed",
+    "subChecked",
+    "updateCompSupplyIndex",
+    "updateSupply_of_some",
+    "updateSupply_some"
+   ],
+   "statement": "theorem setSupply_of_some (s t : St) (a : Nat) (h : setSupplySpeed s a = some t) :\n    (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n    t = (if s.supplyState.speed = a then s else { s with supplyState := { accrueSide s.supplyState s.blockNumber (totalSupply s) with speed := a } })",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "req_claim",
+   "kind": "theorem",
+   "text": "theorem req_claim : ClaimEffects comptroller := by\n  intro s who s' h\n  unfold comptroller claimComp at h\n  simp only at h\n  cases hu1 : updateCompBorrowIndex s with\n  | none =>\n    simp only [hu1] at h\n    simp at h\n  | some s1 =>\n    simp only [hu1] at h\n    simp at h\n    cases hd1 : distributeBorrowerComp s1 who with\n    | none =>\n      simp only [hd1] at h\n      simp at h\n    | some m1 =>\n      simp only [hd1] at h\n      simp at h\n      cases hu2 : updateCompSupplyIndex m1 with\n      | none =>\n        simp only [hu2] at h\n        simp at h\n      | some s2 =>\n        simp only [hu2] at h\n        simp at h\n        cases hd2 : distributeSupplierComp s2 who with\n        | none =>\n          simp only [hd2] at h\n          simp at h\n        | some m2 =>\n          simp only [hd2] at h\n          simp at h\n          obtain \u27e8hble, heq_b1\u27e9 := updateBorrow_of_some s s1 hu1\n          obtain \u27e8hble2, heq_b2\u27e9 := distributeBorrow_of_some s1 who m1 hd1\n          obtain \u27e8hsle, heq_s1\u27e9 := updateSupply_of_some m1 s2 hu2\n          obtain \u27e8hsle2, heq_s2\u27e9 := distributeSupply_of_some s2 who m2 hd2\n          have hgrant : grantCompInternal m2 who = grant m2 who := grant_eq m2 who\n          rw [hgrant] at h\n          cases h\n          -- Build Claimed witnesses\n          refine \u27e8m1, m2, ?_, ?_, rfl\u27e9\n          \u00b7 unfold BorrowDistributed\n            refine \u27e8hble, ?_, ?_\u27e9\n            \u00b7 rw [heq_b1] at hble2\n              simpa [St.acct] using hble2\n            \u00b7 rw [heq_b1] at heq_b2\n              exact heq_b2\n          \u00b7 unfold SupplyDistributed\n            -- need totals: totalSupply m1 = totalSupply s? supply balances unchanged by borrow steps\n            -- m1 accts = s1 accts modified on borrowerIndex/accrued only, so supply sum same\n            -- s1 accts = s accts, so totalSupply m1 = totalSupply s; similarly s2 supplyState = accrue of m1\n            -- We show m2 equation matches with m1 as base: heq_s2 already states m2 = {s2 with ...}\n            -- and s2 = {m1 with supplyState := accrue ... (totalSupply m1)}\n            -- Need to rewrite totalSupply m1 = totalSupply s? Actually BorrowDistributed uses totalBorrows s,\n            -- SupplyDistributed uses totalSupply m1. Our heq_b1 uses totalBorrows s, heq_s1 uses totalSupply m1.\n            -- So they already match the required statements with the right totals.\n            -- heq_s1 : s2 = {m1 with supplyState := accrueSide m1.supplyState m1.blockNumber (totalSupply m1)}\n            -- heq_s2 : m2 = {s2 with accts := ... (accrueSide s2... )}\n            -- But SupplyDistributed m1 who m2 requires accrue over totalSupply m1 and s2's block = m1.blockNumber.\n            -- Since s2.blockNumber = m1.blockNumber (update preserves blockNumber), this holds.\n            -- heq_s1 already gives s2's supplyState = accrueSide ..., and blockNumber preserved.\n            -- So we can use heq_s1/heq_s2 directly after showing blockNumber equalities.\n            refine \u27e8hsle, ?_, ?_\u27e9\n            \u00b7 have h2 := hsle2\n              rw [heq_s1] at h2\n              simpa [St.acct] using h2\n            \u00b7 rw [heq_s1] at heq_s2\n              simpa using heq_s2",
+   "deps": [
+    "borrowStart_eq",
+    "claimComp",
+    "comptroller",
+    "distributeBorrow_of_some",
+    "distributeBorrowerComp",
+    "distributeSupplierComp",
+    "distributeSupply_of_some",
+    "fraction",
+    "grantCompInternal",
+    "grant_eq",
+    "modify_congr_acct",
+    "mulDouble",
+    "setBorrowSpeed",
+    "setCompSpeedInternal",
+    "setSupplySpeed",
+    "subChecked",
+    "supplyStart_eq",
+    "updateBorrow_of_some",
+    "updateBorrow_some",
+    "updateCompBorrowIndex",
+    "updateCompSupplyIndex",
+    "updateSupply_of_some",
+    "updateSupply_some"
+   ],
+   "statement": "theorem req_claim : ClaimEffects comptroller",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "req_borrow_hook",
+   "kind": "theorem",
+   "text": "theorem req_borrow_hook : BorrowHookEffects comptroller := by\n  intro s who s' h\n  unfold comptroller at h\n  cases hu : updateCompBorrowIndex s with\n  | none =>\n    simp only [hu] at h\n    simp at h\n  | some s1 =>\n    simp only [hu] at h\n    simp at h\n    obtain \u27e8hle, heq1\u27e9 := updateBorrow_of_some s s1 hu\n    obtain \u27e8hle2, heq2\u27e9 := distributeBorrow_of_some s1 who s' h\n    unfold BorrowDistributed\n    refine \u27e8hle, ?_, ?_\u27e9\n    \u00b7 rw [heq1] at hle2\n      simpa [St.acct] using hle2\n    \u00b7 rw [heq1] at heq2\n      exact heq2",
+   "deps": [
+    "borrowStart_eq",
+    "claimComp",
+    "comptroller",
+    "distributeBorrow_of_some",
+    "distributeBorrowerComp",
+    "distributeSupplierComp",
+    "fraction",
+    "grantCompInternal",
+    "modify_congr_acct",
+    "mulDouble",
+    "setBorrowSpeed",
+    "setCompSpeedInternal",
+    "setSupplySpeed",
+    "subChecked",
+    "supplyStart_eq",
+    "updateBorrow_of_some",
+    "updateBorrow_some",
+    "updateCompBorrowIndex",
+    "updateCompSupplyIndex"
+   ],
+   "statement": "theorem req_borrow_hook : BorrowHookEffects comptroller",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "req_supply_hook",
+   "kind": "theorem",
+   "text": "theorem req_supply_hook : SupplyHookEffects comptroller := by\n  intro s who s' h\n  unfold comptroller at h\n  cases hu : updateCompSupplyIndex s with\n  | none =>\n    simp only [hu] at h\n    simp at h\n  | some s1 =>\n    simp only [hu] at h\n    simp at h\n    obtain \u27e8hle, heq1\u27e9 := updateSupply_of_some s s1 hu\n    obtain \u27e8hle2, heq2\u27e9 := distributeSupply_of_some s1 who s' h\n    unfold SupplyDistributed\n    refine \u27e8hle, ?_, ?_\u27e9\n    \u00b7 rw [heq1] at hle2\n      simpa [St.acct] using hle2\n    \u00b7 rw [heq1] at heq2\n      exact heq2",
+   "deps": [
+    "claimComp",
+    "comptroller",
+    "distributeBorrowerComp",
+    "distributeSupplierComp",
+    "distributeSupply_of_some",
+    "fraction",
+    "grantCompInternal",
+    "modify_congr_acct",
+    "mulDouble",
+    "setBorrowSpeed",
+    "setCompSpeedInternal",
+    "setSupplySpeed",
+    "subChecked",
+    "supplyStart_eq",
+    "updateCompBorrowIndex",
+    "updateCompSupplyIndex",
+    "updateSupply_of_some",
+    "updateSupply_some"
+   ],
+   "statement": "theorem req_supply_hook : SupplyHookEffects comptroller",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "distributeBorrow_isSome",
+   "kind": "theorem",
+   "text": "theorem distributeBorrow_isSome (s1 : St) (who : Account)\n    (hle : accrualStart (s1.acct who).borrowerIndex s1.borrowState.index \u2264 s1.borrowState.index) :\n    (distributeBorrowerComp s1 who).isSome = true := by\n  have hsup : (if (s1.acct who).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.acct who).borrowerIndex) = accrualStart (s1.acct who).borrowerIndex s1.borrowState.index := borrowStart_eq _ _\n  have hcond : (if (s1.acct who).borrowerIndex = 0 \u2227 compInitialIndex \u2264 s1.borrowState.index then compInitialIndex else (s1.acct who).borrowerIndex) \u2264 s1.borrowState.index := by\n    rw [hsup]; exact hle\n  unfold distributeBorrowerComp subChecked\n  simp [hcond]",
+   "deps": [
+    "borrowStart_eq",
+    "distributeBorrowerComp",
+    "mulDouble",
+    "subChecked",
+    "supplyStart_eq"
+   ],
+   "statement": "theorem distributeBorrow_isSome (s1 : St) (who : Account)\n    (hle : accrualStart (s1.acct who).borrowerIndex s1.borrowState.index \u2264 s1.borrowState.index) :\n    (distributeBorrowerComp s1 who).isSome = true",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "distributeSupply_isSome",
+   "kind": "theorem",
+   "text": "theorem distributeSupply_isSome (s1 : St) (who : Account)\n    (hle : accrualStart (s1.acct who).supplierIndex s1.supplyState.index \u2264 s1.supplyState.index) :\n    (distributeSupplierComp s1 who).isSome = true := by\n  have hsup : (if (s1.acct who).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.acct who).supplierIndex) = accrualStart (s1.acct who).supplierIndex s1.supplyState.index := supplyStart_eq _ _\n  have hcond : (if (s1.acct who).supplierIndex = 0 \u2227 compInitialIndex \u2264 s1.supplyState.index then compInitialIndex else (s1.acct who).supplierIndex) \u2264 s1.supplyState.index := by\n    rw [hsup]; exact hle\n  unfold distributeSupplierComp subChecked\n  simp [hcond]",
+   "deps": [
+    "distributeSupplierComp",
+    "mulDouble",
+    "subChecked",
+    "supplyStart_eq"
+   ],
+   "statement": "theorem distributeSupply_isSome (s1 : St) (who : Account)\n    (hle : accrualStart (s1.acct who).supplierIndex s1.supplyState.index \u2264 s1.supplyState.index) :\n    (distributeSupplierComp s1 who).isSome = true",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "accrualStart_le_of_le",
+   "kind": "theorem",
+   "text": "theorem accrualStart_le_of_le (rec idx : Nat) (h : rec \u2264 idx) :\n    accrualStart rec idx \u2264 idx := by\n  unfold accrualStart\n  by_cases h0 : rec = 0\n  \u00b7 simp only [h0, \u2193reduceIte]\n    by_cases hi : compInitialIndex \u2264 idx\n    \u00b7 simp [hi]\n    \u00b7 simp [hi]\n  \u00b7 simp only [h0, \u2193reduceIte]\n    exact h",
+   "deps": [],
+   "statement": "theorem accrualStart_le_of_le (rec idx : Nat) (h : rec \u2264 idx) :\n    accrualStart rec idx \u2264 idx",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "recorded_borrow_le",
+   "kind": "theorem",
+   "text": "theorem recorded_borrow_le (s : St) (who : Account) (hc : Consistent s) :\n    (s.acct who).borrowerIndex \u2264 s.borrowState.index := by\n  unfold Consistent at hc\n  obtain \u27e8_, _, hmem\u27e9 := hc\n  unfold St.acct\n  have hor := ProofForgeFin.Ledger.getD_mem_or s.accts who noAcct\n  rcases hor with hm | heq\n  \u00b7 exact (hmem _ hm).2\n  \u00b7 rw [heq]\n    exact Nat.zero_le _",
+   "deps": [],
+   "statement": "theorem recorded_borrow_le (s : St) (who : Account) (hc : Consistent s) :\n    (s.acct who).borrowerIndex \u2264 s.borrowState.index",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "recorded_supply_le",
+   "kind": "theorem",
+   "text": "theorem recorded_supply_le (s : St) (who : Account) (hc : Consistent s) :\n    (s.acct who).supplierIndex \u2264 s.supplyState.index := by\n  unfold Consistent at hc\n  obtain \u27e8_, _, hmem\u27e9 := hc\n  unfold St.acct\n  have hor := ProofForgeFin.Ledger.getD_mem_or s.accts who noAcct\n  rcases hor with hm | heq\n  \u00b7 exact (hmem _ hm).1\n  \u00b7 rw [heq]\n    exact Nat.zero_le _",
+   "deps": [],
+   "statement": "theorem recorded_supply_le (s : St) (who : Account) (hc : Consistent s) :\n    (s.acct who).supplierIndex \u2264 s.supplyState.index",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "accrueBorrow_ge",
+   "kind": "theorem",
+   "text": "theorem accrueBorrow_ge (sd : Side) (now total : Nat) : sd.index \u2264 (accrueSide sd now total).index :=\n  accrueSupply_ge sd now total",
+   "deps": [
+    "accrueSupply_ge"
+   ],
+   "statement": "theorem accrueBorrow_ge (sd : Side) (now total : Nat) : sd.index \u2264 (accrueSide sd now total).index",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "accrueSupply_ge",
+   "kind": "theorem",
+   "text": "theorem accrueSupply_ge (sd : Side) (now total : Nat) : sd.index \u2264 (accrueSide sd now total).index := by\n  unfold accrueSide\n  split\n  \u00b7 exact Nat.le_add_right _ _\n  \u00b7 exact Nat.le_refl _",
+   "deps": [],
+   "statement": "theorem accrueSupply_ge (sd : Side) (now total : Nat) : sd.index \u2264 (accrueSide sd now total).index",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "req_calls_succeed",
+   "kind": "theorem",
+   "text": "theorem req_calls_succeed : CallsSucceed comptroller := by\n  intro s c hc\n  unfold Consistent at hc\n  obtain \u27e8hsup, hbor, hmem\u27e9 := hc\n  have hsup_le : \u2200 who : Account, (s.acct who).supplierIndex \u2264 s.supplyState.index := fun who => recorded_supply_le s who \u27e8hsup, hbor, hmem\u27e9\n  have hbor_le : \u2200 who : Account, (s.acct who).borrowerIndex \u2264 s.borrowState.index := fun who => recorded_borrow_le s who \u27e8hsup, hbor, hmem\u27e9\n  unfold comptroller\n  cases c with\n  | supplyHook who =>\n    simp only [updateSupply_some s hsup]\n    simp\n    have hnew : (accrueSide s.supplyState s.blockNumber (totalSupply s)).index \u2265 s.supplyState.index :=\n      accrueSupply_ge s.supplyState s.blockNumber (totalSupply s)\n    have hrec : (s.acct who).supplierIndex \u2264 (accrueSide s.supplyState s.blockNumber (totalSupply s)).index :=\n      Nat.le_trans (hsup_le who) hnew\n    have hstart' := accrualStart_le_of_le _ _ hrec\n    have hsome := distributeSupply_isSome ({ s with supplyState := accrueSide s.supplyState s.blockNumber (totalSupply s) } : St) who (by simpa [St.acct] using hstart')\n    exact hsome\n  | borrowHook who =>\n    simp only [updateBorrow_some s hbor]\n    simp\n    have hnew := accrueBorrow_ge s.borrowState s.blockNumber (totalBorrows s)\n    have hrec : (s.acct who).borrowerIndex \u2264 (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index :=\n      Nat.le_trans (hbor_le who) hnew\n    have hstart' := accrualStart_le_of_le _ _ hrec\n    have hsome := distributeBorrow_isSome ({ s with borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s) } : St) who (by simpa [St.acct] using hstart')\n    exact hsome\n  | claim who =>\n    -- Use intermediate states via isSome existence\n    let s1 : St := { s with borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s) }\n    have hs1 : updateCompBorrowIndex s = some s1 := updateBorrow_some s hbor\n    have hnew_b := accrueBorrow_ge s.borrowState s.blockNumber (totalBorrows s)\n    have hrec_b : (s.acct who).borrowerIndex \u2264 (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index :=\n      Nat.le_trans (hbor_le who) hnew_b\n    have hstart_b' := accrualStart_le_of_le _ _ hrec_b\n    have hle_b : accrualStart (s1.acct who).borrowerIndex s1.borrowState.index \u2264 s1.borrowState.index := by\n      simpa [s1, St.acct] using hstart_b'\n    have hdist_b := distributeBorrow_isSome s1 who hle_b\n    obtain \u27e8m1, hm1\u27e9 := Option.isSome_iff_exists.mp hdist_b\n    obtain \u27e8_, heq_m1\u27e9 := distributeBorrow_of_some s1 who m1 hm1\n    -- m1 preserves supply side and supplierIndex\n    have hm1_sup : m1.supplyState = s.supplyState := by simp [heq_m1, s1]\n    have hm1_bn : m1.blockNumber = s.blockNumber := by simp [heq_m1, s1]\n    have hm1_suppIdx : (m1.acct who).supplierIndex = (s.acct who).supplierIndex := by\n      have hmod : (((s1.accts.modify who fun a => ({ a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + creditFor a.borrow (accrualStart a.borrowerIndex s1.borrowState.index) s1.borrowState.index } : Acct)).getD who noAcct).supplierIndex = (s1.accts.getD who noAcct).supplierIndex) := by\n        rw [ProofForgeFin.Ledger.getD_modify]\n        split\n        \u00b7 rfl\n        \u00b7 rfl\n      have h1 : (m1.acct who).supplierIndex = (((s1.accts.modify who fun a => ({ a with borrowerIndex := s1.borrowState.index, accrued := a.accrued + creditFor a.borrow (accrualStart a.borrowerIndex s1.borrowState.index) s1.borrowState.index } : Acct)).getD who noAcct).supplierIndex) := by\n        rw [heq_m1]\n        simp [St.withAcct, St.acct]\n      have h2 : (s1.acct who).supplierIndex = (s1.accts.getD who noAcct).supplierIndex := by\n        simp [St.acct]\n      have h3 : (s1.acct who).supplierIndex = (s.acct who).supplierIndex := by\n        simp [s1, St.acct]\n      rw [h1, hmod, \u2190h2, h3]\n    have hsup_m1 : m1.supplyState.block \u2264 m1.blockNumber := by rw [hm1_sup, hm1_bn]; exact hsup\n    let s2 : St := { m1 with supplyState := accrueSide m1.supplyState m1.blockNumber (totalSupply m1) }\n    have hs2 : updateCompSupplyIndex m1 = some s2 :=\n      updateSupply_some m1 hsup_m1\n    have hnew_s : (accrueSide m1.supplyState m1.blockNumber (totalSupply m1)).index \u2265 m1.supplyState.index :=\n      accrueSupply_ge _ _ _\n    have hrec_s : (m1.acct who).supplierIndex \u2264 (accrueSide m1.supplyState m1.blockNumber (totalSupply m1)).index := by\n      have h0 : (m1.acct who).supplierIndex \u2264 m1.supplyState.index := by\n        rw [hm1_suppIdx]\n        rw [hm1_sup]\n        exact hsup_le who\n      exact Nat.le_trans h0 hnew_s\n    have hstart_s' := accrualStart_le_of_le _ _ hrec_s\n    have hle_s : accrualStart (s2.acct who).supplierIndex s2.supplyState.index \u2264 s2.supplyState.index := by\n      simpa [s2, St.acct] using hstart_s'\n    have hdist_s := distributeSupply_isSome s2 who hle_s\n    obtain \u27e8m2, hm2\u27e9 := Option.isSome_iff_exists.mp hdist_s\n    simp [claimComp, hs1, hm1, hs2, hm2]\n  | setSpeeds a b =>\n    unfold setCompSpeedInternal\n    have hs_some := setSupply_isSome s a hsup\n    obtain \u27e8t, ht\u27e9 := Option.isSome_iff_exists.mp hs_some\n    have ht_bn : t.blockNumber = s.blockNumber := by\n      obtain \u27e8_, heq\u27e9 := setSupply_of_some s t a ht\n      rw [heq]\n      split\n      \u00b7 rfl\n      \u00b7 rfl\n    have ht_bor : t.borrowState = s.borrowState := by\n      obtain \u27e8_, heq\u27e9 := setSupply_of_some s t a ht\n      rw [heq]\n      split\n      \u00b7 rfl\n      \u00b7 rfl\n    have hbor_t : t.borrowState.block \u2264 t.blockNumber := by rw [ht_bor, ht_bn]; exact hbor\n    have hb_some := setBorrow_isSome t b hbor_t\n    obtain \u27e8s2, hs2\u27e9 := Option.isSome_iff_exists.mp hb_some\n    simp [ht, hs2]\n-- Potentials for boundedness",
+   "deps": [
+    "accrualStart_le_of_le",
+    "accrueBorrow_ge",
+    "accrueSupply_ge",
+    "borrowStart_eq",
+    "claimComp",
+    "comptroller",
+    "distributeBorrow_isSome",
+    "distributeBorrow_of_some",
+    "distributeBorrowerComp",
+    "distributeSupplierComp",
+    "distributeSupply_isSome",
+    "fraction",
+    "grantCompInternal",
+    "modify_congr_acct",
+    "mulDouble",
+    "recorded_borrow_le",
+    "recorded_supply_le",
+    "setBorrowSpeed",
+    "setBorrow_isSome",
+    "setCompSpeedInternal",
+    "setSupplySpeed",
+    "setSupply_isSome",
+    "setSupply_of_some",
+    "subChecked",
+    "supplyStart_eq",
+    "updateBorrow_some",
+    "updateCompBorrowIndex",
+    "updateCompSupplyIndex",
+    "updateSupply_of_some",
+    "updateSupply_some"
+   ],
+   "statement": "theorem req_calls_succeed : CallsSucceed comptroller",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "setBorrow_isSome",
+   "kind": "theorem",
+   "text": "theorem setBorrow_isSome (t : St) (b : Nat) (hle : t.borrowState.block \u2264 t.blockNumber) :\n    (setBorrowSpeed t b).isSome = true := by\n  unfold setBorrowSpeed\n  by_cases heq : t.borrowState.speed = b\n  \u00b7 simp [heq]\n  \u00b7 simp [heq, updateBorrow_some t hle]",
+   "deps": [
+    "fraction",
+    "setBorrowSpeed",
+    "subChecked",
+    "updateBorrow_some",
+    "updateCompBorrowIndex"
+   ],
+   "statement": "theorem setBorrow_isSome (t : St) (b : Nat) (hle : t.borrowState.block \u2264 t.blockNumber) :\n    (setBorrowSpeed t b).isSome = true",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "setSupply_isSome",
+   "kind": "theorem",
+   "text": "theorem setSupply_isSome (s : St) (a : Nat) (hle : s.supplyState.block \u2264 s.blockNumber) :\n    (setSupplySpeed s a).isSome = true := by\n  unfold setSupplySpeed\n  by_cases heq : s.supplyState.speed = a\n  \u00b7 simp [heq]\n  \u00b7 simp [heq, updateSupply_some s hle]",
+   "deps": [
+    "fraction",
+    "setSupplySpeed",
+    "subChecked",
+    "updateCompSupplyIndex",
+    "updateSupply_some"
+   ],
+   "statement": "theorem setSupply_isSome (s : St) (a : Nat) (hle : s.supplyState.block \u2264 s.blockNumber) :\n    (setSupplySpeed s a).isSome = true",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "creditFor_eq_credit",
+   "kind": "theorem",
+   "text": "theorem creditFor_eq_credit (u st idx : Nat) :\n    creditFor u st idx = credit doubleScale u st idx := by\n  unfold creditFor credit\n  rfl\n\n-- Invariant for runs from upgrade",
+   "deps": [],
+   "statement": "theorem creditFor_eq_credit (u st idx : Nat) :\n    creditFor u st idx = credit doubleScale u st idx",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "accrualStart_eq_firstStart",
+   "kind": "theorem",
+   "text": "theorem accrualStart_eq_firstStart (rec idx : Nat) :\n    accrualStart rec idx = firstStart compInitialIndex rec idx := by\n  unfold accrualStart firstStart\n  rfl",
+   "deps": [],
+   "statement": "theorem accrualStart_eq_firstStart (rec idx : Nat) :\n    accrualStart rec idx = firstStart compInitialIndex rec idx",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "legacyStart_eq_effStart",
+   "kind": "theorem",
+   "text": "theorem legacyStart_eq_effStart (g rec : Nat) : legacyStart g rec = effStart g rec := by\n  unfold legacyStart effStart\n  rfl",
+   "deps": [],
+   "statement": "theorem legacyStart_eq_effStart (g rec : Nat) : legacyStart g rec = effStart g rec",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "PotTo",
+   "kind": "def",
+   "text": "def PotTo (gS gB : Nat) (s : St) (who : Account) : Nat :=\n  ((s.creditedTo who) * doubleScale + (pendSup gS s (s.acct who) + pendBor gB s (s.acct who)) + doubleScale * ((if 0 < (s.acct who).supply then unindexedSup s else 0) + (if 0 < (s.acct who).borrow then unindexedBor s else 0)))",
+   "deps": [
+    "pendBor",
+    "pendSup",
+    "unindexedBor",
+    "unindexedSup"
+   ],
+   "statement": "def PotTo (gS gB : Nat) (s : St) (who : Account) : Nat :=\n  ((s.creditedTo who) * doubleScale + (pendSup gS s (s.acct who) + pendBor gB s (s.acct who)) + doubleScale * ((if 0 < (s.acct who).supply then unindexedSup s else 0) + (if 0 < (s.acct who).borrow then unindexedBor s else 0)))",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "Pot",
+   "kind": "def",
+   "text": "def Pot (gS gB : Nat) (s : St) : Nat :=\n  (s.credited * doubleScale + ((s.accts.map (pendSup gS s)).sum + (s.accts.map (pendBor gB s)).sum) + doubleScale * (unindexedSup s + unindexedBor s))",
+   "deps": [
+    "pendBor",
+    "pendSup",
+    "unindexedBor",
+    "unindexedSup"
+   ],
+   "statement": "def Pot (gS gB : Nat) (s : St) : Nat :=\n  (s.credited * doubleScale + ((s.accts.map (pendSup gS s)).sum + (s.accts.map (pendBor gB s)).sum) + doubleScale * (unindexedSup s + unindexedBor s))",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "unindexedBor",
+   "kind": "def",
+   "text": "def unindexedBor (s : St) : Nat := (s.blockNumber - s.borrowState.block) * s.borrowState.speed",
+   "deps": [],
+   "statement": "def unindexedBor (s : St) : Nat := (s.blockNumber - s.borrowState.block) * s.borrowState.speed",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "unindexedSup",
+   "kind": "def",
+   "text": "def unindexedSup (s : St) : Nat := (s.blockNumber - s.supplyState.block) * s.supplyState.speed",
+   "deps": [],
+   "statement": "def unindexedSup (s : St) : Nat := (s.blockNumber - s.supplyState.block) * s.supplyState.speed",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "pendBor",
+   "kind": "def",
+   "text": "def pendBor (gB : Nat) (s : St) (a : Acct) : Nat :=\n  a.borrow * (s.borrowState.index - effStart gB a.borrowerIndex)",
+   "deps": [],
+   "statement": "def pendBor (gB : Nat) (s : St) (a : Acct) : Nat :=\n  a.borrow * (s.borrowState.index - effStart gB a.borrowerIndex)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "pendSup",
+   "kind": "def",
+   "text": "def pendSup (gS : Nat) (s : St) (a : Acct) : Nat :=\n  a.supply * (s.supplyState.index - effStart gS a.supplierIndex)",
+   "deps": [],
+   "statement": "def pendSup (gS : Nat) (s : St) (a : Acct) : Nat :=\n  a.supply * (s.supplyState.index - effStart gS a.supplierIndex)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "unindexedBor_eq",
+   "kind": "theorem",
+   "text": "theorem unindexedBor_eq (s : St) : unindexedBor s = unindexed s.borrowState.block s.borrowState.speed s.blockNumber := by\n  unfold unindexedBor unindexed\n  rfl",
+   "deps": [
+    "unindexedBor"
+   ],
+   "statement": "theorem unindexedBor_eq (s : St) : unindexedBor s = unindexed s.borrowState.block s.borrowState.speed s.blockNumber",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "unindexedSup_eq",
+   "kind": "theorem",
+   "text": "theorem unindexedSup_eq (s : St) : unindexedSup s = unindexed s.supplyState.block s.supplyState.speed s.blockNumber := by\n  unfold unindexedSup unindexed\n  rfl",
+   "deps": [
+    "unindexedSup"
+   ],
+   "statement": "theorem unindexedSup_eq (s : St) : unindexedSup s = unindexed s.supplyState.block s.supplyState.speed s.blockNumber",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "accrueSide_index_eq_catchUp",
+   "kind": "theorem",
+   "text": "theorem accrueSide_index_eq_catchUp (sd : Side) (now total : Nat) :\n    (accrueSide sd now total).index = catchUp doubleScale sd.index sd.block sd.speed now total := by\n  by_cases h : 0 < now - sd.block \u2227 0 < sd.speed \u2227 0 < total\n  \u00b7 simp [h, accrueSide, catchUp]\n  \u00b7 simp [h, accrueSide, catchUp]",
+   "deps": [],
+   "statement": "theorem accrueSide_index_eq_catchUp (sd : Side) (now total : Nat) :\n    (accrueSide sd now total).index = catchUp doubleScale sd.index sd.block sd.speed now total",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "Inv",
+   "kind": "def",
+   "text": "def Inv (gS gB : Nat) (sp : Nat \u00d7 Nat) (s : St) : Prop :=\n  Consistent s \u2227 gS \u2264 s.supplyState.index \u2227 gB \u2264 s.borrowState.index \u2227\n  s.supplyState.speed = sp.1 \u2227 s.borrowState.speed = sp.2 \u2227\n  (gS = 0 \u2228 gS = compInitialIndex) \u2227 (gB = 0 \u2228 gB = compInitialIndex)",
+   "deps": [],
+   "statement": "def Inv (gS gB : Nat) (sp : Nat \u00d7 Nat) (s : St) : Prop :=\n  Consistent s \u2227 gS \u2264 s.supplyState.index \u2227 gB \u2264 s.borrowState.index \u2227\n  s.supplyState.speed = sp.1 \u2227 s.borrowState.speed = sp.2 \u2227\n  (gS = 0 \u2228 gS = compInitialIndex) \u2227 (gB = 0 \u2228 gB = compInitialIndex)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "upgrade_Inv",
+   "kind": "theorem",
+   "text": "theorem upgrade_Inv (L : Legacy) (h : L.WellFormed) :\n    Inv L.supplyStart L.borrowStart (L.compSpeed, L.compSpeed) (upgrade L) := by\n  have hc' : Consistent (upgrade L) := upgrade_Consistent L h\n  unfold Legacy.WellFormed at h\n  obtain \u27e8hs_or, hs_le, hb_or, hb_le, hsup_blk, hbor_blk, hmem\u27e9 := h\n  unfold Inv\n  refine \u27e8hc', ?_, ?_, ?_, ?_, hs_or, hb_or\u27e9\n  \u00b7 unfold upgrade initSide\n    simp only\n    by_cases hs0 : L.supplyIndex = 0\n    \u00b7 simp [hs0]\n      rcases hs_or with h0 | h0\n      \u00b7 rw [h0]\n        exact Nat.zero_le _\n      \u00b7 rw [h0]\n        exact Nat.le_refl _\n    \u00b7 simp [hs0]\n      exact hs_le\n  \u00b7 unfold upgrade initSide\n    simp only\n    by_cases hb0 : L.borrowIndex = 0\n    \u00b7 simp [hb0]\n      rcases hb_or with h0 | h0\n      \u00b7 rw [h0]\n        exact Nat.zero_le _\n      \u00b7 rw [h0]\n        exact Nat.le_refl _\n    \u00b7 simp [hb0]\n      exact hb_le\n  \u00b7 unfold upgrade initSide\n    simp only\n    by_cases hs0 : L.supplyIndex = 0\n    \u00b7 simp [hs0]\n    \u00b7 simp [hs0]\n  \u00b7 unfold upgrade initSide\n    simp only\n    by_cases hb0 : L.borrowIndex = 0\n    \u00b7 simp [hb0]\n    \u00b7 simp [hb0]",
+   "deps": [
+    "Inv",
+    "upgrade_Consistent"
+   ],
+   "statement": "theorem upgrade_Inv (L : Legacy) (h : L.WellFormed) :\n    Inv L.supplyStart L.borrowStart (L.compSpeed, L.compSpeed) (upgrade L)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "upgrade_Consistent",
+   "kind": "theorem",
+   "text": "theorem upgrade_Consistent (L : Legacy) (h : L.WellFormed) : Consistent (upgrade L) := by\n  unfold Legacy.WellFormed at h\n  obtain \u27e8hs_or, hs_le, hb_or, hb_le, hsup_blk, hbor_blk, hmem\u27e9 := h\n  unfold Consistent upgrade initSide\n  simp only\n  refine \u27e8?_, ?_, ?_\u27e9\n  \u00b7 by_cases hs0 : L.supplyIndex = 0\n    \u00b7 simp [hs0]\n    \u00b7 simp [hs0]\n      exact hsup_blk\n  \u00b7 by_cases hb0 : L.borrowIndex = 0\n    \u00b7 simp [hb0]\n    \u00b7 simp [hb0]\n      exact hbor_blk\n  \u00b7 intro a ha\n    have hm := hmem a ha\n    obtain \u27e8hs_rec, hb_rec\u27e9 := hm\n    refine \u27e8?_, ?_\u27e9\n    \u00b7 by_cases hs0 : L.supplyIndex = 0\n      \u00b7 simp [hs0] at hs_rec \u22a2\n        have : a.supplierIndex = 0 := by omega\n        simp [this]\n      \u00b7 simp [hs0]\n        exact hs_rec\n    \u00b7 by_cases hb0 : L.borrowIndex = 0\n      \u00b7 simp [hb0] at hb_rec \u22a2\n        have : a.borrowerIndex = 0 := by omega\n        simp [this]\n      \u00b7 simp [hb0]\n        exact hb_rec",
+   "deps": [],
+   "statement": "theorem upgrade_Consistent (L : Legacy) (h : L.WellFormed) : Consistent (upgrade L)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "pot_drip",
+   "kind": "theorem",
+   "text": "theorem pot_drip (s : St) (x : Nat) (gS gB : Nat) : Pot gS gB ({ s with reserve := s.reserve + x } : St) = Pot gS gB s := by\n  rfl",
+   "deps": [
+    "Pot",
+    "pendBor",
+    "pendSup",
+    "unindexedBor",
+    "unindexedSup"
+   ],
+   "statement": "theorem pot_drip (s : St) (x : Nat) (gS gB : Nat) : Pot gS gB ({ s with reserve := s.reserve + x } : St) = Pot gS gB s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "pot_advance",
+   "kind": "theorem",
+   "text": "theorem pot_advance (s : St) (k : Nat) (gS gB : Nat)\n    (hsup : s.supplyState.block \u2264 s.blockNumber) (hbor : s.borrowState.block \u2264 s.blockNumber) :\n    Pot gS gB ({ s with blockNumber := s.blockNumber + k } : St) = Pot gS gB s + doubleScale * (k * (s.supplyState.speed + s.borrowState.speed)) := by\n  unfold Pot St.credited pendSup pendBor unindexedSup unindexedBor\n  simp only\n  have hsup_eq : (s.blockNumber + k - s.supplyState.block) * s.supplyState.speed = (s.blockNumber - s.supplyState.block) * s.supplyState.speed + k * s.supplyState.speed := by\n    rw [Nat.sub_add_comm hsup, Nat.add_mul]\n  have hbor_eq : (s.blockNumber + k - s.borrowState.block) * s.borrowState.speed = (s.blockNumber - s.borrowState.block) * s.borrowState.speed + k * s.borrowState.speed := by\n    rw [Nat.sub_add_comm hbor, Nat.add_mul]\n  simp only [hsup_eq, hbor_eq]\n  grind",
+   "deps": [
+    "Pot",
+    "pendBor",
+    "pendSup",
+    "unindexedBor",
+    "unindexedSup"
+   ],
+   "statement": "theorem pot_advance (s : St) (k : Nat) (gS gB : Nat)\n    (hsup : s.supplyState.block \u2264 s.blockNumber) (hbor : s.borrowState.block \u2264 s.blockNumber) :\n    Pot gS gB ({ s with blockNumber := s.blockNumber + k } : St) = Pot gS gB s + doubleScale * (k * (s.supplyState.speed + s.borrowState.speed))",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [
+  {
+   "name": "pot_supplyHook_le",
+   "required": false,
+   "statement": "theorem pot_supplyHook_le (gS gB : Nat) (s s' : St) (who : Account)\n    (hgS_or : gS = 0 \u2228 gS = compInitialIndex) (hgB_or : gB = 0 \u2228 gB = compInitialIndex)\n    (hgS_le : gS \u2264 s.supplyState.index) (hgB_le : gB \u2264 s.borrowState.index)\n    (hDist : SupplyDistributed s who s') : Pot gS gB s' \u2264 Pot gS gB s",
+   "scope": "goal",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 0.0,
+   "tried": [],
+   "last_lean": "",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "pot_borrowHook_le",
+   "required": false,
+   "statement": "theorem pot_borrowHook_le (gS gB : Nat) (s s' : St) (who : Account)\n    (hgS_or : gS = 0 \u2228 gS = compInitialIndex) (hgB_or : gB = 0 \u2228 gB = compInitialIndex)\n    (hgS_le : gS \u2264 s.supplyState.index) (hgB_le : gB \u2264 s.borrowState.index)\n    (hDist : BorrowDistributed s who s') : Pot gS gB s' \u2264 Pot gS gB s",
+   "scope": "goal",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 0.0,
+   "tried": [],
+   "last_lean": "",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "pot_exec_le",
+   "required": false,
+   "statement": "theorem pot_exec_le (gS gB : Nat) (sp : Nat \u00d7 Nat) (s : St) (op : Op) (hInv : Inv gS gB sp s) :\n    Pot gS gB (exec comptroller s op) \u2264 Pot gS gB s + doubleScale * emittedBy sp op \u2227 Inv gS gB (nextSpeeds sp op) (exec comptroller s op)",
+   "scope": "goal",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 0.0,
+   "tried": [],
+   "last_lean": "",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_rewards_bounded",
+   "required": true,
+   "statement": "theorem req_rewards_bounded : RewardsBounded comptroller",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 9.5634,
+   "tried": [],
+   "last_lean": "",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_account_bounded",
+   "required": true,
+   "statement": "theorem req_account_bounded : AccountBounded comptroller",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 9.5634,
+   "tried": [],
+   "last_lean": "",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_no_backdated",
+   "required": true,
+   "statement": "theorem req_no_backdated : NoBackdatedRewards comptroller",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 9.5634,
+   "tried": [],
+   "last_lean": "",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  }
+ ],
+ "budget": {
+  "usd_list": 9.5634,
+  "elapsed_s": 2166.6
+ },
+ "resumed_from": []
+}

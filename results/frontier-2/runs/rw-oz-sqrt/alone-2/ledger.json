@@ -1,0 +1,412 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "rw-oz-sqrt",
+ "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616",
+ "run_dir": "<proofforge>/results/frontier-2/rw-oz-sqrt/alone-2",
+ "arm": "alone",
+ "loop": "muse-code",
+ "model": "muse-spark-1.3-contributor",
+ "created": "2026-11-01T19:14:28-0500",
+ "reconstructed": false,
+ "final": {
+  "text": "import OzSqrt.Spec\nimport OzSqrt.Lemmas\n/-!\nThe square-root routine under repair, `Math.sqrt(uint256 a)` in the style of OpenZeppelin\nContracts `Math.sol`, as this pool's first deposit calls it.\nFixed: seven Newton iterations (the deployed `Math.sqrt` has seven lines\n`result = (result + a / result) >> 1;`), so the estimate converges on all 256-bit inputs.\n-/\nnamespace OzSqrt\n\ndef sqrt : SqrtFn := newtonSqrt 7\n\n/-- `min u (A / u)` squared never exceeds `A`. -/\ntheorem min_sq_le (u A : Nat) : (Nat.min u (A / u)) ^ 2 \u2264 A := by\n  by_cases hu : u = 0\n  \u00b7 subst hu; simp\n  have hle : A / u * u \u2264 A := Nat.div_mul_le_self A u\n  have h1 : Nat.min u (A / u) \u2264 u := Nat.min_le_left _ _\n  have h2 : Nat.min u (A / u) \u2264 A / u := Nat.min_le_right _ _\n  have h3 : Nat.min u (A / u) * Nat.min u (A / u) \u2264 u * (A / u) :=\n    Nat.mul_le_mul h1 h2\n  have h4 : u * (A / u) = A / u * u := Nat.mul_comm _ _\n  rw [Nat.pow_two]\n  omega\n\n/-- `x * x \u2264 A` implies `x \u2264 Nat.sqrt A`. -/\ntheorem le_sqrt_of_sq_le {x A : Nat} (h : x * x \u2264 A) : x \u2264 Nat.sqrt A := by\n  by_cases hle : x \u2264 Nat.sqrt A\n  \u00b7 exact hle\n  have h1 : Nat.sqrt A + 1 \u2264 x := by omega\n  have hmul : (Nat.sqrt A + 1) * (Nat.sqrt A + 1) \u2264 x * x :=\n    Nat.mul_le_mul h1 h1\n  have hlt : A < (Nat.sqrt A + 1) * (Nat.sqrt A + 1) := Nat.lt_succ_sqrt A\n  omega\n\n/-- Nat-level initial estimate `2 ^ (log2 A / 2)`. -/\ndef R0nat (A : Nat) : Nat := 2 ^ (Nat.log2 A / 2)\n\n/-- Nat-level Newton step `(R + A / R) / 2`. -/\ndef stepNat (A R : Nat) : Nat := (R + A / R) / 2\n\n/-- Nat-level Newton iterates from `R0nat`. -/\ndef Rnat (A : Nat) : Nat \u2192 Nat\n  | 0 => R0nat A\n  | n + 1 => stepNat A (Rnat A n)\n\n/-- `2 * S * R \u2264 S * S + R * R` (AM-GM, via differences). -/\ntheorem two_mul_le_add_sq (S R : Nat) : 2 * S * R \u2264 S * S + R * R := by\n  by_cases h : R \u2264 S\n  \u00b7 obtain \u27e8d, hd\u27e9 : \u2203 d, S = R + d := \u27e8S - R, by omega\u27e9\n    have e0 : 2 * S * R = S * R + S * R := by rw [Nat.mul_assoc, Nat.two_mul]\n    have hmain : S * R + S * R + d * d = S * S + R * R := by\n      rw [hd]\n      simp only [Nat.add_mul, Nat.mul_add, Nat.mul_assoc, Nat.mul_comm,\n        Nat.mul_left_comm]\n      ac_rfl\n    rw [e0, \u2190 hmain]; exact Nat.le_add_right _ _\n  \u00b7 obtain \u27e8d, hd\u27e9 : \u2203 d, R = S + d := \u27e8R - S, by omega\u27e9\n    have e0 : 2 * S * R = S * R + S * R := by rw [Nat.mul_assoc, Nat.two_mul]\n    have hmain : S * R + S * R + d * d = S * S + R * R := by\n      rw [hd]\n      simp only [Nat.add_mul, Nat.mul_add, Nat.mul_assoc, Nat.mul_comm,\n        Nat.mul_left_comm]\n      ac_rfl\n    rw [e0, \u2190 hmain]; exact Nat.le_add_right _ _\n\n/-- The initial estimate is positive on positive inputs. -/\ntheorem R0nat_pos {A : Nat} (_ : 0 < A) : 0 < R0nat A := by\n  unfold R0nat\n  exact Nat.one_le_two_pow\n\n/-- The initial estimate squared is below the input. -/\ntheorem R0nat_sq_le {A : Nat} (hA : A \u2260 0) : R0nat A * R0nat A \u2264 A := by\n  have hL : 2 ^ Nat.log2 A \u2264 A := Nat.log2_self_le hA\n  have h2 : Nat.log2 A / 2 + Nat.log2 A / 2 \u2264 Nat.log2 A := by\n    have := Nat.div_mul_le_self (Nat.log2 A) 2\n    omega\n  have e1 : R0nat A * R0nat A = 2 ^ (Nat.log2 A / 2 + Nat.log2 A / 2) := by\n    unfold R0nat; rw [\u2190 Nat.pow_add]\n  have h3 : 2 ^ (Nat.log2 A / 2 + Nat.log2 A / 2) \u2264 2 ^ Nat.log2 A :=\n    Nat.pow_le_pow_right (by decide) h2\n  omega\n\n/-- The initial estimate never exceeds the floor root. -/\ntheorem R0nat_le_sqrt {A : Nat} (hA : A \u2260 0) : R0nat A \u2264 Nat.sqrt A :=\n  le_sqrt_of_sq_le (R0nat_sq_le hA)\n\n/-- The floor root is below twice the initial estimate. -/\ntheorem sqrt_succ_le_two_R0 {A : Nat} (hA : A \u2260 0) :\n    Nat.sqrt A + 1 \u2264 2 * R0nat A := by\n  by_cases h : Nat.sqrt A + 1 \u2264 2 * R0nat A\n  \u00b7 exact h\n  have hle : 2 * R0nat A \u2264 Nat.sqrt A := by omega\n  have hSS : Nat.sqrt A * Nat.sqrt A \u2264 A := Nat.sqrt_le A\n  have hsq : (2 * R0nat A) * (2 * R0nat A) \u2264 A := by\n    have := Nat.mul_le_mul hle hle\n    omega\n  have hA2 : A < 2 ^ (Nat.log2 A + 1) := Nat.lt_log2_self\n  have hexp : Nat.log2 A + 1 \u2264 2 + (Nat.log2 A / 2 + Nat.log2 A / 2) := by omega\n  have hpow : 2 ^ (Nat.log2 A + 1) \u2264 2 ^ (2 + (Nat.log2 A / 2 + Nat.log2 A / 2)) :=\n    Nat.pow_le_pow_right (by decide) hexp\n  have e2 : (2 * R0nat A) * (2 * R0nat A) = 2 ^ (2 + (Nat.log2 A / 2 + Nat.log2 A / 2)) := by\n    have e1 : R0nat A * R0nat A = 2 ^ (Nat.log2 A / 2 + Nat.log2 A / 2) := by\n      unfold R0nat; rw [\u2190 Nat.pow_add]\n    have c4 : (2 * R0nat A) * (2 * R0nat A) = (2 * 2) * (R0nat A * R0nat A) := by\n      ac_rfl\n    rw [c4, e1]\n    have c42 : (2 * 2 : Nat) = 2 ^ 2 := by decide\n    rw [c42, \u2190 Nat.pow_add]\n  omega\n\n/-- One Newton step never goes below the floor root. -/\ntheorem step_ge_sqrt (A R : Nat) (hR : 0 < R) :\n    Nat.sqrt A \u2264 stepNat A R := by\n  unfold stepNat\n  have hSS : Nat.sqrt A * Nat.sqrt A \u2264 A := Nat.sqrt_le A\n  have h2SR : 2 * (Nat.sqrt A * R) \u2264 Nat.sqrt A * Nat.sqrt A + R * R := by\n    have h := two_mul_le_add_sq (Nat.sqrt A) R\n    have a1 : 2 * Nat.sqrt A * R = 2 * (Nat.sqrt A * R) := Nat.mul_assoc 2 _ _\n    omega\n  by_cases hbig : 2 * Nat.sqrt A \u2264 R\n  \u00b7 have hle : 2 * Nat.sqrt A \u2264 R + A / R :=\n      Nat.le_trans hbig (Nat.le_add_right _ _)\n    have harg : Nat.sqrt A * 2 \u2264 R + A / R := by\n      rw [Nat.mul_comm]; exact hle\n    exact (Nat.le_div_iff_mul_le (by decide : 0 < 2)).mpr harg\n  \u00b7 have hsmall : R < 2 * Nat.sqrt A := by omega\n    have hRle : R \u2264 2 * Nat.sqrt A := Nat.le_of_lt hsmall\n    have hRR : R * R \u2264 2 * (Nat.sqrt A * R) := by\n      have h1 : R * R \u2264 R * (2 * Nat.sqrt A) :=\n        Nat.mul_le_mul (Nat.le_refl R) (Nat.le_of_lt hsmall)\n      have a1 : R * (2 * Nat.sqrt A) = 2 * (Nat.sqrt A * R) := by ac_rfl\n      rw [a1] at h1; exact h1\n    have hsub : (2 * Nat.sqrt A - R) * R \u2264 A := by\n      have e : (2 * Nat.sqrt A - R) * R = 2 * Nat.sqrt A * R - R * R :=\n        Nat.sub_mul _ _ _\n      have a1 : 2 * Nat.sqrt A * R = 2 * (Nat.sqrt A * R) := Nat.mul_assoc 2 _ _\n      have hstep : 2 * (Nat.sqrt A * R) - R * R \u2264\n          (Nat.sqrt A * Nat.sqrt A + R * R) - R * R :=\n        Nat.sub_le_sub_right h2SR _\n      have hcancel : Nat.sqrt A * Nat.sqrt A + R * R - R * R =\n          Nat.sqrt A * Nat.sqrt A :=\n        Nat.add_sub_cancel _ _\n      have hle2 : 2 * (Nat.sqrt A * R) - R * R \u2264 Nat.sqrt A * Nat.sqrt A := by\n        rw [hcancel] at hstep; exact hstep\n      have e' : (2 * Nat.sqrt A - R) * R = 2 * (Nat.sqrt A * R) - R * R := by\n        rw [e, a1]\n      rw [e']; exact Nat.le_trans hle2 hSS\n    have hle : 2 * Nat.sqrt A - R \u2264 A / R :=\n      (Nat.le_div_iff_mul_le hR).mpr hsub\n    have eadd : R + (2 * Nat.sqrt A - R) = 2 * Nat.sqrt A :=\n      Nat.add_sub_cancel' hRle\n    have hsum : 2 * Nat.sqrt A \u2264 R + A / R := by\n      have hcc : R + (2 * Nat.sqrt A - R) \u2264 R + A / R :=\n        Nat.add_le_add (Nat.le_refl R) hle\n      rw [eadd] at hcc; exact hcc\n    have harg : Nat.sqrt A * 2 \u2264 R + A / R := by\n      rw [Nat.mul_comm]; exact hsum\n    exact (Nat.le_div_iff_mul_le (by decide : 0 < 2)).mpr harg\n\n/-- A Newton step strictly decreases while above the floor root. -/\ntheorem step_lt_of_above {A R : Nat} (hR : Nat.sqrt A + 1 \u2264 R) :\n    stepNat A R < R := by\n  have hRpos : 0 < R := by omega\n  have hSS1 : A < (Nat.sqrt A + 1) * (Nat.sqrt A + 1) := Nat.lt_succ_sqrt A\n  have hRR : (Nat.sqrt A + 1) * (Nat.sqrt A + 1) \u2264 R * R :=\n    Nat.mul_le_mul hR hR\n  have hAlt : A < R * R := by omega\n  have hdiv : A / R < R := (Nat.div_lt_iff_lt_mul hRpos).mpr hAlt\n  unfold stepNat\n  omega\n\n/-- Key Newton upper bound: `2 * R * next \u2264 R * R + A`. -/\ntheorem newton_upper {A R : Nat} : 2 * R * stepNat A R \u2264 R * R + A := by\n  have hhalf : 2 * stepNat A R \u2264 R + A / R := by\n    unfold stepNat; omega\n  have hmul : R * (2 * stepNat A R) \u2264 R * (R + A / R) :=\n    Nat.mul_le_mul (Nat.le_refl R) hhalf\n  have hle : A / R * R \u2264 A := Nat.div_mul_le_self A R\n  have e : R * (R + A / R) = R * R + A / R * R := by\n    rw [Nat.mul_add, Nat.mul_comm R (A / R)]\n  have a1 : 2 * R * stepNat A R = R * (2 * stepNat A R) := by ac_rfl\n  omega\n\ntheorem not_le_succ {a b : Nat} (h : \u00ac a \u2264 b) : b + 1 \u2264 a := by omega\n\ntheorem add_one_le_of_lt_simple {a b : Nat} (h : a < b) : a + 1 \u2264 b := by omega\n\ntheorem sq_succ_expand (S : Nat) : (S + 1) * (S + 1) = S * S + (S + S) + 1 := by\n  simp only [Nat.add_mul, Nat.mul_add, Nat.mul_one, Nat.one_mul]\n  ac_rfl\n\ntheorem sqrt_sq_add_le {A : Nat} :\n    A \u2264 Nat.sqrt A * Nat.sqrt A + (Nat.sqrt A + Nat.sqrt A) := by\n  have h := Nat.lt_succ_sqrt A\n  have e := sq_succ_expand (Nat.sqrt A)\n  have h2 : A < Nat.sqrt A * Nat.sqrt A + (Nat.sqrt A + Nat.sqrt A) + 1 := by\n    rw [\u2190 e]; exact h\n  exact Nat.le_of_lt_add_one h2\n\n/-- Quadratic contraction: one Newton step from above lands within `E^2 / (2R) + 1`. -/\ntheorem quad_step {A R : Nat} (hA : 0 < A) (hR : 0 < R)\n    (hRS : Nat.sqrt A \u2264 R) :\n    stepNat A R \u2264 Nat.sqrt A + (R - Nat.sqrt A) * (R - Nat.sqrt A) / (2 * R) + 1 := by\n  obtain \u27e8E, hd\u27e9 : \u2203 E, R = Nat.sqrt A + E := Nat.exists_eq_add_of_le hRS\n  have h1A : 1 \u2264 A := hA\n  have h11 : 1 * 1 \u2264 A := by rw [Nat.mul_one]; exact h1A\n  have hS1 : 1 \u2264 Nat.sqrt A := le_sqrt_of_sq_le h11\n  have hRs : R - Nat.sqrt A = E := by\n    rw [hd]; exact Nat.add_sub_cancel_left _ _\n  rw [hRs]\n  generalize hQ : E * E / (2 * R) = Q\n  by_cases hN : stepNat A R \u2264 Nat.sqrt A + Q + 1\n  \u00b7 exact hN\n  \u00b7 have hN2 : Nat.sqrt A + Q + 1 + 1 \u2264 stepNat A R := not_le_succ hN\n    have hA2 := sqrt_sq_add_le (A := A)\n    have hnew := newton_upper (A := A) (R := R)\n    have hmul : 2 * R * (Nat.sqrt A + Q + 1 + 1) \u2264 2 * R * stepNat A R :=\n      Nat.mul_le_mul (Nat.le_refl _) hN2\n    have hle1 : R * R + A\n        \u2264 R * R + (Nat.sqrt A * Nat.sqrt A + (Nat.sqrt A + Nat.sqrt A)) :=\n      Nat.add_le_add_left hA2 _\n    have hle2 : 2 * R * (Nat.sqrt A + Q + 1 + 1)\n        \u2264 R * R + (Nat.sqrt A * Nat.sqrt A + (Nat.sqrt A + Nat.sqrt A)) :=\n      Nat.le_trans (Nat.le_trans hmul hnew) hle1\n    have h2R : 0 < 2 * R := Nat.mul_pos (by decide) hR\n    have hdm : (2 * R) * Q + E * E % (2 * R) = E * E := by\n      rw [\u2190 hQ]; exact Nat.div_add_mod _ _\n    have hmod : E * E % (2 * R) < 2 * R := Nat.mod_lt _ h2R\n    have hgt : R * R + (Nat.sqrt A * Nat.sqrt A + (Nat.sqrt A + Nat.sqrt A))\n        < 2 * R * (Nat.sqrt A + Q + 1 + 1) := by\n      subst hd\n      simp only [Nat.add_mul, Nat.mul_add, Nat.mul_assoc, Nat.mul_comm,\n        Nat.mul_one, Nat.one_mul] at hdm hmod \u22a2\n      clear hN hN2 hA2 hnew hmul hle1 hle2 hQ hRS hR hA hS1 hRs h11 h1A h2R\n      have b1 : Nat.sqrt A * (Nat.sqrt A * 2) = 2 * (Nat.sqrt A * Nat.sqrt A) := by\n        ac_rfl\n      have b2 : Nat.sqrt A * (E * 2) = 2 * (Nat.sqrt A * E) := by ac_rfl\n      have b3 : E * Nat.sqrt A = Nat.sqrt A * E := Nat.mul_comm _ _\n      omega\n    have hcontra : 2 * R * (Nat.sqrt A + Q + 1 + 1)\n        < 2 * R * (Nat.sqrt A + Q + 1 + 1) :=\n      Nat.lt_of_le_of_lt hle2 hgt\n    exact absurd hcontra (Nat.lt_irrefl _)\n\ntheorem req_sqrt_not_above : SqrtNotAbove sqrt := by\n  intro a\n  unfold sqrt newtonSqrt\n  by_cases ha : a = 0\n  \u00b7 subst ha; simp\n  \u00b7 rw [ite_eq_right ha]\n    have hmin : (min (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1)))\n      (a / iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1)))).toNat =\n      Nat.min (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))).toNat\n        (a.toNat / (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))).toNat) := by\n      rw [toNat_min, BitVec.toNat_udiv]\n    rw [hmin, \u2190 Nat.pow_two]\n    exact min_sq_le _ _\n\ntheorem req_sqrt_not_below : SqrtNotBelow sqrt := sorry\ntheorem req_sqrt_up_covers : SqrtUpCovers sqrt := sorry\ntheorem req_sqrt_up_tight  : SqrtUpTight sqrt := sorry\ntheorem req_mint_backed    : MintBacked sqrt := sorry\ntheorem req_mint_full      : MintFull sqrt := sorry\ntheorem req_mint_live      : MintLive sqrt := sorry\ntheorem req_newton_budget  : NewtonBudget sqrt := \u27e87, Nat.le_refl 7, fun a => rfl\u27e9\n\nend OzSqrt\n",
+  "sha256": "75155fc80319e3d3e731baa5a5133a2605c41e95f1e208e0951579f392a04bc8",
+  "proved_required": [
+   "req_newton_budget",
+   "req_sqrt_not_above"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_newton_budget",
+   "req_sqrt_not_above"
+  ],
+  "text": "import OzSqrt.Spec\nimport OzSqrt.Lemmas\n/-!\nThe square-root routine under repair, `Math.sqrt(uint256 a)` in the style of OpenZeppelin\nContracts `Math.sol`, as this pool's first deposit calls it.\nFixed: seven Newton iterations (the deployed `Math.sqrt` has seven lines\n`result = (result + a / result) >> 1;`), so the estimate converges on all 256-bit inputs.\n-/\nnamespace OzSqrt\n\ndef sqrt : SqrtFn := newtonSqrt 7\n\n/-- `min u (A / u)` squared never exceeds `A`. -/\ntheorem min_sq_le (u A : Nat) : (Nat.min u (A / u)) ^ 2 \u2264 A := by\n  by_cases hu : u = 0\n  \u00b7 subst hu; simp\n  have hle : A / u * u \u2264 A := Nat.div_mul_le_self A u\n  have h1 : Nat.min u (A / u) \u2264 u := Nat.min_le_left _ _\n  have h2 : Nat.min u (A / u) \u2264 A / u := Nat.min_le_right _ _\n  have h3 : Nat.min u (A / u) * Nat.min u (A / u) \u2264 u * (A / u) :=\n    Nat.mul_le_mul h1 h2\n  have h4 : u * (A / u) = A / u * u := Nat.mul_comm _ _\n  rw [Nat.pow_two]\n  omega\n\n/-- `x * x \u2264 A` implies `x \u2264 Nat.sqrt A`. -/\ntheorem le_sqrt_of_sq_le {x A : Nat} (h : x * x \u2264 A) : x \u2264 Nat.sqrt A := by\n  by_cases hle : x \u2264 Nat.sqrt A\n  \u00b7 exact hle\n  have h1 : Nat.sqrt A + 1 \u2264 x := by omega\n  have hmul : (Nat.sqrt A + 1) * (Nat.sqrt A + 1) \u2264 x * x :=\n    Nat.mul_le_mul h1 h1\n  have hlt : A < (Nat.sqrt A + 1) * (Nat.sqrt A + 1) := Nat.lt_succ_sqrt A\n  omega\n\n/-- Nat-level initial estimate `2 ^ (log2 A / 2)`. -/\ndef R0nat (A : Nat) : Nat := 2 ^ (Nat.log2 A / 2)\n\n/-- Nat-level Newton step `(R + A / R) / 2`. -/\ndef stepNat (A R : Nat) : Nat := (R + A / R) / 2\n\n/-- Nat-level Newton iterates from `R0nat`. -/\ndef Rnat (A : Nat) : Nat \u2192 Nat\n  | 0 => R0nat A\n  | n + 1 => stepNat A (Rnat A n)\n\n/-- `2 * S * R \u2264 S * S + R * R` (AM-GM, via differences). -/\ntheorem two_mul_le_add_sq (S R : Nat) : 2 * S * R \u2264 S * S + R * R := by\n  by_cases h : R \u2264 S\n  \u00b7 obtain \u27e8d, hd\u27e9 : \u2203 d, S = R + d := \u27e8S - R, by omega\u27e9\n    have e0 : 2 * S * R = S * R + S * R := by rw [Nat.mul_assoc, Nat.two_mul]\n    have hmain : S * R + S * R + d * d = S * S + R * R := by\n      rw [hd]\n      simp only [Nat.add_mul, Nat.mul_add, Nat.mul_assoc, Nat.mul_comm,\n        Nat.mul_left_comm]\n      ac_rfl\n    rw [e0, \u2190 hmain]; exact Nat.le_add_right _ _\n  \u00b7 obtain \u27e8d, hd\u27e9 : \u2203 d, R = S + d := \u27e8R - S, by omega\u27e9\n    have e0 : 2 * S * R = S * R + S * R := by rw [Nat.mul_assoc, Nat.two_mul]\n    have hmain : S * R + S * R + d * d = S * S + R * R := by\n      rw [hd]\n      simp only [Nat.add_mul, Nat.mul_add, Nat.mul_assoc, Nat.mul_comm,\n        Nat.mul_left_comm]\n      ac_rfl\n    rw [e0, \u2190 hmain]; exact Nat.le_add_right _ _\n\n/-- The initial estimate is positive on positive inputs. -/\ntheorem R0nat_pos {A : Nat} (_ : 0 < A) : 0 < R0nat A := by\n  unfold R0nat\n  exact Nat.one_le_two_pow\n\n/-- The initial estimate squared is below the input. -/\ntheorem R0nat_sq_le {A : Nat} (hA : A \u2260 0) : R0nat A * R0nat A \u2264 A := by\n  have hL : 2 ^ Nat.log2 A \u2264 A := Nat.log2_self_le hA\n  have h2 : Nat.log2 A / 2 + Nat.log2 A / 2 \u2264 Nat.log2 A := by\n    have := Nat.div_mul_le_self (Nat.log2 A) 2\n    omega\n  have e1 : R0nat A * R0nat A = 2 ^ (Nat.log2 A / 2 + Nat.log2 A / 2) := by\n    unfold R0nat; rw [\u2190 Nat.pow_add]\n  have h3 : 2 ^ (Nat.log2 A / 2 + Nat.log2 A / 2) \u2264 2 ^ Nat.log2 A :=\n    Nat.pow_le_pow_right (by decide) h2\n  omega\n\n/-- The initial estimate never exceeds the floor root. -/\ntheorem R0nat_le_sqrt {A : Nat} (hA : A \u2260 0) : R0nat A \u2264 Nat.sqrt A :=\n  le_sqrt_of_sq_le (R0nat_sq_le hA)\n\n/-- The floor root is below twice the initial estimate. -/\ntheorem sqrt_succ_le_two_R0 {A : Nat} (hA : A \u2260 0) :\n    Nat.sqrt A + 1 \u2264 2 * R0nat A := by\n  by_cases h : Nat.sqrt A + 1 \u2264 2 * R0nat A\n  \u00b7 exact h\n  have hle : 2 * R0nat A \u2264 Nat.sqrt A := by omega\n  have hSS : Nat.sqrt A * Nat.sqrt A \u2264 A := Nat.sqrt_le A\n  have hsq : (2 * R0nat A) * (2 * R0nat A) \u2264 A := by\n    have := Nat.mul_le_mul hle hle\n    omega\n  have hA2 : A < 2 ^ (Nat.log2 A + 1) := Nat.lt_log2_self\n  have hexp : Nat.log2 A + 1 \u2264 2 + (Nat.log2 A / 2 + Nat.log2 A / 2) := by omega\n  have hpow : 2 ^ (Nat.log2 A + 1) \u2264 2 ^ (2 + (Nat.log2 A / 2 + Nat.log2 A / 2)) :=\n    Nat.pow_le_pow_right (by decide) hexp\n  have e2 : (2 * R0nat A) * (2 * R0nat A) = 2 ^ (2 + (Nat.log2 A / 2 + Nat.log2 A / 2)) := by\n    have e1 : R0nat A * R0nat A = 2 ^ (Nat.log2 A / 2 + Nat.log2 A / 2) := by\n      unfold R0nat; rw [\u2190 Nat.pow_add]\n    have c4 : (2 * R0nat A) * (2 * R0nat A) = (2 * 2) * (R0nat A * R0nat A) := by\n      ac_rfl\n    rw [c4, e1]\n    have c42 : (2 * 2 : Nat) = 2 ^ 2 := by decide\n    rw [c42, \u2190 Nat.pow_add]\n  omega\n\n/-- One Newton step never goes below the floor root. -/\ntheorem step_ge_sqrt (A R : Nat) (hR : 0 < R) :\n    Nat.sqrt A \u2264 stepNat A R := by\n  unfold stepNat\n  have hSS : Nat.sqrt A * Nat.sqrt A \u2264 A := Nat.sqrt_le A\n  have h2SR : 2 * (Nat.sqrt A * R) \u2264 Nat.sqrt A * Nat.sqrt A + R * R := by\n    have h := two_mul_le_add_sq (Nat.sqrt A) R\n    have a1 : 2 * Nat.sqrt A * R = 2 * (Nat.sqrt A * R) := Nat.mul_assoc 2 _ _\n    omega\n  by_cases hbig : 2 * Nat.sqrt A \u2264 R\n  \u00b7 have hle : 2 * Nat.sqrt A \u2264 R + A / R :=\n      Nat.le_trans hbig (Nat.le_add_right _ _)\n    have harg : Nat.sqrt A * 2 \u2264 R + A / R := by\n      rw [Nat.mul_comm]; exact hle\n    exact (Nat.le_div_iff_mul_le (by decide : 0 < 2)).mpr harg\n  \u00b7 have hsmall : R < 2 * Nat.sqrt A := by omega\n    have hRle : R \u2264 2 * Nat.sqrt A := Nat.le_of_lt hsmall\n    have hRR : R * R \u2264 2 * (Nat.sqrt A * R) := by\n      have h1 : R * R \u2264 R * (2 * Nat.sqrt A) :=\n        Nat.mul_le_mul (Nat.le_refl R) (Nat.le_of_lt hsmall)\n      have a1 : R * (2 * Nat.sqrt A) = 2 * (Nat.sqrt A * R) := by ac_rfl\n      rw [a1] at h1; exact h1\n    have hsub : (2 * Nat.sqrt A - R) * R \u2264 A := by\n      have e : (2 * Nat.sqrt A - R) * R = 2 * Nat.sqrt A * R - R * R :=\n        Nat.sub_mul _ _ _\n      have a1 : 2 * Nat.sqrt A * R = 2 * (Nat.sqrt A * R) := Nat.mul_assoc 2 _ _\n      have hstep : 2 * (Nat.sqrt A * R) - R * R \u2264\n          (Nat.sqrt A * Nat.sqrt A + R * R) - R * R :=\n        Nat.sub_le_sub_right h2SR _\n      have hcancel : Nat.sqrt A * Nat.sqrt A + R * R - R * R =\n          Nat.sqrt A * Nat.sqrt A :=\n        Nat.add_sub_cancel _ _\n      have hle2 : 2 * (Nat.sqrt A * R) - R * R \u2264 Nat.sqrt A * Nat.sqrt A := by\n        rw [hcancel] at hstep; exact hstep\n      have e' : (2 * Nat.sqrt A - R) * R = 2 * (Nat.sqrt A * R) - R * R := by\n        rw [e, a1]\n      rw [e']; exact Nat.le_trans hle2 hSS\n    have hle : 2 * Nat.sqrt A - R \u2264 A / R :=\n      (Nat.le_div_iff_mul_le hR).mpr hsub\n    have eadd : R + (2 * Nat.sqrt A - R) = 2 * Nat.sqrt A :=\n      Nat.add_sub_cancel' hRle\n    have hsum : 2 * Nat.sqrt A \u2264 R + A / R := by\n      have hcc : R + (2 * Nat.sqrt A - R) \u2264 R + A / R :=\n        Nat.add_le_add (Nat.le_refl R) hle\n      rw [eadd] at hcc; exact hcc\n    have harg : Nat.sqrt A * 2 \u2264 R + A / R := by\n      rw [Nat.mul_comm]; exact hsum\n    exact (Nat.le_div_iff_mul_le (by decide : 0 < 2)).mpr harg\n\n/-- A Newton step strictly decreases while above the floor root. -/\ntheorem step_lt_of_above {A R : Nat} (hR : Nat.sqrt A + 1 \u2264 R) :\n    stepNat A R < R := by\n  have hRpos : 0 < R := by omega\n  have hSS1 : A < (Nat.sqrt A + 1) * (Nat.sqrt A + 1) := Nat.lt_succ_sqrt A\n  have hRR : (Nat.sqrt A + 1) * (Nat.sqrt A + 1) \u2264 R * R :=\n    Nat.mul_le_mul hR hR\n  have hAlt : A < R * R := by omega\n  have hdiv : A / R < R := (Nat.div_lt_iff_lt_mul hRpos).mpr hAlt\n  unfold stepNat\n  omega\n\n/-- Key Newton upper bound: `2 * R * next \u2264 R * R + A`. -/\ntheorem newton_upper {A R : Nat} : 2 * R * stepNat A R \u2264 R * R + A := by\n  have hhalf : 2 * stepNat A R \u2264 R + A / R := by\n    unfold stepNat; omega\n  have hmul : R * (2 * stepNat A R) \u2264 R * (R + A / R) :=\n    Nat.mul_le_mul (Nat.le_refl R) hhalf\n  have hle : A / R * R \u2264 A := Nat.div_mul_le_self A R\n  have e : R * (R + A / R) = R * R + A / R * R := by\n    rw [Nat.mul_add, Nat.mul_comm R (A / R)]\n  have a1 : 2 * R * stepNat A R = R * (2 * stepNat A R) := by ac_rfl\n  omega\n\ntheorem not_le_succ {a b : Nat} (h : \u00ac a \u2264 b) : b + 1 \u2264 a := by omega\n\ntheorem add_one_le_of_lt_simple {a b : Nat} (h : a < b) : a + 1 \u2264 b := by omega\n\ntheorem sq_succ_expand (S : Nat) : (S + 1) * (S + 1) = S * S + (S + S) + 1 := by\n  simp only [Nat.add_mul, Nat.mul_add, Nat.mul_one, Nat.one_mul]\n  ac_rfl\n\ntheorem sqrt_sq_add_le {A : Nat} :\n    A \u2264 Nat.sqrt A * Nat.sqrt A + (Nat.sqrt A + Nat.sqrt A) := by\n  have h := Nat.lt_succ_sqrt A\n  have e := sq_succ_expand (Nat.sqrt A)\n  have h2 : A < Nat.sqrt A * Nat.sqrt A + (Nat.sqrt A + Nat.sqrt A) + 1 := by\n    rw [\u2190 e]; exact h\n  exact Nat.le_of_lt_add_one h2\n\n/-- Quadratic contraction: one Newton step from above lands within `E^2 / (2R) + 1`. -/\ntheorem quad_step {A R : Nat} (hA : 0 < A) (hR : 0 < R)\n    (hRS : Nat.sqrt A \u2264 R) :\n    stepNat A R \u2264 Nat.sqrt A + (R - Nat.sqrt A) * (R - Nat.sqrt A) / (2 * R) + 1 := by\n  obtain \u27e8E, hd\u27e9 : \u2203 E, R = Nat.sqrt A + E := Nat.exists_eq_add_of_le hRS\n  have h1A : 1 \u2264 A := hA\n  have h11 : 1 * 1 \u2264 A := by rw [Nat.mul_one]; exact h1A\n  have hS1 : 1 \u2264 Nat.sqrt A := le_sqrt_of_sq_le h11\n  have hRs : R - Nat.sqrt A = E := by\n    rw [hd]; exact Nat.add_sub_cancel_left _ _\n  rw [hRs]\n  generalize hQ : E * E / (2 * R) = Q\n  by_cases hN : stepNat A R \u2264 Nat.sqrt A + Q + 1\n  \u00b7 exact hN\n  \u00b7 have hN2 : Nat.sqrt A + Q + 1 + 1 \u2264 stepNat A R := not_le_succ hN\n    have hA2 := sqrt_sq_add_le (A := A)\n    have hnew := newton_upper (A := A) (R := R)\n    have hmul : 2 * R * (Nat.sqrt A + Q + 1 + 1) \u2264 2 * R * stepNat A R :=\n      Nat.mul_le_mul (Nat.le_refl _) hN2\n    have hle1 : R * R + A\n        \u2264 R * R + (Nat.sqrt A * Nat.sqrt A + (Nat.sqrt A + Nat.sqrt A)) :=\n      Nat.add_le_add_left hA2 _\n    have hle2 : 2 * R * (Nat.sqrt A + Q + 1 + 1)\n        \u2264 R * R + (Nat.sqrt A * Nat.sqrt A + (Nat.sqrt A + Nat.sqrt A)) :=\n      Nat.le_trans (Nat.le_trans hmul hnew) hle1\n    have h2R : 0 < 2 * R := Nat.mul_pos (by decide) hR\n    have hdm : (2 * R) * Q + E * E % (2 * R) = E * E := by\n      rw [\u2190 hQ]; exact Nat.div_add_mod _ _\n    have hmod : E * E % (2 * R) < 2 * R := Nat.mod_lt _ h2R\n    have hgt : R * R + (Nat.sqrt A * Nat.sqrt A + (Nat.sqrt A + Nat.sqrt A))\n        < 2 * R * (Nat.sqrt A + Q + 1 + 1) := by\n      subst hd\n      simp only [Nat.add_mul, Nat.mul_add, Nat.mul_assoc, Nat.mul_comm,\n        Nat.mul_one, Nat.one_mul] at hdm hmod \u22a2\n      clear hN hN2 hA2 hnew hmul hle1 hle2 hQ hRS hR hA hS1 hRs h11 h1A h2R\n      have b1 : Nat.sqrt A * (Nat.sqrt A * 2) = 2 * (Nat.sqrt A * Nat.sqrt A) := by\n        ac_rfl\n      have b2 : Nat.sqrt A * (E * 2) = 2 * (Nat.sqrt A * E) := by ac_rfl\n      have b3 : E * Nat.sqrt A = Nat.sqrt A * E := Nat.mul_comm _ _\n      omega\n    have hcontra : 2 * R * (Nat.sqrt A + Q + 1 + 1)\n        < 2 * R * (Nat.sqrt A + Q + 1 + 1) :=\n      Nat.lt_of_le_of_lt hle2 hgt\n    exact absurd hcontra (Nat.lt_irrefl _)\n\ntheorem req_sqrt_not_above : SqrtNotAbove sqrt := by\n  intro a\n  unfold sqrt newtonSqrt\n  by_cases ha : a = 0\n  \u00b7 subst ha; simp\n  \u00b7 rw [ite_eq_right ha]\n    have hmin : (min (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1)))\n      (a / iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1)))).toNat =\n      Nat.min (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))).toNat\n        (a.toNat / (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))).toNat) := by\n      rw [toNat_min, BitVec.toNat_udiv]\n    rw [hmin, \u2190 Nat.pow_two]\n    exact min_sq_le _ _\n\ntheorem req_sqrt_not_below : SqrtNotBelow sqrt := sorry\ntheorem req_sqrt_up_covers : SqrtUpCovers sqrt := sorry\ntheorem req_sqrt_up_tight  : SqrtUpTight sqrt := sorry\ntheorem req_mint_backed    : MintBacked sqrt := sorry\ntheorem req_mint_full      : MintFull sqrt := sorry\ntheorem req_mint_live      : MintLive sqrt := sorry\ntheorem req_newton_budget  : NewtonBudget sqrt := \u27e87, Nat.le_refl 7, fun a => rfl\u27e9\n\nend OzSqrt\n"
+ },
+ "proved": [
+  {
+   "name": "sqrt",
+   "kind": "def",
+   "text": "def sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)",
+   "deps": [],
+   "statement": "def sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "req_newton_budget",
+   "kind": "theorem",
+   "text": "theorem req_newton_budget  : NewtonBudget sqrt := \u27e87, Nat.le_refl 7, fun a => rfl\u27e9",
+   "deps": [
+    "sqrt"
+   ],
+   "statement": "theorem req_newton_budget  : NewtonBudget sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "req_sqrt_not_above",
+   "kind": "theorem",
+   "text": "theorem req_sqrt_not_above : SqrtNotAbove sqrt := by\n  intro a\n  unfold sqrt newtonSqrt\n  by_cases ha : a = 0\n  \u00b7 subst ha; simp\n  \u00b7 rw [ite_eq_right ha]\n    have hmin : (min (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1)))\n      (a / iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1)))).toNat =\n      Nat.min (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))).toNat\n        (a.toNat / (iterate (newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))).toNat) := by\n      rw [toNat_min, BitVec.toNat_udiv]\n    rw [hmin, \u2190 Nat.pow_two]\n    exact min_sq_le _ _",
+   "deps": [
+    "min_sq_le",
+    "sqrt"
+   ],
+   "statement": "theorem req_sqrt_not_above : SqrtNotAbove sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "le_sqrt_of_sq_le",
+   "kind": "theorem",
+   "text": "theorem le_sqrt_of_sq_le {x A : Nat} (h : x * x \u2264 A) : x \u2264 Nat.sqrt A := by\n  by_cases hle : x \u2264 Nat.sqrt A\n  \u00b7 exact hle\n  have h1 : Nat.sqrt A + 1 \u2264 x := by omega\n  have hmul : (Nat.sqrt A + 1) * (Nat.sqrt A + 1) \u2264 x * x :=\n    Nat.mul_le_mul h1 h1\n  have hlt : A < (Nat.sqrt A + 1) * (Nat.sqrt A + 1) := Nat.lt_succ_sqrt A\n  omega",
+   "deps": [
+    "sqrt"
+   ],
+   "statement": "theorem le_sqrt_of_sq_le {x A : Nat} (h : x * x \u2264 A) : x \u2264 Nat.sqrt A",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "min_sq_le",
+   "kind": "theorem",
+   "text": "theorem min_sq_le (u A : Nat) : (Nat.min u (A / u)) ^ 2 \u2264 A := by\n  by_cases hu : u = 0\n  \u00b7 subst hu; simp\n  have hle : A / u * u \u2264 A := Nat.div_mul_le_self A u\n  have h1 : Nat.min u (A / u) \u2264 u := Nat.min_le_left _ _\n  have h2 : Nat.min u (A / u) \u2264 A / u := Nat.min_le_right _ _\n  have h3 : Nat.min u (A / u) * Nat.min u (A / u) \u2264 u * (A / u) :=\n    Nat.mul_le_mul h1 h2\n  have h4 : u * (A / u) = A / u * u := Nat.mul_comm _ _\n  rw [Nat.pow_two]\n  omega",
+   "deps": [],
+   "statement": "theorem min_sq_le (u A : Nat) : (Nat.min u (A / u)) ^ 2 \u2264 A",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sqrt",
+   "kind": "def",
+   "text": "def sqrt : SqrtFn := newtonSqrt 7",
+   "deps": [],
+   "statement": "def sqrt : SqrtFn := newtonSqrt 7",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "newton_upper",
+   "kind": "theorem",
+   "text": "theorem newton_upper {A R : Nat} : 2 * R * stepNat A R \u2264 R * R + A := by\n  have hhalf : 2 * stepNat A R \u2264 R + A / R := by\n    unfold stepNat; omega\n  have hmul : R * (2 * stepNat A R) \u2264 R * (R + A / R) :=\n    Nat.mul_le_mul (Nat.le_refl R) hhalf\n  have hle : A / R * R \u2264 A := Nat.div_mul_le_self A R\n  have e : R * (R + A / R) = R * R + A / R * R := by\n    rw [Nat.mul_add, Nat.mul_comm R (A / R)]\n  have a1 : 2 * R * stepNat A R = R * (2 * stepNat A R) := by ac_rfl\n  omega",
+   "deps": [
+    "stepNat"
+   ],
+   "statement": "theorem newton_upper {A R : Nat} : 2 * R * stepNat A R \u2264 R * R + A",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "step_lt_of_above",
+   "kind": "theorem",
+   "text": "theorem step_lt_of_above {A R : Nat} (hR : Nat.sqrt A + 1 \u2264 R) :\n    stepNat A R < R := by\n  have hRpos : 0 < R := by omega\n  have hSS1 : A < (Nat.sqrt A + 1) * (Nat.sqrt A + 1) := Nat.lt_succ_sqrt A\n  have hRR : (Nat.sqrt A + 1) * (Nat.sqrt A + 1) \u2264 R * R :=\n    Nat.mul_le_mul hR hR\n  have hAlt : A < R * R := by omega\n  have hdiv : A / R < R := (Nat.div_lt_iff_lt_mul hRpos).mpr hAlt\n  unfold stepNat\n  omega",
+   "deps": [
+    "sqrt",
+    "stepNat"
+   ],
+   "statement": "theorem step_lt_of_above {A R : Nat} (hR : Nat.sqrt A + 1 \u2264 R) :\n    stepNat A R < R",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "step_ge_sqrt",
+   "kind": "theorem",
+   "text": "theorem step_ge_sqrt (A R : Nat) (hR : 0 < R) :\n    Nat.sqrt A \u2264 stepNat A R := by\n  unfold stepNat\n  have hSS : Nat.sqrt A * Nat.sqrt A \u2264 A := Nat.sqrt_le A\n  have h2SR : 2 * (Nat.sqrt A * R) \u2264 Nat.sqrt A * Nat.sqrt A + R * R := by\n    have h := two_mul_le_add_sq (Nat.sqrt A) R\n    have a1 : 2 * Nat.sqrt A * R = 2 * (Nat.sqrt A * R) := Nat.mul_assoc 2 _ _\n    omega\n  by_cases hbig : 2 * Nat.sqrt A \u2264 R\n  \u00b7 have hle : 2 * Nat.sqrt A \u2264 R + A / R :=\n      Nat.le_trans hbig (Nat.le_add_right _ _)\n    have harg : Nat.sqrt A * 2 \u2264 R + A / R := by\n      rw [Nat.mul_comm]; exact hle\n    exact (Nat.le_div_iff_mul_le (by decide : 0 < 2)).mpr harg\n  \u00b7 have hsmall : R < 2 * Nat.sqrt A := by omega\n    have hRle : R \u2264 2 * Nat.sqrt A := Nat.le_of_lt hsmall\n    have hRR : R * R \u2264 2 * (Nat.sqrt A * R) := by\n      have h1 : R * R \u2264 R * (2 * Nat.sqrt A) :=\n        Nat.mul_le_mul (Nat.le_refl R) (Nat.le_of_lt hsmall)\n      have a1 : R * (2 * Nat.sqrt A) = 2 * (Nat.sqrt A * R) := by ac_rfl\n      rw [a1] at h1; exact h1\n    have hsub : (2 * Nat.sqrt A - R) * R \u2264 A := by\n      have e : (2 * Nat.sqrt A - R) * R = 2 * Nat.sqrt A * R - R * R :=\n        Nat.sub_mul _ _ _\n      have a1 : 2 * Nat.sqrt A * R = 2 * (Nat.sqrt A * R) := Nat.mul_assoc 2 _ _\n      have hstep : 2 * (Nat.sqrt A * R) - R * R \u2264\n          (Nat.sqrt A * Nat.sqrt A + R * R) - R * R :=\n        Nat.sub_le_sub_right h2SR _\n      have hcancel : Nat.sqrt A * Nat.sqrt A + R * R - R * R =\n          Nat.sqrt A * Nat.sqrt A :=\n        Nat.add_sub_cancel _ _\n      have hle2 : 2 * (Nat.sqrt A * R) - R * R \u2264 Nat.sqrt A * Nat.sqrt A := by\n        rw [hcancel] at hstep; exact hstep\n      have e' : (2 * Nat.sqrt A - R) * R = 2 * (Nat.sqrt A * R) - R * R := by\n        rw [e, a1]\n      rw [e']; exact Nat.le_trans hle2 hSS\n    have hle : 2 * Nat.sqrt A - R \u2264 A / R :=\n      (Nat.le_div_iff_mul_le hR).mpr hsub\n    have eadd : R + (2 * Nat.sqrt A - R) = 2 * Nat.sqrt A :=\n      Nat.add_sub_cancel' hRle\n    have hsum : 2 * Nat.sqrt A \u2264 R + A / R := by\n      have hcc : R + (2 * Nat.sqrt A - R) \u2264 R + A / R :=\n        Nat.add_le_add (Nat.le_refl R) hle\n      rw [eadd] at hcc; exact hcc\n    have harg : Nat.sqrt A * 2 \u2264 R + A / R := by\n      rw [Nat.mul_comm]; exact hsum\n    exact (Nat.le_div_iff_mul_le (by decide : 0 < 2)).mpr harg",
+   "deps": [
+    "sqrt",
+    "stepNat",
+    "two_mul_le_add_sq"
+   ],
+   "statement": "theorem step_ge_sqrt (A R : Nat) (hR : 0 < R) :\n    Nat.sqrt A \u2264 stepNat A R",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sqrt_succ_le_two_R0",
+   "kind": "theorem",
+   "text": "theorem sqrt_succ_le_two_R0 {A : Nat} (hA : A \u2260 0) :\n    Nat.sqrt A + 1 \u2264 2 * R0nat A := by\n  by_cases h : Nat.sqrt A + 1 \u2264 2 * R0nat A\n  \u00b7 exact h\n  have hle : 2 * R0nat A \u2264 Nat.sqrt A := by omega\n  have hSS : Nat.sqrt A * Nat.sqrt A \u2264 A := Nat.sqrt_le A\n  have hsq : (2 * R0nat A) * (2 * R0nat A) \u2264 A := by\n    have := Nat.mul_le_mul hle hle\n    omega\n  have hA2 : A < 2 ^ (Nat.log2 A + 1) := Nat.lt_log2_self\n  have hexp : Nat.log2 A + 1 \u2264 2 + (Nat.log2 A / 2 + Nat.log2 A / 2) := by omega\n  have hpow : 2 ^ (Nat.log2 A + 1) \u2264 2 ^ (2 + (Nat.log2 A / 2 + Nat.log2 A / 2)) :=\n    Nat.pow_le_pow_right (by decide) hexp\n  have e2 : (2 * R0nat A) * (2 * R0nat A) = 2 ^ (2 + (Nat.log2 A / 2 + Nat.log2 A / 2)) := by\n    have e1 : R0nat A * R0nat A = 2 ^ (Nat.log2 A / 2 + Nat.log2 A / 2) := by\n      unfold R0nat; rw [\u2190 Nat.pow_add]\n    have c4 : (2 * R0nat A) * (2 * R0nat A) = (2 * 2) * (R0nat A * R0nat A) := by\n      ac_rfl\n    rw [c4, e1]\n    have c42 : (2 * 2 : Nat) = 2 ^ 2 := by decide\n    rw [c42, \u2190 Nat.pow_add]\n  omega",
+   "deps": [
+    "R0nat",
+    "sqrt"
+   ],
+   "statement": "theorem sqrt_succ_le_two_R0 {A : Nat} (hA : A \u2260 0) :\n    Nat.sqrt A + 1 \u2264 2 * R0nat A",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "R0nat_le_sqrt",
+   "kind": "theorem",
+   "text": "theorem R0nat_le_sqrt {A : Nat} (hA : A \u2260 0) : R0nat A \u2264 Nat.sqrt A :=\n  le_sqrt_of_sq_le (R0nat_sq_le hA)",
+   "deps": [
+    "R0nat",
+    "R0nat_sq_le",
+    "le_sqrt_of_sq_le",
+    "sqrt"
+   ],
+   "statement": "theorem R0nat_le_sqrt {A : Nat} (hA : A \u2260 0) : R0nat A \u2264 Nat.sqrt A",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "R0nat_sq_le",
+   "kind": "theorem",
+   "text": "theorem R0nat_sq_le {A : Nat} (hA : A \u2260 0) : R0nat A * R0nat A \u2264 A := by\n  have hL : 2 ^ Nat.log2 A \u2264 A := Nat.log2_self_le hA\n  have h2 : Nat.log2 A / 2 + Nat.log2 A / 2 \u2264 Nat.log2 A := by\n    have := Nat.div_mul_le_self (Nat.log2 A) 2\n    omega\n  have e1 : R0nat A * R0nat A = 2 ^ (Nat.log2 A / 2 + Nat.log2 A / 2) := by\n    unfold R0nat; rw [\u2190 Nat.pow_add]\n  have h3 : 2 ^ (Nat.log2 A / 2 + Nat.log2 A / 2) \u2264 2 ^ Nat.log2 A :=\n    Nat.pow_le_pow_right (by decide) h2\n  omega",
+   "deps": [
+    "R0nat"
+   ],
+   "statement": "theorem R0nat_sq_le {A : Nat} (hA : A \u2260 0) : R0nat A * R0nat A \u2264 A",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "R0nat_pos",
+   "kind": "theorem",
+   "text": "theorem R0nat_pos {A : Nat} (_ : 0 < A) : 0 < R0nat A := by\n  unfold R0nat\n  exact Nat.one_le_two_pow",
+   "deps": [
+    "R0nat"
+   ],
+   "statement": "theorem R0nat_pos {A : Nat} (_ : 0 < A) : 0 < R0nat A",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "two_mul_le_add_sq",
+   "kind": "theorem",
+   "text": "theorem two_mul_le_add_sq (S R : Nat) : 2 * S * R \u2264 S * S + R * R := by\n  by_cases h : R \u2264 S\n  \u00b7 obtain \u27e8d, hd\u27e9 : \u2203 d, S = R + d := \u27e8S - R, by omega\u27e9\n    have e0 : 2 * S * R = S * R + S * R := by rw [Nat.mul_assoc, Nat.two_mul]\n    have hmain : S * R + S * R + d * d = S * S + R * R := by\n      rw [hd]\n      simp only [Nat.add_mul, Nat.mul_add, Nat.mul_assoc, Nat.mul_comm,\n        Nat.mul_left_comm]\n      ac_rfl\n    rw [e0, \u2190 hmain]; exact Nat.le_add_right _ _\n  \u00b7 obtain \u27e8d, hd\u27e9 : \u2203 d, R = S + d := \u27e8R - S, by omega\u27e9\n    have e0 : 2 * S * R = S * R + S * R := by rw [Nat.mul_assoc, Nat.two_mul]\n    have hmain : S * R + S * R + d * d = S * S + R * R := by\n      rw [hd]\n      simp only [Nat.add_mul, Nat.mul_add, Nat.mul_assoc, Nat.mul_comm,\n        Nat.mul_left_comm]\n      ac_rfl\n    rw [e0, \u2190 hmain]; exact Nat.le_add_right _ _",
+   "deps": [],
+   "statement": "theorem two_mul_le_add_sq (S R : Nat) : 2 * S * R \u2264 S * S + R * R",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "Rnat",
+   "kind": "def",
+   "text": "def Rnat (A : Nat) : Nat \u2192 Nat\n  | 0 => R0nat A\n  | n + 1 => stepNat A (Rnat A n)",
+   "deps": [
+    "R0nat",
+    "stepNat"
+   ],
+   "statement": "def Rnat (A : Nat) : Nat \u2192 Nat\n  | 0 => R0nat A\n  | n + 1 => stepNat A (Rnat A n)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "stepNat",
+   "kind": "def",
+   "text": "def stepNat (A R : Nat) : Nat := (R + A / R) / 2",
+   "deps": [],
+   "statement": "def stepNat (A R : Nat) : Nat := (R + A / R) / 2",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "R0nat",
+   "kind": "def",
+   "text": "def R0nat (A : Nat) : Nat := 2 ^ (Nat.log2 A / 2)",
+   "deps": [],
+   "statement": "def R0nat (A : Nat) : Nat := 2 ^ (Nat.log2 A / 2)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "quad_step",
+   "kind": "theorem",
+   "text": "theorem quad_step {A R : Nat} (hA : 0 < A) (hR : 0 < R)\n    (hRS : Nat.sqrt A \u2264 R) :\n    stepNat A R \u2264 Nat.sqrt A + (R - Nat.sqrt A) * (R - Nat.sqrt A) / (2 * R) + 1 := by\n  obtain \u27e8E, hd\u27e9 : \u2203 E, R = Nat.sqrt A + E := Nat.exists_eq_add_of_le hRS\n  have h1A : 1 \u2264 A := hA\n  have h11 : 1 * 1 \u2264 A := by rw [Nat.mul_one]; exact h1A\n  have hS1 : 1 \u2264 Nat.sqrt A := le_sqrt_of_sq_le h11\n  have hRs : R - Nat.sqrt A = E := by\n    rw [hd]; exact Nat.add_sub_cancel_left _ _\n  rw [hRs]\n  generalize hQ : E * E / (2 * R) = Q\n  by_cases hN : stepNat A R \u2264 Nat.sqrt A + Q + 1\n  \u00b7 exact hN\n  \u00b7 have hN2 : Nat.sqrt A + Q + 1 + 1 \u2264 stepNat A R := not_le_succ hN\n    have hA2 := sqrt_sq_add_le (A := A)\n    have hnew := newton_upper (A := A) (R := R)\n    have hmul : 2 * R * (Nat.sqrt A + Q + 1 + 1) \u2264 2 * R * stepNat A R :=\n      Nat.mul_le_mul (Nat.le_refl _) hN2\n    have hle1 : R * R + A\n        \u2264 R * R + (Nat.sqrt A * Nat.sqrt A + (Nat.sqrt A + Nat.sqrt A)) :=\n      Nat.add_le_add_left hA2 _\n    have hle2 : 2 * R * (Nat.sqrt A + Q + 1 + 1)\n        \u2264 R * R + (Nat.sqrt A * Nat.sqrt A + (Nat.sqrt A + Nat.sqrt A)) :=\n      Nat.le_trans (Nat.le_trans hmul hnew) hle1\n    have h2R : 0 < 2 * R := Nat.mul_pos (by decide) hR\n    have hdm : (2 * R) * Q + E * E % (2 * R) = E * E := by\n      rw [\u2190 hQ]; exact Nat.div_add_mod _ _\n    have hmod : E * E % (2 * R) < 2 * R := Nat.mod_lt _ h2R\n    have hgt : R * R + (Nat.sqrt A * Nat.sqrt A + (Nat.sqrt A + Nat.sqrt A))\n        < 2 * R * (Nat.sqrt A + Q + 1 + 1) := by\n      subst hd\n      simp only [Nat.add_mul, Nat.mul_add, Nat.mul_assoc, Nat.mul_comm,\n        Nat.mul_one, Nat.one_mul] at hdm hmod \u22a2\n      clear hN hN2 hA2 hnew hmul hle1 hle2 hQ hRS hR hA hS1 hRs h11 h1A h2R\n      have b1 : Nat.sqrt A * (Nat.sqrt A * 2) = 2 * (Nat.sqrt A * Nat.sqrt A) := by\n        ac_rfl\n      have b2 : Nat.sqrt A * (E * 2) = 2 * (Nat.sqrt A * E) := by ac_rfl\n      have b3 : E * Nat.sqrt A = Nat.sqrt A * E := Nat.mul_comm _ _\n      omega\n    have hcontra : 2 * R * (Nat.sqrt A + Q + 1 + 1)\n        < 2 * R * (Nat.sqrt A + Q + 1 + 1) :=\n      Nat.lt_of_le_of_lt hle2 hgt\n    exact absurd hcontra (Nat.lt_irrefl _)",
+   "deps": [
+    "le_sqrt_of_sq_le",
+    "newton_upper",
+    "not_le_succ",
+    "sq_succ_expand",
+    "sqrt",
+    "sqrt_sq_add_le",
+    "stepNat"
+   ],
+   "statement": "theorem quad_step {A R : Nat} (hA : 0 < A) (hR : 0 < R)\n    (hRS : Nat.sqrt A \u2264 R) :\n    stepNat A R \u2264 Nat.sqrt A + (R - Nat.sqrt A) * (R - Nat.sqrt A) / (2 * R) + 1",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sqrt_sq_add_le",
+   "kind": "theorem",
+   "text": "theorem sqrt_sq_add_le {A : Nat} :\n    A \u2264 Nat.sqrt A * Nat.sqrt A + (Nat.sqrt A + Nat.sqrt A) := by\n  have h := Nat.lt_succ_sqrt A\n  have e := sq_succ_expand (Nat.sqrt A)\n  have h2 : A < Nat.sqrt A * Nat.sqrt A + (Nat.sqrt A + Nat.sqrt A) + 1 := by\n    rw [\u2190 e]; exact h\n  exact Nat.le_of_lt_add_one h2",
+   "deps": [
+    "sq_succ_expand",
+    "sqrt"
+   ],
+   "statement": "theorem sqrt_sq_add_le {A : Nat} :\n    A \u2264 Nat.sqrt A * Nat.sqrt A + (Nat.sqrt A + Nat.sqrt A)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sq_succ_expand",
+   "kind": "theorem",
+   "text": "theorem sq_succ_expand (S : Nat) : (S + 1) * (S + 1) = S * S + (S + S) + 1 := by\n  simp only [Nat.add_mul, Nat.mul_add, Nat.mul_one, Nat.one_mul]\n  ac_rfl",
+   "deps": [],
+   "statement": "theorem sq_succ_expand (S : Nat) : (S + 1) * (S + 1) = S * S + (S + S) + 1",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "add_one_le_of_lt_simple",
+   "kind": "theorem",
+   "text": "theorem add_one_le_of_lt_simple {a b : Nat} (h : a < b) : a + 1 \u2264 b := by omega",
+   "deps": [],
+   "statement": "theorem add_one_le_of_lt_simple {a b : Nat} (h : a < b) : a + 1 \u2264 b",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "not_le_succ",
+   "kind": "theorem",
+   "text": "theorem not_le_succ {a b : Nat} (h : \u00ac a \u2264 b) : b + 1 \u2264 a := by omega",
+   "deps": [],
+   "statement": "theorem not_le_succ {a b : Nat} (h : \u00ac a \u2264 b) : b + 1 \u2264 a",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [
+  {
+   "name": "req_sqrt_not_below",
+   "required": true,
+   "statement": "theorem req_sqrt_not_below : SqrtNotBelow sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 8.8319,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_sqrt_up_covers",
+   "required": true,
+   "statement": "theorem req_sqrt_up_covers : SqrtUpCovers sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 8.8319,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_sqrt_up_tight",
+   "required": true,
+   "statement": "theorem req_sqrt_up_tight  : SqrtUpTight sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 8.8319,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_mint_backed",
+   "required": true,
+   "statement": "theorem req_mint_backed    : MintBacked sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 8.8319,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_mint_full",
+   "required": true,
+   "statement": "theorem req_mint_full      : MintFull sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 8.8319,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_mint_live",
+   "required": true,
+   "statement": "theorem req_mint_live      : MintLive sqrt",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 0,
+   "usd_list": 8.8319,
+   "tried": [],
+   "last_lean": "candidate/Solution.lean compiles. These required theorems are not proved yet: req_sqrt_not_below (sorry), req_sqrt_up_covers (sorry), req_sqrt_up_tight (sorry), req_mint_backed (sorry), req_mint_full (sorry), req_mint_live (sorry).",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  }
+ ],
+ "budget": {
+  "usd_list": 8.8319,
+  "elapsed_s": 8560.9
+ },
+ "resumed_from": []
+}

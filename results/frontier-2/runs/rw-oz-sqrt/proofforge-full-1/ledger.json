@@ -1,0 +1,245 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "rw-oz-sqrt",
+ "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616",
+ "run_dir": "<proofforge>/results/frontier-2/rw-oz-sqrt/proofforge-full-1",
+ "arm": "proofforge-full",
+ "loop": "muse-code",
+ "model": "muse-spark-1.3-contributor",
+ "created": "2026-11-01T16:19:36-0500",
+ "reconstructed": false,
+ "final": {
+  "text": "import OzSqrt.Spec\nimport OzSqrt.Lemmas\nimport ProofForgeFin.SqrtIter\nimport ProofForgeFin.WordBridge\n/-!\nThe square-root routine under repair, `Math.sqrt(uint256 a)` in the style of OpenZeppelin\nContracts `Math.sol`, as this pool's first deposit calls it:\n\n```\nfunction sqrt(uint256 a) internal pure returns (uint256) {\n    if (a == 0) {\n        return 0;\n    }\n    uint256 result = 1 << (log2(a) >> 1);\n    unchecked {\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        return min(result, a / result);\n    }\n}\n```\n-/\nnamespace OzSqrt\n\ndef sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)\n\nopen ProofForgeFin.Sqrt ProofForgeFin.WordBridge\n\n/-- The fixed routine is the deployed algorithm with seven Newton steps. -/\ntheorem sqrt_eq_newton7 (a : U256) : sqrt a = newtonSqrt 7 a := by\n  unfold sqrt newtonSqrt\n  rfl\n\n/-- Seven Newton steps from the power-of-two estimate reach the root or the root plus one. -/\ntheorem newton7_mem {A : Nat} (hA : 0 < A) (hs128 : Nat.sqrt A < 2 ^ 128) :\n    newtonIter A 7 (2 ^ (Nat.log2 A / 2)) = Nat.sqrt A \u2228\n      (newtonIter A 7 (2 ^ (Nat.log2 A / 2)) = Nat.sqrt A + 1 \u2227\n        Nat.sqrt A * (Nat.sqrt A + 1) \u2264 A) :=\n  newtonIter_eq_or_succ_of_lt_two_mul (a := A) (x := 2 ^ (Nat.log2 A / 2)) (b := 128) (k := 5)\n    (Nat.two_pow_pos _) (two_pow_half_log2_le_sqrt hA) (sqrt_lt_two_mul_two_pow_half_log2 _)\n    hs128 (by decide) (by decide)\n\n/-- The fixed routine returns the floor of the square root on every input. -/\ntheorem sqrt_toNat (a : U256) : (sqrt a).toNat = Nat.sqrt a.toNat := by\n  by_cases h0 : a = 0\n  \u00b7 subst h0\n    have e1 : sqrt (0 : U256) = 0 := by unfold sqrt; rw [if_pos rfl]\n    rw [e1]; decide\n  \u00b7 have hApos : 0 < a.toNat := by\n      by_cases hc : a.toNat = 0\n      \u00b7 exact absurd (BitVec.eq_of_toNat_eq (by simpa using hc)) h0\n      \u00b7 omega\n    have hAlt : a.toNat < 2 ^ 256 := a.isLt\n    have hw256 : (0 : Nat) < 256 := by decide\n    have h256 : (256 : Nat) \u2264 2 * 128 := by decide\n    have hspos : 0 < Nat.sqrt a.toNat := sqrt_pos hApos\n    have hs128 : Nat.sqrt a.toNat < 2 ^ 128 :=\n      sqrt_lt_two_pow_of_lt (w := 256) (k := 128) hAlt h256\n    have hL : Nat.log2 a.toNat < 256 := log2_toNat_lt (w := 256) hw256 a\n    have hshift : (log2 a >>> 1).toNat = Nat.log2 a.toNat / 2 := by\n      rw [toNat_shiftRight, toNat_log2]\n    have hx0 : ((1 : U256) <<< (log2 a >>> 1)).toNat = 2 ^ (Nat.log2 a.toNat / 2) := by\n      rw [shiftLeft_bv_eq, hshift]\n      exact toNat_one_shiftLeft' (by omega)\n    have hx0pos : 0 < 2 ^ (Nat.log2 a.toNat / 2) := Nat.two_pow_pos _\n    have h2x0 : Nat.sqrt a.toNat < 2 * 2 ^ (Nat.log2 a.toNat / 2) :=\n      sqrt_lt_two_mul_two_pow_half_log2 _\n    have hx0127 : 2 ^ (Nat.log2 a.toNat / 2) \u2264 2 ^ 127 :=\n      Nat.pow_le_pow_right (by decide) (by omega)\n    have hdiv0 : a.toNat / 2 ^ (Nat.log2 a.toNat / 2)\n        < 2 * 2 * 2 ^ (Nat.log2 a.toNat / 2) :=\n      div_lt_of_sqrt_lt_mul hx0pos h2x0\n    have hsum0 : 2 ^ (Nat.log2 a.toNat / 2)\n        + a.toNat / 2 ^ (Nat.log2 a.toNat / 2) < 2 ^ 256 := by omega\n    have hN1lt : newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)) < 2 ^ 129 := by\n      have h2 : 2 ^ (Nat.log2 a.toNat / 2)\n          + a.toNat / 2 ^ (Nat.log2 a.toNat / 2) < 2 ^ 130 := by omega\n      have e : newton a.toNat (2 ^ (Nat.log2 a.toNat / 2))\n          = (2 ^ (Nat.log2 a.toNat / 2) + a.toNat / 2 ^ (Nat.log2 a.toNat / 2)) / 2 := rfl\n      omega\n    have hN1ge : Nat.sqrt a.toNat \u2264 newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)) :=\n      sqrt_le_newton hx0pos\n    have hsim : \u2200 y : U256, Nat.sqrt a.toNat \u2264 y.toNat \u2192 y.toNat < 2 ^ 129 \u2192\n        ((y + a / y) >>> 1).toNat = newton a.toNat y.toNat := by\n      intro y h1 h2\n      exact toNat_newton_word_of_sqrt_le hspos h1 (by omega)\n    have hpres : \u2200 n : Nat, Nat.sqrt a.toNat \u2264 n \u2192 n < 2 ^ 129 \u2192\n        Nat.sqrt a.toNat \u2264 newton a.toNat n \u2227 newton a.toNat n < 2 ^ 129 := by\n      intro n h1 h2\n      refine \u27e8sqrt_le_newton_of_le h1, ?_\u27e9\n      have h3 := newton_le_max h1\n      omega\n    have hr1 : (newtonStep a ((1 : U256) <<< (log2 a >>> 1))).toNat\n        = newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)) := by\n      have hw : ((1 : U256) <<< (log2 a >>> 1)).toNat\n          + a.toNat / ((1 : U256) <<< (log2 a >>> 1)).toNat < 2 ^ 256 := by\n        rw [hx0]; exact hsum0\n      simp only [newtonStep]\n      rw [toNat_newton_word _ _ hw, hx0]\n    have hP1 : Nat.sqrt a.toNat\n          \u2264 (newtonStep a ((1 : U256) <<< (log2 a >>> 1))).toNat\n        \u2227 (newtonStep a ((1 : U256) <<< (log2 a >>> 1))).toNat < 2 ^ 129 := by\n      rw [hr1]; exact \u27e8hN1ge, hN1lt\u27e9\n    have htail : (iterate (newtonStep a) 6\n          (newtonStep a ((1 : U256) <<< (log2 a >>> 1)))).toNat\n        = Nat.repeat (newton a.toNat) 6\n          (newton a.toNat (2 ^ (Nat.log2 a.toNat / 2))) := by\n      have h := iter_map_of_sim (iterate (newtonStep a)) (newtonStep a)\n        (fun _ => rfl) (fun _ _ => rfl) BitVec.toNat (newton a.toNat)\n        (fun n => Nat.sqrt a.toNat \u2264 n \u2227 n < 2 ^ 129)\n        (fun y hy => hsim y hy.1 hy.2)\n        (fun b hb => hpres b hb.1 hb.2)\n        6 (newtonStep a ((1 : U256) <<< (log2 a >>> 1))) hP1\n      rwa [hr1] at h\n    have hrep : Nat.repeat (newton a.toNat) 6\n          (newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)))\n        = newtonIter a.toNat 7 (2 ^ (Nat.log2 a.toNat / 2)) := by\n      have e1 : Nat.repeat (newton a.toNat) 6\n            (newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)))\n          = newtonIter a.toNat 6\n            (newton a.toNat (2 ^ (Nat.log2 a.toNat / 2))) := by\n        rw [newtonIter_eq_repeat]\n      rw [e1]; exact (newtonIter_succ a.toNat 6 _).symm\n    have hmem := newton7_mem hApos hs128\n    have hN7pos : 0 < newtonIter a.toNat 7 (2 ^ (Nat.log2 a.toNat / 2)) :=\n      newtonIter_pos 7 hspos hx0pos\n    have hmin : Nat.min (newtonIter a.toNat 7 (2 ^ (Nat.log2 a.toNat / 2)))\n        (a.toNat / newtonIter a.toNat 7 (2 ^ (Nat.log2 a.toNat / 2)))\n        = Nat.sqrt a.toNat :=\n      min_div_eq_sqrt hN7pos hmem\n    rw [sqrt_eq_newton7]\n    unfold newtonSqrt\n    rw [if_neg h0]\n    show (OzSqrt.min (OzSqrt.iterate (OzSqrt.newtonStep a) 7\n        ((1 : U256) <<< (log2 a >>> 1)))\n      (a / OzSqrt.iterate (OzSqrt.newtonStep a) 7\n        ((1 : U256) <<< (log2 a >>> 1)))).toNat\n      = Nat.sqrt a.toNat\n    have e76 : OzSqrt.iterate (OzSqrt.newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))\n        = OzSqrt.iterate (OzSqrt.newtonStep a) 6\n          (OzSqrt.newtonStep a ((1 : U256) <<< (log2 a >>> 1))) := rfl\n    rw [e76, toNat_min, toNat_div, htail, hrep]\n    exact hmin\n\n/-- The rounded-up root on values. -/\ntheorem sqrtUp_toNat (a : U256) : (sqrtUp sqrt a).toNat\n    = Nat.sqrt a.toNat\n      + (if Nat.sqrt a.toNat * Nat.sqrt a.toNat < a.toNat then 1 else 0) := by\n  unfold sqrtUp\n  have hr : (sqrt a).toNat = Nat.sqrt a.toNat := sqrt_toNat a\n  have h256 : (256 : Nat) \u2264 2 * 128 := by decide\n  have hs128 : Nat.sqrt a.toNat < 2 ^ 128 :=\n    sqrt_lt_two_pow_of_lt (w := 256) (k := 128) a.isLt h256\n  have hsq : (sqrt a * sqrt a).toNat = Nat.sqrt a.toNat * Nat.sqrt a.toNat := by\n    have hbound : (sqrt a).toNat < 2 ^ 128 := by omega\n    have h := toNat_mul_of_lt_two_pow (x := sqrt a) (y := sqrt a)\n      (m := 128) (n := 128) hbound hbound (by decide)\n    rw [h, hr]\n  have hlt : (sqrt a * sqrt a < a) \u2194 Nat.sqrt a.toNat * Nat.sqrt a.toNat < a.toNat := by\n    rw [BitVec.lt_def, hsq]\n  have h1 : (1 : U256).toNat = 1 := by decide\n  have h0' : (0 : U256).toNat = 0 := by decide\n  have hif : (if sqrt a * sqrt a < a then (1 : U256) else 0).toNat\n      = (if Nat.sqrt a.toNat * Nat.sqrt a.toNat < a.toNat then 1 else 0) := by\n    rw [toNat_ite]\n    by_cases h : sqrt a * sqrt a < a\n    \u00b7 rw [if_pos h, if_pos (hlt.mp h), h1]\n    \u00b7 rw [if_neg h, if_neg (fun c => h (hlt.mpr c)), h0']\n  have hadd : (sqrt a + (if sqrt a * sqrt a < a then (1 : U256) else 0)).toNat\n      = Nat.sqrt a.toNat\n        + (if Nat.sqrt a.toNat * Nat.sqrt a.toNat < a.toNat then 1 else 0) := by\n    have hb1 : (sqrt a).toNat < 2 ^ 128 := by omega\n    have hb2 : (if sqrt a * sqrt a < a then (1 : U256) else 0).toNat < 2 ^ 128 := by\n      by_cases h : sqrt a * sqrt a < a\n      \u00b7 rw [if_pos h]; decide\n      \u00b7 rw [if_neg h]; decide\n    rw [toNat_add_of_lt_two_pow (x := sqrt a) (k := 128) hb1 hb2 (by decide), hr, hif]\n  show (sqrt a + (if sqrt a * sqrt a < a then (1 : U256) else 0)).toNat = _\n  rw [hadd]\n\ntheorem req_sqrt_not_above : SqrtNotAbove sqrt := by\n  intro a\n  rw [sqrt_toNat]\n  exact Nat.sqrt_le _\n\ntheorem req_sqrt_not_below : SqrtNotBelow sqrt := by\n  intro a\n  rw [sqrt_toNat]\n  exact Nat.lt_succ_sqrt _\n\ntheorem req_sqrt_up_covers : SqrtUpCovers sqrt := by\n  intro a\n  rw [sqrtUp_toNat]\n  exact le_mul_self_sqrt_add_ite _\n\ntheorem req_sqrt_up_tight : SqrtUpTight sqrt := by\n  intro a h\n  have hu := sqrtUp_toNat a\n  rw [hu] at h \u22a2\n  exact sqrt_add_ite_sub_one_mul_self_lt h\n\ntheorem req_mint_backed : MintBacked sqrt := by\n  intro amount0 amount1 liquidity h\n  obtain \u27e8hprod, _, hliq\u27e9 := firstMint_eq_some h\n  have hmul := toNat_mul_of_lt hprod\n  have hsqrt := sqrt_toNat (amount0 * amount1)\n  have hle : Nat.sqrt (amount0.toNat * amount1.toNat)\n        * Nat.sqrt (amount0.toNat * amount1.toNat)\n      \u2264 amount0.toNat * amount1.toNat := Nat.sqrt_le _\n  have e : (liquidity.toNat + 1000) * (liquidity.toNat + 1000)\n      = Nat.sqrt (amount0.toNat * amount1.toNat)\n        * Nat.sqrt (amount0.toNat * amount1.toNat) := by\n    have hll : liquidity.toNat + 1000 = Nat.sqrt (amount0 * amount1).toNat := by omega\n    rw [hll, hmul]\n  rw [e] at \u22a2\n  exact hle\n\ntheorem req_mint_full : MintFull sqrt := by\n  intro amount0 amount1 liquidity h\n  obtain \u27e8hprod, _, hliq\u27e9 := firstMint_eq_some h\n  have hmul := toNat_mul_of_lt hprod\n  have hsqrt := sqrt_toNat (amount0 * amount1)\n  have hlt : amount0.toNat * amount1.toNat\n      < (Nat.sqrt (amount0.toNat * amount1.toNat) + 1)\n        * (Nat.sqrt (amount0.toNat * amount1.toNat) + 1) :=\n    Nat.lt_succ_sqrt _\n  have e : (liquidity.toNat + 1001) * (liquidity.toNat + 1001)\n      = (Nat.sqrt (amount0.toNat * amount1.toNat) + 1)\n        * (Nat.sqrt (amount0.toNat * amount1.toNat) + 1) := by\n    have hll : liquidity.toNat + 1001 = Nat.sqrt (amount0 * amount1).toNat + 1 := by omega\n    rw [hll, hmul]\n  rw [e] at \u22a2\n  exact hlt\n\ntheorem req_mint_live : MintLive sqrt := by\n  intro amount0 amount1 hprod hbig\n  apply firstMint_isSome hprod\n  have hmul := toNat_mul_of_lt hprod\n  have hsqrt := sqrt_toNat (amount0 * amount1)\n  have hbig' : 1001 * 1001 \u2264 (amount0 * amount1).toNat := by\n    rw [hmul]; exact hbig\n  have hle : 1001 \u2264 Nat.sqrt (amount0 * amount1).toNat :=\n    le_sqrt_of_mul_self_le hbig'\n  omega\n\ntheorem req_newton_budget : NewtonBudget sqrt :=\n  \u27e87, by decide, fun a => sqrt_eq_newton7 a\u27e9\n\nend OzSqrt\n",
+  "sha256": "4cf8f7abbdf3a7997719e1179f2df09db3c1746ce39f92a2323b9c947ccf73ca",
+  "proved_required": [
+   "req_mint_backed",
+   "req_mint_full",
+   "req_mint_live",
+   "req_newton_budget",
+   "req_sqrt_not_above",
+   "req_sqrt_not_below",
+   "req_sqrt_up_covers",
+   "req_sqrt_up_tight"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_mint_backed",
+   "req_mint_full",
+   "req_mint_live",
+   "req_newton_budget",
+   "req_sqrt_not_above",
+   "req_sqrt_not_below",
+   "req_sqrt_up_covers",
+   "req_sqrt_up_tight"
+  ],
+  "text": "import OzSqrt.Spec\nimport OzSqrt.Lemmas\nimport ProofForgeFin.SqrtIter\nimport ProofForgeFin.WordBridge\n/-!\nThe square-root routine under repair, `Math.sqrt(uint256 a)` in the style of OpenZeppelin\nContracts `Math.sol`, as this pool's first deposit calls it:\n\n```\nfunction sqrt(uint256 a) internal pure returns (uint256) {\n    if (a == 0) {\n        return 0;\n    }\n    uint256 result = 1 << (log2(a) >> 1);\n    unchecked {\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        result = (result + a / result) >> 1;\n        return min(result, a / result);\n    }\n}\n```\n-/\nnamespace OzSqrt\n\ndef sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)\n\nopen ProofForgeFin.Sqrt ProofForgeFin.WordBridge\n\n/-- The fixed routine is the deployed algorithm with seven Newton steps. -/\ntheorem sqrt_eq_newton7 (a : U256) : sqrt a = newtonSqrt 7 a := by\n  unfold sqrt newtonSqrt\n  rfl\n\n/-- Seven Newton steps from the power-of-two estimate reach the root or the root plus one. -/\ntheorem newton7_mem {A : Nat} (hA : 0 < A) (hs128 : Nat.sqrt A < 2 ^ 128) :\n    newtonIter A 7 (2 ^ (Nat.log2 A / 2)) = Nat.sqrt A \u2228\n      (newtonIter A 7 (2 ^ (Nat.log2 A / 2)) = Nat.sqrt A + 1 \u2227\n        Nat.sqrt A * (Nat.sqrt A + 1) \u2264 A) :=\n  newtonIter_eq_or_succ_of_lt_two_mul (a := A) (x := 2 ^ (Nat.log2 A / 2)) (b := 128) (k := 5)\n    (Nat.two_pow_pos _) (two_pow_half_log2_le_sqrt hA) (sqrt_lt_two_mul_two_pow_half_log2 _)\n    hs128 (by decide) (by decide)\n\n/-- The fixed routine returns the floor of the square root on every input. -/\ntheorem sqrt_toNat (a : U256) : (sqrt a).toNat = Nat.sqrt a.toNat := by\n  by_cases h0 : a = 0\n  \u00b7 subst h0\n    have e1 : sqrt (0 : U256) = 0 := by unfold sqrt; rw [if_pos rfl]\n    rw [e1]; decide\n  \u00b7 have hApos : 0 < a.toNat := by\n      by_cases hc : a.toNat = 0\n      \u00b7 exact absurd (BitVec.eq_of_toNat_eq (by simpa using hc)) h0\n      \u00b7 omega\n    have hAlt : a.toNat < 2 ^ 256 := a.isLt\n    have hw256 : (0 : Nat) < 256 := by decide\n    have h256 : (256 : Nat) \u2264 2 * 128 := by decide\n    have hspos : 0 < Nat.sqrt a.toNat := sqrt_pos hApos\n    have hs128 : Nat.sqrt a.toNat < 2 ^ 128 :=\n      sqrt_lt_two_pow_of_lt (w := 256) (k := 128) hAlt h256\n    have hL : Nat.log2 a.toNat < 256 := log2_toNat_lt (w := 256) hw256 a\n    have hshift : (log2 a >>> 1).toNat = Nat.log2 a.toNat / 2 := by\n      rw [toNat_shiftRight, toNat_log2]\n    have hx0 : ((1 : U256) <<< (log2 a >>> 1)).toNat = 2 ^ (Nat.log2 a.toNat / 2) := by\n      rw [shiftLeft_bv_eq, hshift]\n      exact toNat_one_shiftLeft' (by omega)\n    have hx0pos : 0 < 2 ^ (Nat.log2 a.toNat / 2) := Nat.two_pow_pos _\n    have h2x0 : Nat.sqrt a.toNat < 2 * 2 ^ (Nat.log2 a.toNat / 2) :=\n      sqrt_lt_two_mul_two_pow_half_log2 _\n    have hx0127 : 2 ^ (Nat.log2 a.toNat / 2) \u2264 2 ^ 127 :=\n      Nat.pow_le_pow_right (by decide) (by omega)\n    have hdiv0 : a.toNat / 2 ^ (Nat.log2 a.toNat / 2)\n        < 2 * 2 * 2 ^ (Nat.log2 a.toNat / 2) :=\n      div_lt_of_sqrt_lt_mul hx0pos h2x0\n    have hsum0 : 2 ^ (Nat.log2 a.toNat / 2)\n        + a.toNat / 2 ^ (Nat.log2 a.toNat / 2) < 2 ^ 256 := by omega\n    have hN1lt : newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)) < 2 ^ 129 := by\n      have h2 : 2 ^ (Nat.log2 a.toNat / 2)\n          + a.toNat / 2 ^ (Nat.log2 a.toNat / 2) < 2 ^ 130 := by omega\n      have e : newton a.toNat (2 ^ (Nat.log2 a.toNat / 2))\n          = (2 ^ (Nat.log2 a.toNat / 2) + a.toNat / 2 ^ (Nat.log2 a.toNat / 2)) / 2 := rfl\n      omega\n    have hN1ge : Nat.sqrt a.toNat \u2264 newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)) :=\n      sqrt_le_newton hx0pos\n    have hsim : \u2200 y : U256, Nat.sqrt a.toNat \u2264 y.toNat \u2192 y.toNat < 2 ^ 129 \u2192\n        ((y + a / y) >>> 1).toNat = newton a.toNat y.toNat := by\n      intro y h1 h2\n      exact toNat_newton_word_of_sqrt_le hspos h1 (by omega)\n    have hpres : \u2200 n : Nat, Nat.sqrt a.toNat \u2264 n \u2192 n < 2 ^ 129 \u2192\n        Nat.sqrt a.toNat \u2264 newton a.toNat n \u2227 newton a.toNat n < 2 ^ 129 := by\n      intro n h1 h2\n      refine \u27e8sqrt_le_newton_of_le h1, ?_\u27e9\n      have h3 := newton_le_max h1\n      omega\n    have hr1 : (newtonStep a ((1 : U256) <<< (log2 a >>> 1))).toNat\n        = newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)) := by\n      have hw : ((1 : U256) <<< (log2 a >>> 1)).toNat\n          + a.toNat / ((1 : U256) <<< (log2 a >>> 1)).toNat < 2 ^ 256 := by\n        rw [hx0]; exact hsum0\n      simp only [newtonStep]\n      rw [toNat_newton_word _ _ hw, hx0]\n    have hP1 : Nat.sqrt a.toNat\n          \u2264 (newtonStep a ((1 : U256) <<< (log2 a >>> 1))).toNat\n        \u2227 (newtonStep a ((1 : U256) <<< (log2 a >>> 1))).toNat < 2 ^ 129 := by\n      rw [hr1]; exact \u27e8hN1ge, hN1lt\u27e9\n    have htail : (iterate (newtonStep a) 6\n          (newtonStep a ((1 : U256) <<< (log2 a >>> 1)))).toNat\n        = Nat.repeat (newton a.toNat) 6\n          (newton a.toNat (2 ^ (Nat.log2 a.toNat / 2))) := by\n      have h := iter_map_of_sim (iterate (newtonStep a)) (newtonStep a)\n        (fun _ => rfl) (fun _ _ => rfl) BitVec.toNat (newton a.toNat)\n        (fun n => Nat.sqrt a.toNat \u2264 n \u2227 n < 2 ^ 129)\n        (fun y hy => hsim y hy.1 hy.2)\n        (fun b hb => hpres b hb.1 hb.2)\n        6 (newtonStep a ((1 : U256) <<< (log2 a >>> 1))) hP1\n      rwa [hr1] at h\n    have hrep : Nat.repeat (newton a.toNat) 6\n          (newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)))\n        = newtonIter a.toNat 7 (2 ^ (Nat.log2 a.toNat / 2)) := by\n      have e1 : Nat.repeat (newton a.toNat) 6\n            (newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)))\n          = newtonIter a.toNat 6\n            (newton a.toNat (2 ^ (Nat.log2 a.toNat / 2))) := by\n        rw [newtonIter_eq_repeat]\n      rw [e1]; exact (newtonIter_succ a.toNat 6 _).symm\n    have hmem := newton7_mem hApos hs128\n    have hN7pos : 0 < newtonIter a.toNat 7 (2 ^ (Nat.log2 a.toNat / 2)) :=\n      newtonIter_pos 7 hspos hx0pos\n    have hmin : Nat.min (newtonIter a.toNat 7 (2 ^ (Nat.log2 a.toNat / 2)))\n        (a.toNat / newtonIter a.toNat 7 (2 ^ (Nat.log2 a.toNat / 2)))\n        = Nat.sqrt a.toNat :=\n      min_div_eq_sqrt hN7pos hmem\n    rw [sqrt_eq_newton7]\n    unfold newtonSqrt\n    rw [if_neg h0]\n    show (OzSqrt.min (OzSqrt.iterate (OzSqrt.newtonStep a) 7\n        ((1 : U256) <<< (log2 a >>> 1)))\n      (a / OzSqrt.iterate (OzSqrt.newtonStep a) 7\n        ((1 : U256) <<< (log2 a >>> 1)))).toNat\n      = Nat.sqrt a.toNat\n    have e76 : OzSqrt.iterate (OzSqrt.newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))\n        = OzSqrt.iterate (OzSqrt.newtonStep a) 6\n          (OzSqrt.newtonStep a ((1 : U256) <<< (log2 a >>> 1))) := rfl\n    rw [e76, toNat_min, toNat_div, htail, hrep]\n    exact hmin\n\n/-- The rounded-up root on values. -/\ntheorem sqrtUp_toNat (a : U256) : (sqrtUp sqrt a).toNat\n    = Nat.sqrt a.toNat\n      + (if Nat.sqrt a.toNat * Nat.sqrt a.toNat < a.toNat then 1 else 0) := by\n  unfold sqrtUp\n  have hr : (sqrt a).toNat = Nat.sqrt a.toNat := sqrt_toNat a\n  have h256 : (256 : Nat) \u2264 2 * 128 := by decide\n  have hs128 : Nat.sqrt a.toNat < 2 ^ 128 :=\n    sqrt_lt_two_pow_of_lt (w := 256) (k := 128) a.isLt h256\n  have hsq : (sqrt a * sqrt a).toNat = Nat.sqrt a.toNat * Nat.sqrt a.toNat := by\n    have hbound : (sqrt a).toNat < 2 ^ 128 := by omega\n    have h := toNat_mul_of_lt_two_pow (x := sqrt a) (y := sqrt a)\n      (m := 128) (n := 128) hbound hbound (by decide)\n    rw [h, hr]\n  have hlt : (sqrt a * sqrt a < a) \u2194 Nat.sqrt a.toNat * Nat.sqrt a.toNat < a.toNat := by\n    rw [BitVec.lt_def, hsq]\n  have h1 : (1 : U256).toNat = 1 := by decide\n  have h0' : (0 : U256).toNat = 0 := by decide\n  have hif : (if sqrt a * sqrt a < a then (1 : U256) else 0).toNat\n      = (if Nat.sqrt a.toNat * Nat.sqrt a.toNat < a.toNat then 1 else 0) := by\n    rw [toNat_ite]\n    by_cases h : sqrt a * sqrt a < a\n    \u00b7 rw [if_pos h, if_pos (hlt.mp h), h1]\n    \u00b7 rw [if_neg h, if_neg (fun c => h (hlt.mpr c)), h0']\n  have hadd : (sqrt a + (if sqrt a * sqrt a < a then (1 : U256) else 0)).toNat\n      = Nat.sqrt a.toNat\n        + (if Nat.sqrt a.toNat * Nat.sqrt a.toNat < a.toNat then 1 else 0) := by\n    have hb1 : (sqrt a).toNat < 2 ^ 128 := by omega\n    have hb2 : (if sqrt a * sqrt a < a then (1 : U256) else 0).toNat < 2 ^ 128 := by\n      by_cases h : sqrt a * sqrt a < a\n      \u00b7 rw [if_pos h]; decide\n      \u00b7 rw [if_neg h]; decide\n    rw [toNat_add_of_lt_two_pow (x := sqrt a) (k := 128) hb1 hb2 (by decide), hr, hif]\n  show (sqrt a + (if sqrt a * sqrt a < a then (1 : U256) else 0)).toNat = _\n  rw [hadd]\n\ntheorem req_sqrt_not_above : SqrtNotAbove sqrt := by\n  intro a\n  rw [sqrt_toNat]\n  exact Nat.sqrt_le _\n\ntheorem req_sqrt_not_below : SqrtNotBelow sqrt := by\n  intro a\n  rw [sqrt_toNat]\n  exact Nat.lt_succ_sqrt _\n\ntheorem req_sqrt_up_covers : SqrtUpCovers sqrt := by\n  intro a\n  rw [sqrtUp_toNat]\n  exact le_mul_self_sqrt_add_ite _\n\ntheorem req_sqrt_up_tight : SqrtUpTight sqrt := by\n  intro a h\n  have hu := sqrtUp_toNat a\n  rw [hu] at h \u22a2\n  exact sqrt_add_ite_sub_one_mul_self_lt h\n\ntheorem req_mint_backed : MintBacked sqrt := by\n  intro amount0 amount1 liquidity h\n  obtain \u27e8hprod, _, hliq\u27e9 := firstMint_eq_some h\n  have hmul := toNat_mul_of_lt hprod\n  have hsqrt := sqrt_toNat (amount0 * amount1)\n  have hle : Nat.sqrt (amount0.toNat * amount1.toNat)\n        * Nat.sqrt (amount0.toNat * amount1.toNat)\n      \u2264 amount0.toNat * amount1.toNat := Nat.sqrt_le _\n  have e : (liquidity.toNat + 1000) * (liquidity.toNat + 1000)\n      = Nat.sqrt (amount0.toNat * amount1.toNat)\n        * Nat.sqrt (amount0.toNat * amount1.toNat) := by\n    have hll : liquidity.toNat + 1000 = Nat.sqrt (amount0 * amount1).toNat := by omega\n    rw [hll, hmul]\n  rw [e] at \u22a2\n  exact hle\n\ntheorem req_mint_full : MintFull sqrt := by\n  intro amount0 amount1 liquidity h\n  obtain \u27e8hprod, _, hliq\u27e9 := firstMint_eq_some h\n  have hmul := toNat_mul_of_lt hprod\n  have hsqrt := sqrt_toNat (amount0 * amount1)\n  have hlt : amount0.toNat * amount1.toNat\n      < (Nat.sqrt (amount0.toNat * amount1.toNat) + 1)\n        * (Nat.sqrt (amount0.toNat * amount1.toNat) + 1) :=\n    Nat.lt_succ_sqrt _\n  have e : (liquidity.toNat + 1001) * (liquidity.toNat + 1001)\n      = (Nat.sqrt (amount0.toNat * amount1.toNat) + 1)\n        * (Nat.sqrt (amount0.toNat * amount1.toNat) + 1) := by\n    have hll : liquidity.toNat + 1001 = Nat.sqrt (amount0 * amount1).toNat + 1 := by omega\n    rw [hll, hmul]\n  rw [e] at \u22a2\n  exact hlt\n\ntheorem req_mint_live : MintLive sqrt := by\n  intro amount0 amount1 hprod hbig\n  apply firstMint_isSome hprod\n  have hmul := toNat_mul_of_lt hprod\n  have hsqrt := sqrt_toNat (amount0 * amount1)\n  have hbig' : 1001 * 1001 \u2264 (amount0 * amount1).toNat := by\n    rw [hmul]; exact hbig\n  have hle : 1001 \u2264 Nat.sqrt (amount0 * amount1).toNat :=\n    le_sqrt_of_mul_self_le hbig'\n  omega\n\ntheorem req_newton_budget : NewtonBudget sqrt :=\n  \u27e87, by decide, fun a => sqrt_eq_newton7 a\u27e9\n\nend OzSqrt\n"
+ },
+ "proved": [
+  {
+   "name": "req_newton_budget",
+   "kind": "theorem",
+   "text": "theorem req_newton_budget : NewtonBudget sqrt :=\n  \u27e87, by decide, fun a => sqrt_eq_newton7 a\u27e9",
+   "deps": [
+    "sqrt",
+    "sqrt_eq_newton7"
+   ],
+   "statement": "theorem req_newton_budget : NewtonBudget sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "req_mint_live",
+   "kind": "theorem",
+   "text": "theorem req_mint_live : MintLive sqrt := by\n  intro amount0 amount1 hprod hbig\n  apply firstMint_isSome hprod\n  have hmul := toNat_mul_of_lt hprod\n  have hsqrt := sqrt_toNat (amount0 * amount1)\n  have hbig' : 1001 * 1001 \u2264 (amount0 * amount1).toNat := by\n    rw [hmul]; exact hbig\n  have hle : 1001 \u2264 Nat.sqrt (amount0 * amount1).toNat :=\n    le_sqrt_of_mul_self_le hbig'\n  omega",
+   "deps": [
+    "newton7_mem",
+    "sqrt",
+    "sqrt_eq_newton7",
+    "sqrt_toNat"
+   ],
+   "statement": "theorem req_mint_live : MintLive sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "req_mint_full",
+   "kind": "theorem",
+   "text": "theorem req_mint_full : MintFull sqrt := by\n  intro amount0 amount1 liquidity h\n  obtain \u27e8hprod, _, hliq\u27e9 := firstMint_eq_some h\n  have hmul := toNat_mul_of_lt hprod\n  have hsqrt := sqrt_toNat (amount0 * amount1)\n  have hlt : amount0.toNat * amount1.toNat\n      < (Nat.sqrt (amount0.toNat * amount1.toNat) + 1)\n        * (Nat.sqrt (amount0.toNat * amount1.toNat) + 1) :=\n    Nat.lt_succ_sqrt _\n  have e : (liquidity.toNat + 1001) * (liquidity.toNat + 1001)\n      = (Nat.sqrt (amount0.toNat * amount1.toNat) + 1)\n        * (Nat.sqrt (amount0.toNat * amount1.toNat) + 1) := by\n    have hll : liquidity.toNat + 1001 = Nat.sqrt (amount0 * amount1).toNat + 1 := by omega\n    rw [hll, hmul]\n  rw [e] at \u22a2\n  exact hlt",
+   "deps": [
+    "newton7_mem",
+    "sqrt",
+    "sqrt_eq_newton7",
+    "sqrt_toNat"
+   ],
+   "statement": "theorem req_mint_full : MintFull sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "req_mint_backed",
+   "kind": "theorem",
+   "text": "theorem req_mint_backed : MintBacked sqrt := by\n  intro amount0 amount1 liquidity h\n  obtain \u27e8hprod, _, hliq\u27e9 := firstMint_eq_some h\n  have hmul := toNat_mul_of_lt hprod\n  have hsqrt := sqrt_toNat (amount0 * amount1)\n  have hle : Nat.sqrt (amount0.toNat * amount1.toNat)\n        * Nat.sqrt (amount0.toNat * amount1.toNat)\n      \u2264 amount0.toNat * amount1.toNat := Nat.sqrt_le _\n  have e : (liquidity.toNat + 1000) * (liquidity.toNat + 1000)\n      = Nat.sqrt (amount0.toNat * amount1.toNat)\n        * Nat.sqrt (amount0.toNat * amount1.toNat) := by\n    have hll : liquidity.toNat + 1000 = Nat.sqrt (amount0 * amount1).toNat := by omega\n    rw [hll, hmul]\n  rw [e] at \u22a2\n  exact hle",
+   "deps": [
+    "newton7_mem",
+    "sqrt",
+    "sqrt_eq_newton7",
+    "sqrt_toNat"
+   ],
+   "statement": "theorem req_mint_backed : MintBacked sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "req_sqrt_up_tight",
+   "kind": "theorem",
+   "text": "theorem req_sqrt_up_tight : SqrtUpTight sqrt := by\n  intro a h\n  have hu := sqrtUp_toNat a\n  rw [hu] at h \u22a2\n  exact sqrt_add_ite_sub_one_mul_self_lt h",
+   "deps": [
+    "newton7_mem",
+    "sqrt",
+    "sqrtUp_toNat",
+    "sqrt_eq_newton7",
+    "sqrt_toNat"
+   ],
+   "statement": "theorem req_sqrt_up_tight : SqrtUpTight sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "req_sqrt_up_covers",
+   "kind": "theorem",
+   "text": "theorem req_sqrt_up_covers : SqrtUpCovers sqrt := by\n  intro a\n  rw [sqrtUp_toNat]\n  exact le_mul_self_sqrt_add_ite _",
+   "deps": [
+    "newton7_mem",
+    "sqrt",
+    "sqrtUp_toNat",
+    "sqrt_eq_newton7",
+    "sqrt_toNat"
+   ],
+   "statement": "theorem req_sqrt_up_covers : SqrtUpCovers sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "req_sqrt_not_below",
+   "kind": "theorem",
+   "text": "theorem req_sqrt_not_below : SqrtNotBelow sqrt := by\n  intro a\n  rw [sqrt_toNat]\n  exact Nat.lt_succ_sqrt _",
+   "deps": [
+    "newton7_mem",
+    "sqrt",
+    "sqrt_eq_newton7",
+    "sqrt_toNat"
+   ],
+   "statement": "theorem req_sqrt_not_below : SqrtNotBelow sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "req_sqrt_not_above",
+   "kind": "theorem",
+   "text": "theorem req_sqrt_not_above : SqrtNotAbove sqrt := by\n  intro a\n  rw [sqrt_toNat]\n  exact Nat.sqrt_le _",
+   "deps": [
+    "newton7_mem",
+    "sqrt",
+    "sqrt_eq_newton7",
+    "sqrt_toNat"
+   ],
+   "statement": "theorem req_sqrt_not_above : SqrtNotAbove sqrt",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sqrtUp_toNat",
+   "kind": "theorem",
+   "text": "theorem sqrtUp_toNat (a : U256) : (sqrtUp sqrt a).toNat\n    = Nat.sqrt a.toNat\n      + (if Nat.sqrt a.toNat * Nat.sqrt a.toNat < a.toNat then 1 else 0) := by\n  unfold sqrtUp\n  have hr : (sqrt a).toNat = Nat.sqrt a.toNat := sqrt_toNat a\n  have h256 : (256 : Nat) \u2264 2 * 128 := by decide\n  have hs128 : Nat.sqrt a.toNat < 2 ^ 128 :=\n    sqrt_lt_two_pow_of_lt (w := 256) (k := 128) a.isLt h256\n  have hsq : (sqrt a * sqrt a).toNat = Nat.sqrt a.toNat * Nat.sqrt a.toNat := by\n    have hbound : (sqrt a).toNat < 2 ^ 128 := by omega\n    have h := toNat_mul_of_lt_two_pow (x := sqrt a) (y := sqrt a)\n      (m := 128) (n := 128) hbound hbound (by decide)\n    rw [h, hr]\n  have hlt : (sqrt a * sqrt a < a) \u2194 Nat.sqrt a.toNat * Nat.sqrt a.toNat < a.toNat := by\n    rw [BitVec.lt_def, hsq]\n  have h1 : (1 : U256).toNat = 1 := by decide\n  have h0' : (0 : U256).toNat = 0 := by decide\n  have hif : (if sqrt a * sqrt a < a then (1 : U256) else 0).toNat\n      = (if Nat.sqrt a.toNat * Nat.sqrt a.toNat < a.toNat then 1 else 0) := by\n    rw [toNat_ite]\n    by_cases h : sqrt a * sqrt a < a\n    \u00b7 rw [if_pos h, if_pos (hlt.mp h), h1]\n    \u00b7 rw [if_neg h, if_neg (fun c => h (hlt.mpr c)), h0']\n  have hadd : (sqrt a + (if sqrt a * sqrt a < a then (1 : U256) else 0)).toNat\n      = Nat.sqrt a.toNat\n        + (if Nat.sqrt a.toNat * Nat.sqrt a.toNat < a.toNat then 1 else 0) := by\n    have hb1 : (sqrt a).toNat < 2 ^ 128 := by omega\n    have hb2 : (if sqrt a * sqrt a < a then (1 : U256) else 0).toNat < 2 ^ 128 := by\n      by_cases h : sqrt a * sqrt a < a\n      \u00b7 rw [if_pos h]; decide\n      \u00b7 rw [if_neg h]; decide\n    rw [toNat_add_of_lt_two_pow (x := sqrt a) (k := 128) hb1 hb2 (by decide), hr, hif]\n  show (sqrt a + (if sqrt a * sqrt a < a then (1 : U256) else 0)).toNat = _\n  rw [hadd]",
+   "deps": [
+    "newton7_mem",
+    "sqrt",
+    "sqrt_eq_newton7",
+    "sqrt_toNat"
+   ],
+   "statement": "theorem sqrtUp_toNat (a : U256) : (sqrtUp sqrt a).toNat\n    = Nat.sqrt a.toNat\n      + (if Nat.sqrt a.toNat * Nat.sqrt a.toNat < a.toNat then 1 else 0)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sqrt_toNat",
+   "kind": "theorem",
+   "text": "theorem sqrt_toNat (a : U256) : (sqrt a).toNat = Nat.sqrt a.toNat := by\n  by_cases h0 : a = 0\n  \u00b7 subst h0\n    have e1 : sqrt (0 : U256) = 0 := by unfold sqrt; rw [if_pos rfl]\n    rw [e1]; decide\n  \u00b7 have hApos : 0 < a.toNat := by\n      by_cases hc : a.toNat = 0\n      \u00b7 exact absurd (BitVec.eq_of_toNat_eq (by simpa using hc)) h0\n      \u00b7 omega\n    have hAlt : a.toNat < 2 ^ 256 := a.isLt\n    have hw256 : (0 : Nat) < 256 := by decide\n    have h256 : (256 : Nat) \u2264 2 * 128 := by decide\n    have hspos : 0 < Nat.sqrt a.toNat := sqrt_pos hApos\n    have hs128 : Nat.sqrt a.toNat < 2 ^ 128 :=\n      sqrt_lt_two_pow_of_lt (w := 256) (k := 128) hAlt h256\n    have hL : Nat.log2 a.toNat < 256 := log2_toNat_lt (w := 256) hw256 a\n    have hshift : (log2 a >>> 1).toNat = Nat.log2 a.toNat / 2 := by\n      rw [toNat_shiftRight, toNat_log2]\n    have hx0 : ((1 : U256) <<< (log2 a >>> 1)).toNat = 2 ^ (Nat.log2 a.toNat / 2) := by\n      rw [shiftLeft_bv_eq, hshift]\n      exact toNat_one_shiftLeft' (by omega)\n    have hx0pos : 0 < 2 ^ (Nat.log2 a.toNat / 2) := Nat.two_pow_pos _\n    have h2x0 : Nat.sqrt a.toNat < 2 * 2 ^ (Nat.log2 a.toNat / 2) :=\n      sqrt_lt_two_mul_two_pow_half_log2 _\n    have hx0127 : 2 ^ (Nat.log2 a.toNat / 2) \u2264 2 ^ 127 :=\n      Nat.pow_le_pow_right (by decide) (by omega)\n    have hdiv0 : a.toNat / 2 ^ (Nat.log2 a.toNat / 2)\n        < 2 * 2 * 2 ^ (Nat.log2 a.toNat / 2) :=\n      div_lt_of_sqrt_lt_mul hx0pos h2x0\n    have hsum0 : 2 ^ (Nat.log2 a.toNat / 2)\n        + a.toNat / 2 ^ (Nat.log2 a.toNat / 2) < 2 ^ 256 := by omega\n    have hN1lt : newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)) < 2 ^ 129 := by\n      have h2 : 2 ^ (Nat.log2 a.toNat / 2)\n          + a.toNat / 2 ^ (Nat.log2 a.toNat / 2) < 2 ^ 130 := by omega\n      have e : newton a.toNat (2 ^ (Nat.log2 a.toNat / 2))\n          = (2 ^ (Nat.log2 a.toNat / 2) + a.toNat / 2 ^ (Nat.log2 a.toNat / 2)) / 2 := rfl\n      omega\n    have hN1ge : Nat.sqrt a.toNat \u2264 newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)) :=\n      sqrt_le_newton hx0pos\n    have hsim : \u2200 y : U256, Nat.sqrt a.toNat \u2264 y.toNat \u2192 y.toNat < 2 ^ 129 \u2192\n        ((y + a / y) >>> 1).toNat = newton a.toNat y.toNat := by\n      intro y h1 h2\n      exact toNat_newton_word_of_sqrt_le hspos h1 (by omega)\n    have hpres : \u2200 n : Nat, Nat.sqrt a.toNat \u2264 n \u2192 n < 2 ^ 129 \u2192\n        Nat.sqrt a.toNat \u2264 newton a.toNat n \u2227 newton a.toNat n < 2 ^ 129 := by\n      intro n h1 h2\n      refine \u27e8sqrt_le_newton_of_le h1, ?_\u27e9\n      have h3 := newton_le_max h1\n      omega\n    have hr1 : (newtonStep a ((1 : U256) <<< (log2 a >>> 1))).toNat\n        = newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)) := by\n      have hw : ((1 : U256) <<< (log2 a >>> 1)).toNat\n          + a.toNat / ((1 : U256) <<< (log2 a >>> 1)).toNat < 2 ^ 256 := by\n        rw [hx0]; exact hsum0\n      simp only [newtonStep]\n      rw [toNat_newton_word _ _ hw, hx0]\n    have hP1 : Nat.sqrt a.toNat\n          \u2264 (newtonStep a ((1 : U256) <<< (log2 a >>> 1))).toNat\n        \u2227 (newtonStep a ((1 : U256) <<< (log2 a >>> 1))).toNat < 2 ^ 129 := by\n      rw [hr1]; exact \u27e8hN1ge, hN1lt\u27e9\n    have htail : (iterate (newtonStep a) 6\n          (newtonStep a ((1 : U256) <<< (log2 a >>> 1)))).toNat\n        = Nat.repeat (newton a.toNat) 6\n          (newton a.toNat (2 ^ (Nat.log2 a.toNat / 2))) := by\n      have h := iter_map_of_sim (iterate (newtonStep a)) (newtonStep a)\n        (fun _ => rfl) (fun _ _ => rfl) BitVec.toNat (newton a.toNat)\n        (fun n => Nat.sqrt a.toNat \u2264 n \u2227 n < 2 ^ 129)\n        (fun y hy => hsim y hy.1 hy.2)\n        (fun b hb => hpres b hb.1 hb.2)\n        6 (newtonStep a ((1 : U256) <<< (log2 a >>> 1))) hP1\n      rwa [hr1] at h\n    have hrep : Nat.repeat (newton a.toNat) 6\n          (newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)))\n        = newtonIter a.toNat 7 (2 ^ (Nat.log2 a.toNat / 2)) := by\n      have e1 : Nat.repeat (newton a.toNat) 6\n            (newton a.toNat (2 ^ (Nat.log2 a.toNat / 2)))\n          = newtonIter a.toNat 6\n            (newton a.toNat (2 ^ (Nat.log2 a.toNat / 2))) := by\n        rw [newtonIter_eq_repeat]\n      rw [e1]; exact (newtonIter_succ a.toNat 6 _).symm\n    have hmem := newton7_mem hApos hs128\n    have hN7pos : 0 < newtonIter a.toNat 7 (2 ^ (Nat.log2 a.toNat / 2)) :=\n      newtonIter_pos 7 hspos hx0pos\n    have hmin : Nat.min (newtonIter a.toNat 7 (2 ^ (Nat.log2 a.toNat / 2)))\n        (a.toNat / newtonIter a.toNat 7 (2 ^ (Nat.log2 a.toNat / 2)))\n        = Nat.sqrt a.toNat :=\n      min_div_eq_sqrt hN7pos hmem\n    rw [sqrt_eq_newton7]\n    unfold newtonSqrt\n    rw [if_neg h0]\n    show (OzSqrt.min (OzSqrt.iterate (OzSqrt.newtonStep a) 7\n        ((1 : U256) <<< (log2 a >>> 1)))\n      (a / OzSqrt.iterate (OzSqrt.newtonStep a) 7\n        ((1 : U256) <<< (log2 a >>> 1)))).toNat\n      = Nat.sqrt a.toNat\n    have e76 : OzSqrt.iterate (OzSqrt.newtonStep a) 7 ((1 : U256) <<< (log2 a >>> 1))\n        = OzSqrt.iterate (OzSqrt.newtonStep a) 6\n          (OzSqrt.newtonStep a ((1 : U256) <<< (log2 a >>> 1))) := rfl\n    rw [e76, toNat_min, toNat_div, htail, hrep]\n    exact hmin",
+   "deps": [
+    "newton7_mem",
+    "sqrt",
+    "sqrt_eq_newton7"
+   ],
+   "statement": "theorem sqrt_toNat (a : U256) : (sqrt a).toNat = Nat.sqrt a.toNat",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "newton7_mem",
+   "kind": "theorem",
+   "text": "theorem newton7_mem {A : Nat} (hA : 0 < A) (hs128 : Nat.sqrt A < 2 ^ 128) :\n    newtonIter A 7 (2 ^ (Nat.log2 A / 2)) = Nat.sqrt A \u2228\n      (newtonIter A 7 (2 ^ (Nat.log2 A / 2)) = Nat.sqrt A + 1 \u2227\n        Nat.sqrt A * (Nat.sqrt A + 1) \u2264 A) :=\n  newtonIter_eq_or_succ_of_lt_two_mul (a := A) (x := 2 ^ (Nat.log2 A / 2)) (b := 128) (k := 5)\n    (Nat.two_pow_pos _) (two_pow_half_log2_le_sqrt hA) (sqrt_lt_two_mul_two_pow_half_log2 _)\n    hs128 (by decide) (by decide)",
+   "deps": [
+    "sqrt"
+   ],
+   "statement": "theorem newton7_mem {A : Nat} (hA : 0 < A) (hs128 : Nat.sqrt A < 2 ^ 128) :\n    newtonIter A 7 (2 ^ (Nat.log2 A / 2)) = Nat.sqrt A \u2228\n      (newtonIter A 7 (2 ^ (Nat.log2 A / 2)) = Nat.sqrt A + 1 \u2227\n        Nat.sqrt A * (Nat.sqrt A + 1) \u2264 A)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sqrt_eq_newton7",
+   "kind": "theorem",
+   "text": "theorem sqrt_eq_newton7 (a : U256) : sqrt a = newtonSqrt 7 a := by\n  unfold sqrt newtonSqrt\n  rfl",
+   "deps": [
+    "sqrt"
+   ],
+   "statement": "theorem sqrt_eq_newton7 (a : U256) : sqrt a = newtonSqrt 7 a",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  },
+  {
+   "name": "sqrt",
+   "kind": "def",
+   "text": "def sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)",
+   "deps": [],
+   "statement": "def sqrt : SqrtFn := fun a =>\n  if a = 0 then 0\n  else\n    let result : U256 := (1 : U256) <<< (log2 a >>> 1)\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    let result := (result + a / result) >>> 1\n    min result (a / result)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "rw-oz-sqrt",
+   "spec_sha256": "62af2324e4c0cf68ea45b7b88fa861f4d8b211e4c98eb25f256e59e917083616"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [],
+ "budget": {
+  "usd_list": 1.2947,
+  "elapsed_s": 710.6
+ },
+ "resumed_from": []
+}
