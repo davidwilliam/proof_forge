@@ -12,7 +12,7 @@ list of operations with an induction, sums over account lists. The library state
 once, for every scale, state type and operation type, so a specification can name a library
 definition and a proof can cite a library theorem.
 
-The library has 1,939 theorems and 452 definitions in 81 files under twenty-one top-level modules
+The library has 2,039 theorems and 476 definitions in 82 files under twenty-one top-level modules
 (`Rounding`, `FixedPoint`, `Word`, `Shares`, `Seq`, `Ledger`, `Trading`, `Machine`, `Evm`, `Money`,
 `DeFi`, `Tactic`, `Sums`, `Accrual`, `Sqrt`, `SqrtIter`, `NatSqrt`, `WordBridge`, `Accumulator`, `QuadRoot`, `RoundCompose`) and the two generated ones (`Harvested`, `Salvaged`; source
 declarations counted with comments excluded, as `web/tests/contribution.test.ts` recounts them),
@@ -401,6 +401,72 @@ terms, so it has no counterpart of the reference's 316-line Solidity transcripti
 The module's 116 constants pass the six kernels and `leanchecker`
 (`harness/fin_kernels.py --modules ProofForgeFin.Accumulator`,
 `results/library-accumulator-1/kernels-accumulator.json`).
+
+### `ProofForgeFin.Accumulator.Market`: two-sided reward markets, every run bounded from one case analysis
+
+In `results/frontier-2` all ten runs of Muse Code with ProofForge on `rw-compound-comp` proved the
+five per-call requirements and none proved the three sequence bounds (REQ-REWARDS-BOUNDED,
+REQ-ACCOUNT-BOUNDED, REQ-NO-BACKDATED-REWARDS); each run wrote 800 to 1,200 lines and ended at
+the $10 cap. Every run defined a sound potential and most proved its bound for single calls
+(`supplyHook_pot`, `borrowHook_pot`, `grant_pot`, `pot_advance`, `pot_drip` and the like). What
+no run established, by the open goals of the final candidates:
+
+* the bound for one operation of the specification's `exec`, all nine cases, with the per-call
+  bounds composed through the `Option` results and the balance changes that follow a hook
+  (`pot_exec_le` in `proofforge-full-6` with seven cases open, `hpot_step` in
+  `proofforge-full-4`, `pot_claim_le` and `pot_setSpeeds_le` in `proofforge-full-7`); a balance
+  change of a settled account is the step every run lacked;
+* the invariant and the potential at the upgrade (`inv_upgrade` and `pot_upgrade_le` open in
+  `proofforge-full-8`; `proofforge-full-6` started the index of a market the upgrade initialized
+  from 0, which is not a start the potential can use);
+* the potential of one account (`potTo` or `potAt` is defined in eight runs and bounded in none).
+
+`ProofForgeFin.Accumulator.Market` proves all of it once, for any state type `σ` and account type
+`α` and with no protocol named. A `Market σ α` says how to read a state: its `Clock` (the time and,
+for each side, the index, the last update and the rate), the account list, and each account's
+units, checkpoints and credited amount. A proof supplies that reading and one case analysis of its
+step into actions (`Act`):
+
+* transitions: `Settle₁`, `Settle₂` (a side brought up to date by `catchUp` and one account
+  credited from `firstStart`, rounded down), `Adjust` (a change of one account that does not raise
+  its credited amount and changes its units on a side only while settled there, `Settled₁`,
+  `Settled₂`), `Retune` (sides brought up to date with new rates), `Advance` (time passes);
+  `Step` collects those that keep the rates and `Reach` chains them through views, so a proof never
+  builds the states between two steps;
+* chains for the usual shapes: `Settle₁.then_adjust`, `Settle₂.then_adjust` (a hook, then a
+  balance change), `Settle₁.transfer`, `Settle₂.transfer` (two hooks, then a transfer),
+  `Reach.single`, `Reach.tail`, `Reach.trans`, `Reach.of_getD` (a call that may fail);
+* the invariant `Inv` and the potentials `pot` (all accounts) and `potOf w` (one account):
+  `Step.bound`, `Reach.bound`, `Act.bound` (an action raises each potential by at most `one` times
+  its emission `k * (rate₁ + rate₂)`), `run_bound` (over a run given by its defining equations,
+  proved by `rfl` when omitted);
+* the bounds: `rewards_bounded` (credited to all accounts after any run at most the start amount,
+  plus what was owed at the start rounded down once, plus the unindexed emission, plus the
+  emission), `account_rewards_bounded` (the same for one account), and
+  `rewards_after_no_position_bounded` (an account that holds no units after any history gains at
+  most what is emitted from then on);
+* the start: `pot_le_of`, `potOf_le_of` (from a bound on what each account is owed and on the
+  unindexed emission), `start_reinit`, `owed_reinit_le`, `unindexed_reinit_le` (an index still at
+  0 set to `init` raises nothing owed), `forall_getD`.
+
+The module doc ends with the recipe in five steps. Its 317 constants pass the six kernels and
+`leanchecker` (`harness/fin_kernels.py --modules ProofForgeFin.Accumulator.Market`,
+`results/library-market-1/kernels-market.json`), and a full run of `tests/test_fin_kernels.py`
+with the module in place exports 10,889 safe constants of the library and its demonstrations,
+which all six kernels accept, with `leanchecker` exiting 0. With the current index, the first
+`search_library` query of every one of the ten frontier-2 runs returns a `Market` entry among its
+first six results, and 23 of their 33 queries return one.
+
+A candidate for `rw-compound-comp` written with the module (by the build team, outside the
+repository and not committed) is VERIFIED, 8 of 8, with all six kernels and the executable's 2,001
+property cases (Passport `8e93daa5b2a51c2281cfe0e2efea31d6dca0ab0ca65603bf64b9345ed7c75d97`,
+reproduced by `bin/proofforge verify`). It has 337 lines: 172 for the comptroller written in the
+specification's terms and the five per-call requirements, as in the reference solution, and 160
+for the three bounds, against 576 with the earlier `Accumulator` modules and 1,138 in the
+reference solution. Of those 160, the case analysis of `exec` takes 54 lines and the reading of the
+state as a market, the two hook lemmas and the upgrade take the rest; the three required theorems
+are 5, 8 and 4 lines, each one application of `rewards_bounded`, `account_rewards_bounded` or
+`rewards_after_no_position_bounded`.
 
 ### `ProofForgeFin.QuadRoot`: integer roots of a quadratic
 

@@ -332,9 +332,9 @@ export const PLANNER = [
 /** ProofForgeFin (lib/), counted from the sources; lib/README.md states the kernel check. */
 export const LIBRARY = {
   // declarations in lib/ProofForgeFin/**/*.lean, comments excluded (tests/contribution.test.ts recounts)
-  files: 81,
-  theorems: 1939,
-  definitions: 452,
+  files: 82,
+  theorems: 2039,
+  definitions: 476,
   // lib/ProofForgeFinDemo/**/*.lean
   demoTheorems: 329,
   // lib/README.md: "all 10,128 safe constants of the library and the demonstrations ... pass all six kernels"
