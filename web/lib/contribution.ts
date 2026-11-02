@@ -333,8 +333,8 @@ export const PLANNER = [
 export const LIBRARY = {
   // declarations in lib/ProofForgeFin/**/*.lean, comments excluded (tests/contribution.test.ts recounts)
   files: 82,
-  theorems: 2039,
-  definitions: 476,
+  theorems: 2051,
+  definitions: 478,
   // lib/ProofForgeFinDemo/**/*.lean
   demoTheorems: 329,
   // lib/README.md: "all 10,128 safe constants of the library and the demonstrations ... pass all six kernels"

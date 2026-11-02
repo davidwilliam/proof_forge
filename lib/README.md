@@ -12,7 +12,7 @@ list of operations with an induction, sums over account lists. The library state
 once, for every scale, state type and operation type, so a specification can name a library
 definition and a proof can cite a library theorem.
 
-The library has 2,039 theorems and 476 definitions in 82 files under twenty-one top-level modules
+The library has 2,051 theorems and 478 definitions in 82 files under twenty-one top-level modules
 (`Rounding`, `FixedPoint`, `Word`, `Shares`, `Seq`, `Ledger`, `Trading`, `Machine`, `Evm`, `Money`,
 `DeFi`, `Tactic`, `Sums`, `Accrual`, `Sqrt`, `SqrtIter`, `NatSqrt`, `WordBridge`, `Accumulator`, `QuadRoot`, `RoundCompose`) and the two generated ones (`Harvested`, `Salvaged`; source
 declarations counted with comments excluded, as `web/tests/contribution.test.ts` recounts them),
@@ -177,7 +177,11 @@ Recurs in: `rw-hundred-vault` (`run`, `trace`, `run_value`), `rw-euler-donate` (
 * Splitting: `length_equalSplit`, `sum_equalSplit` (the parts add up to the amount),
   `mem_equalSplit_bounds` (each part within one unit of `a / n`), `equalSplit_le_add_one`.
 * Accounts indexed by position (`List.modify`, `List.getD`): `getD_modify`, `getD_modify_self`,
-  `getD_modify_ne`, `modify_of_length_le`, `getD_mem_or`, `sum_map_modify`, `sum_map_modify_le`,
+  `getD_modify_ne`, `modify_of_length_le`, `getD_mem_or`, `getD_of_forall` (a property of every
+  element and of the default holds at any position), `modify_congr` (two changes that agree on
+  the value at the position give the same list: a change written with values read before it is the
+  change written with the record), `getD_modify_of_keeps` (a field the change keeps reads the same
+  after it), `sum_map_modify`, `sum_map_modify_le`,
   `sum_map_modify_eq`, `sum_map_modify_modify` (moving an amount between two positions conserves
   the total), `getD_le_sum_map`, `sum_map_le_add`, `sum_map_mul_le`, `sum_map_mul_right`.
 
@@ -467,6 +471,43 @@ reference solution. Of those 160, the case analysis of `exec` takes 54 lines and
 state as a market, the two hook lemmas and the upgrade take the rest; the three required theorems
 are 5, 8 and 4 lines, each one application of `rewards_bounded`, `account_rewards_bounded` or
 `rewards_after_no_position_bounded`.
+
+#### The frontier-3 gaps (`results/library-compound-gaps-1`)
+
+In `results/frontier-3`, Muse Code with ProofForge verified `rw-compound-comp` in 2 of 10 runs.
+Of the other eight, six never wrote a `Market` argument past its first lines: five did not finish
+the five per-call requirements and one finished them only in its final file; the remaining two ran
+out of budget in the settlement lemmas and the case analysis of `exec`. These additions, written
+knowing that task and those runs, supply the glue the runs wrote themselves:
+
+* `Ledger.getD_of_forall`, `Ledger.modify_congr` and `Ledger.getD_modify_of_keeps` (above): all
+  ten runs proved their own `modify_congr`, eight their own form of `getD_of_forall`, three their
+  own form of `getD_modify_of_keeps`;
+* `Clock.reinit` (each index still at 0 set to `init`, its last update moved to now),
+  `reinitStart`, `inv_reinit`, `owed_reinit_le'`, `pot_reinit_le` and `potOf_reinit_le`: the
+  invariant and both potential bounds at a start where rewards begin on the sides that never had
+  any, from facts about the clock before (what each account was owed is `M.owed g₁ g₂ c a` at that
+  clock); the two verified runs proved this in 89 and 146 lines of their own;
+* `Clock.catchUp₁_mk`, `Clock.catchUp₂_mk`, `Clock.advance_mk`: the clock operations on a clock
+  written by its fields;
+* the module doc's recipe as templates, step by step: the reading, the bridges that hold by `rfl`
+  (an index update to `catchUp`, a start to `firstStart` or `effStart`, `(now - last) * rate` to
+  `unindexed`), one settlement lemma per side, the case analysis with constructors named so that
+  they elaborate (`M.Act.moves` and `M.Reach.refl` failed with "Invalid field" in four runs), the
+  start, and the final bounds with the start bound stated before the `exact` that uses it (inside
+  the `exact`, Lean can run out of heartbeats unifying it with the requirement).
+
+The 448 constants of `ProofForgeFin.Ledger` and `ProofForgeFin.Accumulator.Market` with these
+additions (278 theorems) pass the six kernels and `leanchecker`
+(`harness/fin_kernels.py --modules ProofForgeFin.Ledger ProofForgeFin.Accumulator.Market`,
+`results/library-compound-gaps-1/kernels.json`, library source tree `f3c7b22fb8a75007`). A
+candidate for `rw-compound-comp` written with them (outside the repository, not committed) is
+VERIFIED with 260 lines (Passport
+`340a7846a152da1904fd4a50b5e17edd9d1229c4690fa50bf4b9805876717785`, reproduced by
+`bin/proofforge verify`), against 306 for the same candidate written with the library before them:
+the part after the per-call requirements takes 141 lines instead of 185, the start 14 instead of
+41. A full run of `tests/test_fin_kernels.py` with the additions exports 10,909 safe constants of
+the library and its demonstrations, which all six kernels accept, with `leanchecker` exiting 0.
 
 ### `ProofForgeFin.QuadRoot`: integer roots of a quadratic
 

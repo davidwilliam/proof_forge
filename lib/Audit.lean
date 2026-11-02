@@ -99,6 +99,12 @@ elab "#audit_axioms" : command => do
 #print axioms ProofForgeFin.Accumulator.Market.account_rewards_bounded
 #print axioms ProofForgeFin.Accumulator.Market.rewards_after_no_position_bounded
 #print axioms ProofForgeFin.Accumulator.Market.Settle₁.transfer
+#print axioms ProofForgeFin.Accumulator.Market.inv_reinit
+#print axioms ProofForgeFin.Accumulator.Market.pot_reinit_le
+#print axioms ProofForgeFin.Accumulator.Market.potOf_reinit_le
+#print axioms ProofForgeFin.Ledger.modify_congr
+#print axioms ProofForgeFin.Ledger.getD_modify_of_keeps
+#print axioms ProofForgeFin.Ledger.getD_of_forall
 #print axioms ProofForgeFinDemo.ShareVault.req_share_value
 #print axioms ProofForgeFinDemo.BatchTransfer.sum_applyLegs
 #print axioms ProofForgeFinDemo.Compound.run_pot

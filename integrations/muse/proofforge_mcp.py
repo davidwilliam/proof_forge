@@ -41,7 +41,14 @@ Muse Code starts it from `mcp_servers` with the transport `stdio`. Three profile
                         then the required theorems the build proves (`#print axioms`) and the
                         best compiling version so far (most required theorems proved, the latest
                         on a tie), kept in the workspace as .proofforge/best.lean with
-                        .proofforge/best.json; a failed build names it and how to restore it
+                        .proofforge/best.json; a failed build names it and how to restore it.
+                        Lean's output is read whole (up to LEAN_KEEP characters, where the other
+                        profiles keep the judge's last 4,000) and, when it is longer than the
+                        limit, cut from the end: the first errors stay whole and each later
+                        message is named by its first line (clip_lean; also try_snippet and the
+                        `lean_errors` of check_candidate). From the third failed build in a row,
+                        the result names the declarations with errors and how to work on them
+                        outside the file (STREAK).
   In the full profile, an `unknown tactic` error at a Mathlib tactic (`by_contra`, `set`, `ring`,
   ...) in lean_build, try_snippet or check_snippet_fast gets a line naming the Lean core
   replacement (tactic_hints).
@@ -68,9 +75,13 @@ import fin_lib, judge, task as taskmod  # noqa: E402
 PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"]
 SERVER_INFO = {"name": "proofforge", "version": "1.0.0"}
 OUT_LIMIT = 12000
+LEAN_KEEP = 400000                      # full profile: characters of Lean's output read per run
+STREAK = 3                              # full profile: failed builds in a row before the note
 BEST = ".proofforge/best.lean"          # full profile: the best compiling version of the candidate
 BEST_RECORD = ".proofforge/best.json"   # its required theorems proved and its SHA-256
 MESSAGE = re.compile(r"^(error|warning|info)(?:\([\w.]+\))?: ")
+# The start of a message in Lake's form (`error: file:l:c: ...`) or Lean's (`file:l:c: error: ...`).
+MESSAGE_AT = re.compile(r"^(?:(error|warning|info)(?:\([\w.]+\))?: |[^\s:]+:\d+:\d+: (error|warning|info))")
 SORRY_WARNING = "declaration uses `sorry`"
 DECL_AT = re.compile(r"\b(?:theorem|lemma|def|instance|abbrev)\s+([^\s:({\[]+)")
 
@@ -141,6 +152,64 @@ def compact_build(text, src):
 
 def tail(text, n=OUT_LIMIT):
     return text if len(text) <= n else "[... earlier output omitted ...]\n" + text[-n:]
+
+
+def clip_lean(text, n=OUT_LIMIT):
+    """Lean's output in about `n` characters, cut from the end: messages are kept whole from the
+    first one while they fit, the first one that does not fit is cut, and every later message is
+    named by its first line (its position and the start of the message). The first errors are then
+    always shown whole and the others can be found; the end of a long output, which `tail` keeps,
+    leaves out the position of the first error."""
+    if len(text) <= n:
+        return text
+    blocks = [("", [])]
+    for line in text.splitlines():
+        m = MESSAGE_AT.match(line)
+        if m:
+            blocks.append((m.group(1) or m.group(2), [line]))
+        else:
+            blocks[-1][1].append(line)
+    out, used, rest, cut = [], 0, [], False
+    for sev, lines in [b for b in blocks if b[1]]:
+        block = "\n".join(lines)
+        if not cut and used + len(block) + 1 <= n:
+            out.append(block)
+            used += len(block) + 1
+            continue
+        if not cut and used < n // 2:
+            out.append(block[:n - used].rsplit("\n", 1)[0] + "\n[... the rest of this message is omitted ...]")
+        elif sev:
+            rest.append(lines[0][:240])
+        cut = True
+    if rest:
+        out.append(f"[... {len(rest)} more message{'s' if len(rest) > 1 else ''}, first lines only:]")
+        out += rest[:40]
+        if len(rest) > 40:
+            out.append(f"[... and {len(rest) - 40} more]")
+    return "\n".join(out)
+
+
+def decl_of_line(src_lines, ln):
+    """The declaration that holds line `ln` (1-based) of a source: the nearest line at or above it
+    that starts a declaration."""
+    for i in range(min(ln, len(src_lines)) - 1, -1, -1):
+        line = re.sub(r"^(?:@\[[^\]]*\]\s*)?(?:private\s+|protected\s+|noncomputable\s+)*", "", src_lines[i])
+        m = DECL_AT.match(line)
+        if m:
+            return m.group(1)
+    return None
+
+
+def error_decls(out, src):
+    """The declarations of the candidate with an error in Lean's output, in order, each with the
+    line of its first error."""
+    lines, seen = src.splitlines(), {}
+    for m in re.finditer(r"^error: candidate/Solution\.lean:(\d+):\d+: |^candidate/Solution\.lean:(\d+):\d+: error",
+                         out, re.M):
+        d = decl_of_line(lines, int(m.group(1) or m.group(2)))
+        if d and d not in seen:
+            seen[d] = int(m.group(1) or m.group(2))
+    return list(seen.items())
 
 
 def kill_containers(pid):
@@ -331,8 +400,12 @@ class Server:
         return p
 
     def lean(self, script, timeout=None):
-        """`script` in the pinned image on the workspace; with pipefail, so Lean's exit code survives `| tail`."""
-        return judge.in_container(self.ws, "set -o pipefail; " + script, timeout=timeout or self.lean_timeout)
+        """`script` in the pinned image on the workspace; with pipefail, so Lean's exit code survives `| tail`.
+        The full profile reads up to LEAN_KEEP characters of the output, the other profiles the
+        judge's last 4,000 as before."""
+        keep = LEAN_KEEP if self.profile == "full" else 4000
+        return judge.in_container(self.ws, "set -o pipefail; " + script, timeout=timeout or self.lean_timeout,
+                                  keep=keep)
 
     # -- tools ---------------------------------------------------------------------------------
     def lean_build(self, file=None):
@@ -340,6 +413,7 @@ class Server:
         the full profile a `file` that is the candidate builds the candidate module."""
         if file and self.profile == "full" and self.path(file) == self.ws / "candidate/Solution.lean":
             file = None
+        cap = LEAN_KEEP if self.profile == "full" else 60000
         if file:
             p = self.path(file)
             if p.suffix != ".lean" or not p.is_file():
@@ -347,11 +421,11 @@ class Server:
             rel = p.relative_to(self.ws)
             lib = self.task().lib if self.task_id else None
             pre = f"lake build {lib} >/dev/null 2>&1; " if lib else ""
-            r = self.lean(f"{pre}lake env lean {rel} 2>&1 | tail -c 60000")
+            r = self.lean(f"{pre}lake env lean {rel} 2>&1 | tail -c {cap}")
             what = f"lake env lean {rel}"
         else:
             text = (self.ws / "candidate/Solution.lean").read_text()
-            r = self.lean("lake build Solution 2>&1 | tail -c 60000")
+            r = self.lean(f"lake build Solution 2>&1 | tail -c {cap}")
             what = "lake build Solution"
             built = r["exit_code"] == 0 and "error:" not in r["output_tail"]
             if built:
@@ -360,9 +434,30 @@ class Server:
         head = f"$ {what}\nexit code {r['exit_code']} ({r['elapsed_ms']} ms)\n"
         if self.profile == "full" and not file:
             note = self.progress(text, built, out)
+            streak = self.streak_note(text, built, out)
             hints = tactic_hints(out, {"candidate/Solution.lean": text})
-            return head + (tail(compact_build(out, text)) or "(no output)") + hints + ("\n" + note if note else "")
+            return (head + (clip_lean(compact_build(out, text)) or "(no output)") + hints
+                    + ("\n" + note if note else "") + ("\n" + streak if streak else ""))
+        if self.profile == "full":
+            return head + (clip_lean(drop_hint_diffs(out)) or "(no output)")
         return head + (tail(out) or "(no output)")
+
+    def streak_note(self, text, built, out):
+        """Full profile: from the STREAK-th failed build of the candidate in a row, the declarations
+        with errors and how to get the file compiling and work on them outside it. In the
+        proofforge-full runs of results/frontier-3, three runs (longest streaks of 10, 10 and 21
+        failed builds) spent 69 to 82 percent of their budget in streaks of three or more; the four
+        runs that verified or came closest never had more than three failed builds in a row and
+        worked declarations out with check_snippet_fast."""
+        self.failed_builds = 0 if built or "error" not in out else getattr(self, "failed_builds", 0) + 1
+        if self.failed_builds < STREAK:
+            return ""
+        decls = error_decls(out, text)
+        named = ", ".join(f"`{d}` (line {ln})" for d, ln in decls[:8]) or "see the errors above"
+        return (f"This is failed build {self.failed_builds} in a row. Declarations with errors: {named}. "
+                "Put `sorry` in place of those proofs (or restore the best compiling version) so that the file "
+                "compiles again, then work out each one with check_snippet_fast, which checks it in seconds "
+                "without changing the file, and put it back once the snippet is clean.")
 
     # -- full profile: progress across builds --------------------------------------------------
     def best_record(self):
@@ -478,8 +573,9 @@ class Server:
             return "the snippet was stopped at the time limit"
         if not any(re.search(r": (error|warning)", x) for x in msgs):
             return "snippet compiles with no errors or warnings (the candidate file is unchanged)"
-        hints = tactic_hints("\n".join(msgs), {"snippet": code}) if self.profile == "full" else ""
-        return tail("\n".join(msgs), 8000) + hints
+        if self.profile == "full":
+            return clip_lean("\n".join(msgs), 8000) + tactic_hints("\n".join(msgs), {"snippet": code})
+        return tail("\n".join(msgs), 8000)
 
     def theorem_status(self, t):
         """Per required theorem: PROVED, SORRY or MISSING (`#print axioms` on the built candidate)."""
@@ -539,7 +635,7 @@ class Server:
             b = self.lean("lake build Solution 2>&1 | tail -c 60000")
             text = clean_lean(b["output_tail"])
             if "error:" in text:
-                res["lean_errors"] = tail(text, 8000)
+                res["lean_errors"] = clip_lean(text, 8000) if self.profile == "full" else tail(text, 8000)
             else:
                 if b["exit_code"] == 0:
                     self.record_compiled(built)

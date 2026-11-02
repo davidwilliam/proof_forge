@@ -392,6 +392,39 @@ theorem getD_mem_or {α : Type v} (l : List α) (i : Nat) (d : α) : l.getD i d 
       · exact Or.inl (List.mem_cons_of_mem a h)
       · exact Or.inr h
 
+/-- A property of every element of the list and of the default holds of the value read at any
+position. -/
+theorem getD_of_forall {α : Type v} {P : α → Prop} (l : List α) (i : Nat) {d : α}
+    (h : ∀ a ∈ l, P a) (hd : P d) : P (l.getD i d) := by
+  rcases getD_mem_or l i d with hm | hm
+  · exact h _ hm
+  · rw [hm]; exact hd
+
+/-- Two changes of one position that agree on the value there give the same list: a change
+written with values read before it (`fun a => { a with x := e (l.getD i d) }`) is the change
+written with the record itself (`fun a => { a with x := e a }`). -/
+theorem modify_congr {α : Type v} (l : List α) (i : Nat) {f g : α → α} (d : α)
+    (h : i < l.length → f (l.getD i d) = g (l.getD i d)) : l.modify i f = l.modify i g := by
+  induction l generalizing i with
+  | nil => simp
+  | cons a l ih =>
+    cases i with
+    | zero =>
+      have := h (by simp)
+      simp only [List.getD_cons_zero] at this
+      simp only [List.modify_zero_cons, this]
+    | succ i =>
+      simp only [List.modify_succ_cons]
+      rw [ih i (fun hi => by have := h (by simp; omega); simpa using this)]
+
+/-- A field that a change keeps reads the same at every position after the change. -/
+theorem getD_modify_of_keeps {α : Type v} {β : Type u} (l : List α) (i j : Nat) {f : α → α}
+    (d : α) (p : α → β) (h : ∀ a, p (f a) = p a) : p ((l.modify i f).getD j d) = p (l.getD j d) := by
+  rw [getD_modify]
+  split
+  · exact h _
+  · rfl
+
 /-- The total after modifying one position inside the list: the new total plus the old value is
 the old total plus the new value. -/
 theorem sum_map_modify {α : Type v} (l : List α) {i : Nat} (f : α → α) (g : α → Nat) (d : α)

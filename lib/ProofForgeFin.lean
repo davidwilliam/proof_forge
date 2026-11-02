@@ -34,7 +34,8 @@ no dependency beyond the Lean core library.
 * `ProofForgeFin.Shares`: vault share conversions and share value.
 * `ProofForgeFin.Seq`: runs of operations, traces, atomic runs, reachable states, invariants and
   accumulated bounds.
-* `ProofForgeFin.Ledger`: sums over accounts and conservation under transfers, mints and burns.
+* `ProofForgeFin.Ledger`: sums over accounts and conservation under transfers, mints and burns;
+  accounts kept by position in a list (`List.modify`, `List.getD`).
 * `ProofForgeFin.Sums`: sums restated by recursion, sums over positions, sums after one entry
   changes, and sums of rounded-down parts.
 * `ProofForgeFin.Accrual`: a part rounded down plus at most one unit is within one unit; capped
