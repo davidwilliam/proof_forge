@@ -465,6 +465,36 @@ def frontier_2():
     return out, {"source": "results/frontier-2", "found": True, "complete": all(c["alone"]["runs"] == 10 and c["proofforge"]["runs"] == 10 for c in out if c["scope"] == "task")}
 
 
+def frontier_3():
+    base = RES / "frontier-3"
+    task = "rw-compound-comp"
+    src = ["results/frontier-3/README.md", "results/frontier-3/PREREGISTRATION.md"]
+    cav = ["Preregistered (results/frontier-3/PREREGISTRATION.md, commit a3a1307): 10 runs per arm, one-sided Fisher exact test, alpha 0.05; with 0 verified on its own, p < 0.05 needs at least 4 verified with ProofForge.",
+           "ProofForgeFin.Accumulator.Market was written after the frontier-2 runs on this task stopped at 5 of 8 requirements; a gap between the arms measures ProofForge including that library work.",
+           "Final candidates judged again outside the budget from commit a3a1307 (judged/<task>/<run>/passport.json); every Passport reproduced; no run set aside, none rerun."]
+    if not (base / "judged" / task).is_dir():
+        return [], {"source": "results/frontier-3", "found": False, "note": "no judged run"}
+    runs = hard_task_runs(base, task)
+    al, pf = runs["alone"], runs["proofforge-full"]
+    if not al or not pf:
+        return [], {"source": "results/frontier-3", "found": False, "note": "no judged run of both arms"}
+    p = fisher_one_sided(sum(r["verified"] for r in pf), len(pf), sum(r["verified"] for r in al), len(al))
+    out = [comparison(f"frontier-3/{task}", "frontier-3", task, SPARK, arm("alone", al), arm("proofforge-full", pf),
+                      test={"name": "one-sided Fisher exact", "p": rp(p), "preregistered": True, "alpha": 0.05,
+                            "stated_in": "results/frontier-3/PREREGISTRATION.md", "significant_at_0_05": p < 0.05},
+                      caveats=cav, sources=src)]
+    f2 = hard_task_runs(RES / "frontier-2", task)["alone"]
+    if f2:
+        pooled = al + f2
+        p = fisher_one_sided(sum(r["verified"] for r in pf), len(pf), sum(r["verified"] for r in pooled), len(pooled))
+        out.append(comparison(f"frontier-3+frontier-2/{task}", "frontier-3", task, SPARK, arm("alone", pooled), arm("proofforge-full", pf),
+                              scope="aggregate", test={"name": "one-sided Fisher exact (secondary, frontier-2 and frontier-3 runs on its own pooled)", "p": rp(p),
+                                                       "preregistered": True, "stated_in": "results/frontier-3/PREREGISTRATION.md", "significant_at_0_05": p < 0.05},
+                              caveats=cav + ["The runs on its own pool frontier-2 (commit 995ee6e) and frontier-3 (commit a3a1307); the alone arm is the same in both."],
+                              sources=src + ["results/frontier-2/README.md"]))
+    return out, {"source": "results/frontier-3", "found": True, "complete": len(al) == 10 and len(pf) == 10}
+
+
 E1 = {
     "e1-test-1": {"pf_arms": ("A1", "A2"), "price": "list", "caveats": [
         "The 30 test tasks are 9 base specifications with 3 or 4 variants each, so the tasks are not independent problems.",
@@ -755,6 +785,18 @@ def claims(L):
         claim(fr, "rw-compound-comp list dollars total $90.78 on its own", 90.78, g(fc, "alone", "list_usd_total"), 0.005)
         claim(fr, "rw-compound-comp list dollars total $92.56 with ProofForge", 92.56, g(fc, "proofforge", "list_usd_total"), 0.005)
         claim(fr, "both tasks pooled p = 2.2e-4", 2.2e-4, by["frontier-2/both-tasks"]["test"]["p"], 5e-6)
+    if "frontier-3/rw-compound-comp" in by:
+        f3r, f3 = "results/frontier-3/README.md", "frontier-3/rw-compound-comp"
+        claim(f3r, "with ProofForge verified 2 of 10", 2, g(f3, "proofforge", "verified"))
+        claim(f3r, "on its own verified 0 of 10", 0, g(f3, "alone", "verified"))
+        claim(f3r, "one-sided Fisher exact p = 0.24", 0.24, by[f3]["test"]["p"], 0.005)
+        claim(f3r, "list dollars total $92.47 on its own", 92.47, g(f3, "alone", "list_usd_total"), 0.005)
+        claim(f3r, "list dollars total $85.43 with ProofForge", 85.43, g(f3, "proofforge", "list_usd_total"), 0.005)
+        claim(f3r, "list dollars per verified run $42.72 with ProofForge", 42.72, g(f3, "proofforge", "list_usd_per_verified"), 0.005)
+        claim(f3r, "requirements per run 2.2 of 8 on its own", 2.2, g(f3, "alone", "req_proved_mean"), 0.005)
+        claim(f3r, "requirements per run 4.5 of 8 with ProofForge", 4.5, g(f3, "proofforge", "req_proved_mean"), 0.005)
+        claim(f3r, "pooled with frontier-2 on its own: 0 of 20", 0, g("frontier-3+frontier-2/rw-compound-comp", "alone", "verified"))
+        claim(f3r, "pooled one-sided Fisher exact p = 0.10", 0.10, by["frontier-3+frontier-2/rw-compound-comp"]["test"]["p"], 0.005)
     claim(h, "rw-oz-sqrt alone list dollars $48.53", 48.53, g("hard-task-1/rw-oz-sqrt", "alone", "list_usd_total"), 0.005)
     claim(h, "rw-oz-sqrt ProofForge list dollars $46.06", 46.06, g("hard-task-1/rw-oz-sqrt", "proofforge", "list_usd_total"), 0.005)
     claim(h, "rw-vyper-sqrt runs stopped by the $10 cap: 3 of 5 alone", 3, by["hard-task-1/rw-vyper-sqrt"]["alone"]["cap_stops"]["usd"])
@@ -922,6 +964,8 @@ def build():
     comps += v
     f2, f2info = frontier_2()
     comps += f2
+    f3, f3info = frontier_3()
+    comps += f3
     comps += muse_code_1()
     f, bl = flagship_pairs()
     comps += f
@@ -942,7 +986,7 @@ def build():
                    "requirements": "mean required theorems proved per run: the Passport count for a verified run, else the last compiling version where the run records it (last_compiling.json, ledger.json best_candidate), else the run's own check of its final snapshot",
                    "cap_stops": "fraction of runs stopped by the dollar or wall cap",
                    "first_verified_s": "A0, A1, A2: first accepted judge event in events.jsonl; Muse Code with ProofForge: end of the first check_candidate call returning VERIFIED; Muse Code alone: end of run, when the runner's judge accepted"},
-         "optional_sources": {"vyper-replication-1": vinfo, "frontier-2": f2info, "feedback-measure-1": finfo},
+         "optional_sources": {"vyper-replication-1": vinfo, "frontier-2": f2info, "frontier-3": f3info, "feedback-measure-1": finfo},
          "comparisons": comps, "catches": [e2_all_1()],
          "not_comparisons": [{"source": s, "why": w} for s, w in NOT_COMPARISONS],
          "_e1_runs": e1_runs, "_baseline": bl}
