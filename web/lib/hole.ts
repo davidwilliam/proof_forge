@@ -9,9 +9,10 @@ import { bellOf, shortLines, shortName, type Bell } from "@/lib/lenses";
 import { dependencyCone, transitiveReduction } from "@/lib/proofgraph";
 
 /**
- * The run and the guarantee shown first. No Muse run verifies Compound. REQ-NO-BACKDATED-REWARDS is
- * open in every Compound run measured; in this one (Muse Spark with the Muse Wonder planner,
- * top-down) it hangs from four lemmas left as `sorry`.
+ * The run and the guarantee shown first. No Muse run verified Compound before results/frontier-3
+ * (2 of 10 with ProofForge there). REQ-NO-BACKDATED-REWARDS is open in each of the Compound runs
+ * whose graphs are extracted (generated/shapes/summary.json); in this one (Muse Spark with the Muse
+ * Wonder planner, top-down) it hangs from four lemmas left as `sorry`.
  */
 export const HOLE_PICK = { run: "results/library-1/rw-compound-comp/A2-topdown-3", guarantee: "REQ-NO-BACKDATED-REWARDS" } as const;
 

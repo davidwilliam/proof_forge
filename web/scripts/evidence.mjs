@@ -23,6 +23,10 @@ const { E1, E2 } = await loadTs("lib/evidence.ts");
 const K = await loadTs("lib/contribution.ts");
 const WL = await loadTs("lib/wins.ts");
 const W = JSON.parse(fs.readFileSync(path.join(web, "generated/wins.json"), "utf8"));
+const LIB = JSON.parse(fs.readFileSync(path.join(web, "generated/library.json"), "utf8"));
+const wc = (id) => W.comparisons.find((c) => c.id === id);
+const C3 = wc(WL.HEADLINE_IDS.compound);
+const CP = wc(WL.HEADLINE_IDS.compoundPooled);
 
 function passport(ref) {
   if (!ref) return null;
@@ -179,7 +183,7 @@ const evidence = {
     wins: W.wins.map((w) => ({ group: w.group, comparison: w.id, kind: w.kind ?? undefined, sentence: w.sentence })),
   },
   muse_alone_vs_proofforge: {
-    note: `Every run is Muse Spark 1.3 (Contributor tier), capped at $${K.RUN_CAPS.usdList} at list prices and ${K.RUN_CAPS.seconds} s, and judged by ProofForge against the same locked specification. A0: Muse alone, compile-and-retry with Lean's errors and the axiom audit. A1: the ProofForge harness. A2: A1 with Muse Wonder 1.0 as lemma planner. On Cetus, Euler and Hundred both Muse alone and the harness were accepted in every run. On Balancer and Knight, A2 was accepted more often and at a lower list price per verified run than Muse alone (cost_per_verified_run). On Compound no run of any method has proved every requirement; the build team's library-based proof is VERIFIED on the deployed judge.`,
+    note: `Every run is Muse Spark 1.3 (Contributor tier), capped at $${K.RUN_CAPS.usdList} at list prices and ${K.RUN_CAPS.seconds} s, and judged by ProofForge against the same locked specification. A0: Muse alone, compile-and-retry with Lean's errors and the axiom audit. A1: the ProofForge harness. A2: A1 with Muse Wonder 1.0 as lemma planner. On Cetus, Euler and Hundred both Muse alone and the harness were accepted in every run. On Balancer and Knight, A2 was accepted more often and at a lower list price per verified run than Muse alone (cost_per_verified_run). On Compound, Muse Code (Muse Spark 1.3) with ProofForge verified ${C3.proofforge.verified} of ${C3.proofforge.runs} runs in frontier-3 (results/frontier-3/README.md), the first verified repairs of the task; on its own it verified ${C3.alone.verified} of ${C3.alone.runs}, and ${CP.alone.verified} of ${CP.alone.runs} with frontier-2 pooled. Before frontier-3 no run of any method had proved every Compound requirement (the rows below); the build team's library-based proof is VERIFIED on the deployed judge.`,
     rows: K.COMPARISON.map((r) => ({
       task: r.task,
       incident: r.incident,
@@ -210,7 +214,7 @@ const evidence = {
   counterexamples: { ...K.COUNTEREXAMPLES, cetus_hotfix: K.CETUS_HOTFIX },
   open_weight_models: K.OPEN_WEIGHTS,
   wonder_planner: K.PLANNER,
-  proofforgefin: K.LIBRARY,
+  proofforgefin: { ...K.LIBRARY, counts: LIB },
   hackathon: K.HACKATHON,
   scope: K.SCOPE,
   not_claimed: notClaimed,
@@ -297,7 +301,7 @@ function llms() {
   for (const o of K.OPEN_WEIGHTS)
     L.push(`- ${o.model} (${o.serving}; ${o.source}${o.complete ? "" : ", incomplete"}): A0 ${o.a0.completed} of ${o.a0.n}, A1 ${o.outage ? `${o.outage.a1Completed} of ${o.outage.a1N} excluding runs ended by an outage (${o.a1.completed} of ${o.a1.n} including them)` : `${o.a1.completed} of ${o.a1.n}`}; McNemar p = ${o.mcnemarP}, 95% interval of the difference [${o.ci95.join(", ")}].`);
   for (const p of K.PLANNER) L.push(`- Muse Wonder planner on ${p.incident}: A1 proved ${p.a1.join(" and ")} of ${p.requirements} requirements, A2 ${p.a2.join(" and ")}; A2 accepted in ${p.a2Accepted} of ${p.a2.length}.`);
-  L.push(`- ProofForgeFin (lib/): ${K.LIBRARY.theorems} theorems and ${K.LIBRARY.definitions} definitions in ${K.LIBRARY.files} files; ${K.LIBRARY.constantsChecked} constants of the library and demonstrations accepted by six kernels. A library-based Compound candidate written by the build team (${K.LIBRARY.compoundFixture}) is VERIFIED on the deployed judge, Passport ${K.LIBRARY.compoundLivePassport} (${K.LIBRARY.compoundLivePassportFile}).`);
+  L.push(`- ProofForgeFin (lib/): ${LIB.theorems} theorems and ${LIB.definitions} definitions in ${LIB.files} files; ${LIB.latestFullRun.safeConstants} safe constants of the library and demonstrations accepted by six kernels in the latest full run (${LIB.latestFullRun.source}); the last committed full run (${LIB.committedFullRun.file}) checked ${LIB.committedFullRun.safeConstants} and leanchecker replayed ${LIB.committedFullRun.modulesReplayed} modules. A library-based Compound candidate written by the build team (${K.LIBRARY.compoundFixture}) is VERIFIED on the deployed judge, Passport ${K.LIBRARY.compoundLivePassport} (${K.LIBRARY.compoundLivePassportFile}).`);
   L.push(`- Built during the ${K.HACKATHON.event}: first commit ${K.HACKATHON.firstCommit}, submissions due ${K.HACKATHON.submissionsDue} (ORIGIN.md).`);
   L.push(`- Scope: ${K.SCOPE}`);
   L.push("");
