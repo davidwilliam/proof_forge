@@ -4,6 +4,7 @@ import { getJson, type TaskDetail } from "@/lib/api";
 import { predicateSource, requirementText } from "@/lib/format";
 import { ErrorBox } from "@/components/ui";
 import { ForgeSession, type ReqView } from "../ForgeSession";
+import "./forge.css";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Forge session, ProofForge" };

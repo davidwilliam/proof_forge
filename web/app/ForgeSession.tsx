@@ -4,10 +4,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { getJson, postJson, type Job, type Passport } from "@/lib/api";
 import { claimWord, initialState, reduce, type ForgeState, type StreamEvent } from "@/lib/events";
+import { buildTimeline, claimMark, stageStates, type SegmentKind } from "@/lib/forge-view";
 import { formatDuration, formatInt, formatUsd, modelInfo, shortHash } from "@/lib/format";
+import { RECORDING_FACTS, orderRecordings } from "@/lib/recordings";
 import { openJobStream, type ConnectionState } from "@/lib/stream";
 import { Pipeline } from "@/components/Pipeline";
 import { Status, ErrorBox } from "@/components/ui";
+import { ActivityTimeline, CountUp, PassportCard, RecordingCard, ReqMarks } from "./forge/ForgeParts";
 import { StreamView } from "./StreamView";
 
 export interface ReqView {
@@ -113,8 +116,8 @@ export function ForgeSession(props: {
   // Follow the end of the stream unless the viewer scrolled up.
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (el && follow) el.scrollTop = el.scrollHeight;
-  }, [state.items.length, follow]);
+    if (el && follow && jobId) el.scrollTop = el.scrollHeight;
+  }, [state.items.length, follow, jobId]);
   const onScroll = useCallback(() => {
     const el = scroller.current;
     if (!el) return;
@@ -122,12 +125,15 @@ export function ForgeSession(props: {
     setFollow(atEnd);
   }, []);
 
-  const start = async () => {
+  /** Start a replay of the chosen recording, or of `pick` when a recording card starts it in one click. */
+  const start = async (pick?: string) => {
+    const rec = pick ?? recording;
+    if (pick) setRecording(pick);
     setStarting(true);
     setError(null);
     try {
       // Replay mode only: the server re-emits a recorded session and freshly checks its artifact.
-      const j = await postJson<Job>("/api/jobs", { task: task.id, mode: "replay", recording, speed });
+      const j = await postJson<Job>("/api/jobs", { task: task.id, mode: "replay", recording: rec, speed });
       setJob(j);
       setJobId(j.id);
       setFollow(true);
@@ -143,15 +149,29 @@ export function ForgeSession(props: {
 
   const running = !!jobId && !state.terminal;
   const segment = state.segment ?? (jobId ? "Connecting" : "No session running");
-  const segKind = !jobId ? "idle" : /fresh check/i.test(segment) ? "check" : /^live$/i.test(segment) ? "live" : "recorded";
+  const segKind: SegmentKind = !jobId ? "idle" : /fresh check/i.test(segment) ? "check" : /^live$/i.test(segment) ? "live" : "recorded";
   const showMinor = minor ?? !state.hasToolEvents;
   const wallEnd = state.terminal ? state.wallEnd : now;
   const budget = passport?.provenance?.budget;
   const elapsedRecorded =
     budget?.elapsed_s ?? passport?.provenance?.elapsed_s ?? (state.recordedStart != null && state.recordedEnd != null ? state.recordedEnd - state.recordedStart : null);
 
+  const activeRecording = state.recording ?? job?.recording ?? (jobId ? null : recording);
+  const facts = activeRecording ? RECORDING_FACTS[activeRecording] ?? null : null;
+  const stages = stageStates(state, !!jobId, segKind);
+  const marks = state.order.map((id) => ({ id, mark: claimMark(state.claims[id]!), word: claimWord(state.claims[id]!) }));
+  const provedCount = state.order.filter((id) => state.claims[id]!.session === "proved").length;
+  const timeline = useMemo(() => buildTimeline(state, facts?.elapsedS ?? null), [state, facts?.elapsedS]);
+  const replayedShare = timeline && facts ? Math.min(1, timeline.now / facts.elapsedS) : null;
+  const ordered = orderRecordings(recordings, props.defaultRecording);
+
   return (
-    <main id="main" className="forge" style={{ ["--code-size" as string]: `${codeSize}px`, ["--text-size" as string]: `${codeSize + 1}px` }}>
+    <main
+      id="main"
+      className="forge fs"
+      data-running={running ? "" : undefined}
+      style={{ ["--code-size" as string]: `${codeSize}px`, ["--text-size" as string]: `${codeSize + 1}px` }}
+    >
       <div className="segment-bar">
         <span className="segment-label" data-segment={segKind} aria-live="polite">
           {segment}
@@ -184,49 +204,155 @@ export function ForgeSession(props: {
               ))}
             </select>
           </label>
-          <button className="primary" onClick={start} disabled={running || starting || !recording}>
+          <button className="primary" onClick={() => start()} disabled={running || starting || !recording}>
             {starting ? "Starting" : running ? "Replaying" : "Start replay"}
           </button>
         </div>
       </div>
 
-      <div className="task-header">
-        <div>
-          <h1>
-            Task {task.id}: repair <code>{task.definitions.map((d) => `${task.namespace}.${d}`).join(", ")}</code>
-          </h1>
-          <p>{task.issue}</p>
-        </div>
-        <Pipeline />
+      <div className="task-header fs-head">
+        <h1>
+          Task {task.id}: repair <code>{task.definitions.map((d) => `${task.namespace}.${d}`).join(", ")}</code>
+        </h1>
+        <p>{task.issue}</p>
       </div>
+
+      <Pipeline
+        className={`fs-rail${state.passport ? ` fs-v-${state.passport.status.toLowerCase()}` : ""}`}
+        stages={[
+          {
+            state: stages[0],
+            detail: (
+              <>
+                <ReqMarks marks={marks.map((m) => ({ ...m, mark: "locked", word: "locked" }))} label={`${requirements.length} requirements locked`} />
+                <span className="fs-rail-fact">
+                  {requirements.length} requirements, manifest <span className="hash">{shortHash(task.manifestSha, 12)}</span>
+                </span>
+              </>
+            ),
+          },
+          {
+            state: stages[1],
+            detail: (
+              <>
+                <ReqMarks
+                  marks={marks.map((m) => ({ ...m, mark: state.claims[m.id]!.session }))}
+                  label={`${provedCount} of ${requirements.length} requirements proved in session`}
+                />
+                <span className="fs-rail-fact">
+                  {!jobId && facts ? (
+                    <>
+                      {modelInfo(facts.model).name}: {formatInt(facts.turns)} turns, {formatInt(facts.versions)} versions recorded
+                    </>
+                  ) : jobId ? (
+                    <>
+                      {provedCount} of {requirements.length} proved in session, {formatInt(state.counts.versions)} versions
+                    </>
+                  ) : (
+                    "Pick a recording to replay"
+                  )}
+                </span>
+                {replayedShare != null && jobId ? (
+                  <span className="fs-progress" role="progressbar" aria-label="Recorded session replayed" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(replayedShare * 100)}>
+                    <span style={{ width: `${(replayedShare * 100).toFixed(1)}%` }} />
+                  </span>
+                ) : null}
+              </>
+            ),
+          },
+          {
+            state: stages[2],
+            detail: (
+              <span className="fs-rail-fact">
+                {stages[2] === "active"
+                  ? "Running on the stored artifact"
+                  : stages[2] === "done" && passport
+                    ? passport.checks.comparator_kernels.length
+                      ? `${passport.checks.comparator_kernels.length} kernels accepted, ${formatInt(passport.checks.property_tests.cases)} property cases`
+                      : `${formatInt(passport.checks.property_tests.cases)} property cases, ${formatInt(Object.values(passport.checks.property_tests.violations ?? {}).reduce((a, b) => a + b, 0))} violations; proof check not accepted`
+                    : stages[2] === "done"
+                      ? "Check complete"
+                      : "Runs when the recorded session ends"}
+              </span>
+            ),
+          },
+          {
+            state: stages[3],
+            detail: state.passport ? (
+              <>
+                <ReqMarks marks={marks.map((m) => ({ ...m, mark: state.claims[m.id]!.final ?? "pending" }))} label={`Passport verdicts: ${state.passport.status}`} />
+                <span className="fs-rail-fact">
+                  <Status value={state.passport.status} /> <Link href={`/passport/${state.passport.sha}`}>Passport {shortHash(state.passport.sha, 8)}</Link>
+                </span>
+              </>
+            ) : (
+              <>
+                <ReqMarks marks={marks.map((m) => ({ ...m, mark: "pending" }))} label="No Passport yet" />
+                <span className="fs-rail-fact">Assigned by the fresh check</span>
+              </>
+            ),
+          },
+        ]}
+      />
 
       <aside className="col col-left" aria-label="Locked requirements">
         <h2>Locked requirements</h2>
         <p className="small muted">
           Owner-reviewed and hash-locked. Manifest <span className="hash">{shortHash(task.manifestSha, 16)}</span>
         </p>
-        {requirements.map((r) => (
-          <div className="req" key={r.id}>
-            <div className="req-id">{r.id}</div>
-            <p style={{ margin: "2px 0 4px" }}>{r.text}</p>
-            <pre>
-              <code>
-                theorem {r.theorem.split(".").pop()} : {r.statement}
-              </code>
-            </pre>
-            {r.predicate ? (
-              <details>
-                <summary className="small">Definition of {r.statement?.split(" ")[0]}</summary>
-                <pre>
-                  <code>{r.predicate}</code>
-                </pre>
-              </details>
-            ) : null}
-            <div className="small muted">
-              Statement sha256 <span className="hash">{shortHash(r.statementSha)}</span>
-            </div>
-          </div>
-        ))}
+        <p className="small muted fs-honesty">
+          VERIFIED, REFUTED and UNRESOLVED are assigned only by the final Passport. Proved in session means the agent&apos;s own check found
+          no sorry.
+        </p>
+        <ol className="fs-reqs" aria-label="Claim status">
+          {requirements.map((r) => {
+            const c = state.claims[r.id]!;
+            const word = claimWord(c);
+            let note = "";
+            if (c.final) note = "from the Passport";
+            else if (c.testViolations) note = `${c.testViolations} test violations at version ${c.testVersion}`;
+            else if (c.testVersion != null) note = `tests pass at version ${c.testVersion}`;
+            const mark = claimMark(c);
+            return (
+              <li className="fs-req" key={r.id} data-mark={mark}>
+                <div className="fs-req-head">
+                  <span className="fs-sq" data-mark={mark} key={mark} aria-hidden="true" />
+                  <span className="req-id">{r.id}</span>
+                </div>
+                <p className="fs-req-text">{r.text}</p>
+                <p className="fs-req-status">
+                  {c.final ? (
+                    <Status value={c.final}>{word}</Status>
+                  ) : (
+                    <span className="status fs-chip" data-mark={c.session}>
+                      {word}
+                    </span>
+                  )}
+                  {note ? <span className="fs-req-note">{note}</span> : null}
+                </p>
+                <details className="fs-req-more">
+                  <summary>Theorem, definition and statement hash</summary>
+                  <pre>
+                    <code>
+                      theorem {r.theorem.split(".").pop()} : {r.statement}
+                    </code>
+                  </pre>
+                  {r.predicate ? (
+                    <details>
+                      <summary className="small">Definition of {r.statement?.split(" ")[0]}</summary>
+                      <pre>
+                        <code>{r.predicate}</code>
+                      </pre>
+                    </details>
+                  ) : null}
+                  <div className="small muted">
+                    Statement sha256 <span className="hash">{shortHash(r.statementSha)}</span>
+                  </div>
+                </details>
+              </li>
+            );
+          })}
+        </ol>
       </aside>
 
       <section className="col stream" ref={scroller} onScroll={onScroll} aria-label="Agent stream">
@@ -256,68 +382,73 @@ export function ForgeSession(props: {
         <div className="stream-body">
           {error ? <ErrorBox title="Request failed" message={error} /> : null}
           {!jobId ? (
-            <div className="notice" style={{ marginTop: 12 }}>
-              <p>
+            <div className="fs-start">
+              <h2>Watch a Muse model repair the payout code under ProofForge</h2>
+              <p className="fs-start-lead">
                 Pick a recording and a replay speed, then start. The server re-emits the recorded session and then runs a fresh check of the
                 stored artifact; requirement statuses come only from that check.
               </p>
+              <ul className="fs-recs" aria-label="Recorded sessions">
+                {ordered.map((r) => (
+                  <RecordingCard
+                    key={r}
+                    id={r}
+                    facts={RECORDING_FACTS[r] ?? null}
+                    requirements={requirements}
+                    selected={r === recording}
+                    speed={speed}
+                    disabled={starting}
+                    onReplay={() => start(r)}
+                  />
+                ))}
+              </ul>
             </div>
           ) : null}
           <StreamView state={state} jobId={jobId} expandArgs={expandArgs} showMinor={showMinor} />
         </div>
       </section>
 
-      <aside className="col col-right" aria-label="Claim status">
-        <h2>Claim status</h2>
-        <ul className="claims">
-          {state.order.map((id) => {
-            const c = state.claims[id]!;
-            const word = claimWord(c);
-            let note = "";
-            if (c.final) note = "from the Passport";
-            else if (c.testViolations) note = `${c.testViolations} test violations at version ${c.testVersion}`;
-            else if (c.testVersion != null) note = `tests pass at version ${c.testVersion}`;
-            return (
-              <li key={id}>
-                <span className="req-id">{id}</span>
-                <Status value={c.final ?? (c.session === "proved" ? "PROVED" : c.session === "working" ? "IN PROGRESS" : "pending")}>{word}</Status>
-                {note ? <span className="note">{note}</span> : null}
-              </li>
-            );
-          })}
+      <aside className="col col-right" aria-label="Session">
+        {state.passport ? <PassportCard summary={state.passport} passport={passport} /> : null}
+
+        <h2>Session</h2>
+        <ul className="fs-kpis" aria-label="Session counters">
+          <li>
+            <span className="fs-kpi-v">
+              <CountUp value={state.counts.turns} />
+            </span>
+            <span className="fs-kpi-l">model turns</span>
+          </li>
+          <li>
+            <span className="fs-kpi-v">{state.hasToolEvents ? <CountUp value={state.counts.tools} /> : <span className="fs-kpi-none">not recorded</span>}</span>
+            <span className="fs-kpi-l">tool calls</span>
+          </li>
+          <li>
+            <span className="fs-kpi-v">
+              <CountUp value={state.counts.versions} />
+            </span>
+            <span className="fs-kpi-l">versions</span>
+          </li>
+          <li>
+            <span className="fs-kpi-v">
+              <CountUp value={provedCount} />
+              <span className="fs-kpi-of"> of {requirements.length}</span>
+            </span>
+            <span className="fs-kpi-l">proved in session</span>
+          </li>
         </ul>
-        <p className="small muted" style={{ marginTop: 8 }}>
-          VERIFIED, REFUTED and UNRESOLVED are assigned only by the final Passport. Proved in session means the agent&apos;s own check found
-          no sorry.
-        </p>
 
-        {state.passport ? (
-          <div className="passport-callout">
-            <div>
-              Component <Status value={state.passport.status} />
-            </div>
-            <Link href={`/passport/${state.passport.sha}`}>Open Passport {shortHash(state.passport.sha)}</Link>
-          </div>
-        ) : null}
+        <ActivityTimeline timeline={timeline} hasTools={state.hasToolEvents} recorded={facts != null} />
 
-        <h2 style={{ marginTop: 16 }}>Session</h2>
-        <dl className="metric-grid">
+        <dl className="metric-grid fs-metrics">
           <dt>Job</dt>
           <dd className="mono">{jobId ?? "none"}</dd>
           <dt>Recording</dt>
           <dd className="mono">{state.recording ?? job?.recording ?? "none"}</dd>
           {state.models.map((m) => {
             const info = modelInfo(m);
-            return (
-              <FragmentPair key={m} k={info.name} v={info.role === "prover" ? "repairer and prover" : info.role} />
-            );
+            return <FragmentPair key={m} k={info.name} v={info.role === "prover" ? "repairer and prover" : info.role} />;
           })}
-          <dt>Model turns</dt>
-          <dd>{formatInt(state.counts.turns)}</dd>
-          <dt>Tool calls</dt>
-          <dd>{state.hasToolEvents ? formatInt(state.counts.tools) : "not recorded"}</dd>
-          <dt>Versions</dt>
-          <dd>{formatInt(state.counts.versions)}</dd>
           <dt>Snippets clean</dt>
           <dd>
             {formatInt(state.counts.snippetsOk)} of {formatInt(state.counts.snippets)}
@@ -328,10 +459,12 @@ export function ForgeSession(props: {
           </dd>
           <dt>Tokens in</dt>
           <dd>
-            {formatInt(state.usage.prompt)} ({formatInt(state.usage.cached)} cached)
+            <CountUp value={state.usage.prompt} /> (<CountUp value={state.usage.cached} /> cached)
           </dd>
           <dt>Tokens out</dt>
-          <dd>{formatInt(state.usage.completion)}</dd>
+          <dd>
+            <CountUp value={state.usage.completion} />
+          </dd>
           <dt>Session time</dt>
           <dd>{formatDuration(elapsedRecorded)}</dd>
           <dt>Replay time</dt>
@@ -371,4 +504,3 @@ function FragmentPair({ k, v }: { k: string; v: string }) {
     </>
   );
 }
-
