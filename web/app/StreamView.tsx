@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { memo, useState } from "react";
+import { memo, useState, type ReactNode } from "react";
 import { getJson } from "@/lib/api";
 import { toolArgs, type ForgeState, type RawEvent, type StreamItem } from "@/lib/events";
 import { dialogLabel, formatMs, maybeJson, modelInfo, prettyJson, shortHash } from "@/lib/format";
@@ -92,7 +92,7 @@ const Item = memo(function Item({
     case "resolve":
       return (
         <div className="ev-compact">
-          Resolve <code>{s(e.name)}</code> at depth {s(e.depth)}: <Status value={e.ok ? "PROVED" : "SORRY"}>{e.ok ? "proved" : "still open"}</Status>
+          Resolve <code>{s(e.name)}</code> at depth {s(e.depth)}: <SessionChip proved={e.ok === true}>{e.ok ? "proved" : "still open"}</SessionChip>
         </div>
       );
     case "budget_stop":
@@ -120,6 +120,15 @@ const Item = memo(function Item({
       );
   }
 });
+
+/** An in-session result: proved by the agent's own check, or still open. Verdict colours belong to the Passport. */
+function SessionChip({ proved, children }: { proved: boolean; children: ReactNode }) {
+  return (
+    <span className="status fs-chip" data-mark={proved ? "proved" : "open"}>
+      {children}
+    </span>
+  );
+}
 
 function JobLine({ e }: { e: RawEvent }) {
   const st = s(e.state);
@@ -268,7 +277,7 @@ function CheckLine({ e }: { e: RawEvent }) {
                 <tr key={k}>
                   <td className="mono">{k}</td>
                   <td>
-                    <Status value={v} />
+                    <SessionChip proved={v === "PROVED"}>{v}</SessionChip>
                   </td>
                 </tr>
               ))}
