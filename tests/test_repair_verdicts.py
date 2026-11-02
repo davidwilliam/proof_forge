@@ -185,7 +185,7 @@ def test_whole_file_phase_runs_verbatim_whenever_not_accepted():
     when phase 0 fails and when phases 1 and 2 end without acceptance; it saves verbatim."""
     seen = []
 
-    def fake_run(s, a, state="", library_text="", resume_text=""):
+    def fake_run(s, a, state="", library_text="", resume_text="", note=""):
         seen.append((s.verbatim, a.max_turns, state))
     for phase0_ok in (False, True):
         s = session(WORKFLOW)

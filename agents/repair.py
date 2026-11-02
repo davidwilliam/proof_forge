@@ -1204,15 +1204,26 @@ def obligation_query(s, stmt):
 # A0's definitions of permissions-acl-b2, -acl-b3 and -grants-b4 and on none of A1's
 # (results/e1-open-diagnosis-2/README.md). The note asks for the definition in the specification's
 # terms; it names no task and applies in both modes.
-SPEC_SHAPED = (
-    "\n\nThe next phases prove every required theorem about the definition you write now, and may not change "
-    "it. So write it in the specification's terms wherever the specification provides them: decide validity "
+SPEC_TERMS = (
+    "write it in the specification's terms wherever the specification provides them: decide validity "
     "with the specification's own predicate (`if h : Valid s r then ... else ...`; if Lean asks for a "
     "`Decidable` instance, add one such as `instance (s : State) (r : Request) : Decidable (Valid s r) := by "
     "unfold Valid; infer_instance`), or with a single Boolean function together with one lemma proving it "
     "equal to that predicate; and build the result with the specification's own functions rather than "
     "re-encoding them case by case. Each requirement then follows by unfolding the specification. Keep the "
-    "definition computable (no `Classical`, no `noncomputable`): run_tests builds the executable from it.")
+    "definition computable (no `Classical`, no `noncomputable`): ")
+SPEC_SHAPED = ("\n\nThe next phases prove every required theorem about the definition you write now, and may not "
+               "change it. So " + SPEC_TERMS + "run_tests builds the executable from it.")
+
+# Whole-file phase note. Phase 3 starts from the file the per-requirement phases left, labelled
+# "partly repaired", and the model kept that file's definition: in results/e1-test-open-2 all 20
+# whole-file attempts of permissions-grants-b3 and the one of -grants-b4 kept the phase-0 Boolean
+# guard, and permissions-acl-b2 switched to the specification's predicate only in its last attempt;
+# A0, starting from the buggy file, used the specification's terms from its first attempt on both
+# tasks it verified there. The note says the definition may change and how.
+WHOLE_FILE_NOTE = ("The earlier phases kept {defs} fixed while proving the requirements about it; you may rewrite "
+                   "it together with the proofs. If you rewrite it, " + SPEC_TERMS
+                   + "the executable is built from it.")
 
 
 # Whole-file reserve (`--whole-file-reserve R`, a fraction of the dollar cap): the dialogs of the
@@ -1298,7 +1309,8 @@ def orchestrate(s, a, middle=None):
         try:
             baseline.run(s, argparse.Namespace(model=a.model, effort=a.effort, max_turns=200),
                          state="current, partly implemented" if impl else "current, partly repaired",
-                         library_text=library_brief(s.lib_index, tools=False) if s.library else "")
+                         library_text=library_brief(s.lib_index, tools=False) if s.library else "",
+                         note=WHOLE_FILE_NOTE.format(defs=defs))
         finally:
             s.verbatim = False
 

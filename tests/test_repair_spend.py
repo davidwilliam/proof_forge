@@ -16,7 +16,8 @@ permissions-acl-b3 and permissions-grants-b4, which spent $2.69 and $2.64 there,
 verified); dialog() makes no model call once the reserve is reached and the whole-file phase is
 never stopped by it; A0's first request is byte for byte the one of the code that ran
 e1-test-open-2; the phase-0 request carries the note on the definition's form (both modes) and the
-per-requirement requests do not.
+per-requirement requests do not; the whole-file phase's first request ends with the note that the
+definition may be rewritten.
 With Lean (the pinned image): the recorded closure banks on the recorded candidate and `#print
 axioms` shows the requirement proved; the recorded text does not compile. On permissions-acl-b3 the
 portfolio proves both validity requirements on A0's definitions and neither on A1's phase-0 file.
@@ -171,7 +172,7 @@ def test_whole_file_phase_is_never_stopped_by_the_reserve():
             s.budget.usd_list = 1.6
             seen.append(("middle", repair.reserve_reached(s)))
 
-        def fake_run(s, a, state="", library_text="", resume_text=""):
+        def fake_run(s, a, state="", library_text="", resume_text="", note=""):
             seen.append(("whole-file", s.reserve, repair.reserve_reached(s)))
         a = argparse.Namespace(model="m", effort="medium", phase0_turns=1, whole_file_reserve=0.5)
         with patch("baseline.run", fake_run):
@@ -241,6 +242,38 @@ def test_phase0_request_asks_for_the_specification_terms():
         assert repair.SPEC_SHAPED not in system
     for word in ("Grants", "Acl", "permissions", "ValidCommand", "ValidQuery"):
         assert word not in repair.SPEC_SHAPED, word
+
+
+def test_whole_file_phase_says_the_definition_may_change():
+    """Phase 3's first request ends with the note; the rest of it is A0's protocol on the current
+    file. A0 itself passes no note (test_a0_first_request_is_unchanged)."""
+    import baseline
+
+    class Stop(Exception):
+        pass
+    seen = {}
+
+    def call(model, messages, purpose, **extra):
+        seen["messages"] = messages
+        raise Stop()
+    out = pathlib.Path(tempfile.mkdtemp(prefix="pf-spend-"))
+    (out / "start.lean").write_text(PORT["source"])
+    s = repair.Session(GRANTS, "m", out / "start.lean", out, budget.Budget(None, None))
+    try:
+        s.run_tests = lambda: '{"status": "PASS"}'
+        s.call = call
+        a = argparse.Namespace(model="m", effort="medium", phase0_turns=1, whole_file_reserve=0.0)
+        try:
+            repair.orchestrate(s, a, middle=lambda *x: None)
+        except Stop:
+            pass
+    finally:
+        close(s)
+    system, user = seen["messages"][0]["content"], seen["messages"][1]["content"]
+    note = repair.WHOLE_FILE_NOTE.format(defs="`Grants.step`")
+    assert user.endswith("\n\n" + note) and "(current, partly repaired)" in user, user[-400:]
+    assert system.startswith(repair.task_brief(GRANTS)) and note not in system
+    assert "may rewrite it together with the proofs" in note and repair.SPEC_TERMS in note
 
 
 def test_per_requirement_requests_carry_no_phase0_note():
