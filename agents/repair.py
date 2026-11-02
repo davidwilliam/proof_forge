@@ -1193,6 +1193,28 @@ def obligation_query(s, stmt):
     return stmt + "\n" + "\n".join(docs)
 
 
+# Phase 0 note. The definition written in phase 0 is the one every per-requirement dialog proves the
+# requirements about (they are told not to change it), and phase 0 itself checks only the property
+# tests. In results/e1-test-open-2 the four permissions runs whose phase-0 definition re-encoded the
+# specification's validity predicate with Boolean operations, case by case, proved 0 to 2 of 8 or 9
+# requirements in phase 1 and stopped at the $3 cap; A0, writing definition and proofs together,
+# decided validity with the specification's predicate (or one Boolean function proved equivalent to
+# it once) and built the result with the specification's functions. Replayed with Lean, the tactic
+# portfolio alone proves the validity requirements (valid input answered, invalid input a no-op) on
+# A0's definitions of permissions-acl-b2, -acl-b3 and -grants-b4 and on none of A1's
+# (results/e1-open-diagnosis-2/README.md). The note asks for the definition in the specification's
+# terms; it names no task and applies in both modes.
+SPEC_SHAPED = (
+    "\n\nThe next phases prove every required theorem about the definition you write now, and may not change "
+    "it. So write it in the specification's terms wherever the specification provides them: decide validity "
+    "with the specification's own predicate (`if h : Valid s r then ... else ...`; if Lean asks for a "
+    "`Decidable` instance, add one such as `instance (s : State) (r : Request) : Decidable (Valid s r) := by "
+    "unfold Valid; infer_instance`), or with a single Boolean function together with one lemma proving it "
+    "equal to that predicate; and build the result with the specification's own functions rather than "
+    "re-encoding them case by case. Each requirement then follows by unfolding the specification. Keep the "
+    "definition computable (no `Classical`, no `noncomputable`): run_tests builds the executable from it.")
+
+
 # Whole-file reserve (`--whole-file-reserve R`, a fraction of the dollar cap): the dialogs of the
 # per-requirement phases stop once the list dollars spent reach cap - R * cap * open / n, where
 # `open` of the `n` required theorems still have `sorry` (or are missing) in their own text. Dialogs
@@ -1256,7 +1278,8 @@ def orchestrate(s, a, middle=None):
         tests_ok["v"] = True
     user0 = (f"{spec}\n\n=== candidate/Solution.lean (current, {'placeholder' if impl else 'buggy'}) ===\n{s._source()}\n\n"
              f"Phase 1 of 2: {'implement' if impl else 'fix'} {defs} so it meets the requirements. Keep every required theorem in the file "
-             "(use `sorry` proofs for now). Write the file with write_solution, then call run_tests until it reports PASS.")
+             "(use `sorry` proofs for now). Write the file with write_solution, then call run_tests until it reports PASS."
+             + SPEC_SHAPED)
     ok0 = tests_ok["v"] or dialog(s, a.model, a.effort, system, user0, {"write_solution", "run_tests", "read_file"} | lib_tools(s),
                                   a.phase0_turns, lambda: tests_ok["v"], "implement")[0]
     s.log(kind="phase", phase="implement", ok=ok0)
