@@ -7,11 +7,14 @@
 import { ATTEMPT_SHAPES, SHAPES_SUMMARY, type Shape } from "@/lib/shapes";
 import { bellOf, shortLines, shortName, type Bell } from "@/lib/lenses";
 import { dependencyCone, transitiveReduction } from "@/lib/proofgraph";
+import { HEADLINE_IDS, comparison } from "@/lib/wins";
+import { WINS } from "@/lib/wins-data";
 
 /**
- * The run and the guarantee shown first. No Muse run verifies Compound. REQ-NO-BACKDATED-REWARDS is
- * open in every Compound run measured; in this one (Muse Spark with the Muse Wonder planner,
- * top-down) it hangs from four lemmas left as `sorry`.
+ * The run and the guarantee shown first. No Muse run verified Compound before results/frontier-3
+ * (2 of 10 with ProofForge there). REQ-NO-BACKDATED-REWARDS is open in each of the Compound runs
+ * whose graphs are extracted (generated/shapes/summary.json); in this one (Muse Spark with the Muse
+ * Wonder planner, top-down) it hangs from four lemmas left as `sorry`.
  */
 export const HOLE_PICK = { run: "results/library-1/rw-compound-comp/A2-topdown-3", guarantee: "REQ-NO-BACKDATED-REWARDS" } as const;
 
@@ -21,6 +24,11 @@ export const HOLE_PICK = { run: "results/library-1/rw-compound-comp/A2-topdown-3
  * specification's doc comment of the property, verbatim.
  */
 export const REFERS_ELSEWHERE = /\bbelow\b|^the same\b/;
+
+function laterVerified() {
+  const c = comparison(WINS, HEADLINE_IDS.compound);
+  return { verified: c.proofforge.verified, runs: c.proofforge.runs, experiment: HEADLINE_IDS.compound.split("/")[0]! };
+}
 
 export type HoleRole = "chain" | "hole" | "plain";
 
@@ -48,6 +56,8 @@ export interface HoleRun {
   /** The run has no Passport: no kernel check accepted it. */
   passport: null;
   runsMeasured: number;
+  /** Compound only: the frontier-3 runs that verified with ProofForge, each proving every guarantee. */
+  laterVerified: { verified: number; runs: number; experiment: string } | null;
   /** Every declaration of the run's graph; a hole or a declaration that uses one is the same in every shape. */
   nodes: { id: string; kind: string; origin: string; depth: number; role: HoleRole }[];
   /** Edges of the transitive reduction, [user, used]; `chain` when both ends are on a chain to a hole. */
@@ -101,6 +111,7 @@ export function holeRun(shapes: Shape[] = ATTEMPT_SHAPES, summary: Summary = SHA
     run: { dir: s.run.dir, name: s.run.dir.split("/").pop()!, arm: s.run.arm, model: s.run.model, planner: s.run.planner, source: s.source.file },
     passport: null,
     runsMeasured: s.task.id === "rw-compound-comp" ? summary.compound.runs.length : 1,
+    laterVerified: s.task.id === "rw-compound-comp" ? laterVerified() : null,
     nodes: s.nodes.map((n) => ({ id: n.id, kind: n.kind, origin: n.origin, depth: n.depth, role: role(n.id) })),
     edges: transitiveReduction(s.edges).map(([from, to]) => ({ from, to, chain: onChain(from) && onChain(to) })),
     guarantees,

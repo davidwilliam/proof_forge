@@ -450,7 +450,11 @@ export function HeroLenses(props: HeroLensesProps) {
                           <code>sorry</code>
                         </>
                       ) : null}
-                      {x.openInEveryRun ? `; it is open in all ${count(hole.runsMeasured)} ${hole.task.name} runs measured` : ""}.
+                      {x.openInEveryRun ? `; it is open in all ${count(hole.runsMeasured)} ${hole.task.name} runs of that series` : ""}
+                      {hole.laterVerified
+                        ? `. Muse Code with ProofForge later proved it, with every other requirement, in ${count(hole.laterVerified.verified)} of ${count(hole.laterVerified.runs)} ${hole.laterVerified.experiment} runs`
+                        : ""}
+                      .
                     </p>
                     <dl className="hl-readings">
                       <div>

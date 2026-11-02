@@ -329,17 +329,12 @@ export const PLANNER = [
   { task: "rc-knight-router", incident: "Knight Capital", requirements: 6, a1: [1, 1], a2: [5, 6], a2Accepted: 1 },
 ] as const;
 
-/** ProofForgeFin (lib/), counted from the sources; lib/README.md states the kernel check. */
+/**
+ * ProofForgeFin (lib/): the build team's Compound proof with the library. The library's own counts
+ * (files, theorems, definitions, constants checked by the six kernels) are counted from the sources
+ * and read from the kernel runs by scripts/library.mjs into generated/library.json (lib/library-data.ts).
+ */
 export const LIBRARY = {
-  // declarations in lib/ProofForgeFin/**/*.lean, comments excluded (tests/contribution.test.ts recounts)
-  files: 82,
-  theorems: 2051,
-  definitions: 478,
-  // lib/ProofForgeFinDemo/**/*.lean
-  demoTheorems: 329,
-  // lib/README.md: "all 10,128 safe constants of the library and the demonstrations ... pass all six kernels"
-  constantsChecked: 10128,
-  modulesReplayed: 87,
   // tests/fixtures/library/compound_lib.lean: implementation and per-call proofs from the reference
   // solution, the three sequence bounds from lib/ProofForgeFinDemo/DeFi/Compound.lean
   compoundFixture: "tests/fixtures/library/compound_lib.lean",

@@ -110,6 +110,16 @@ describe("a guarantee with a hole", () => {
     expect(h.guarantees.filter((x) => x.openInEveryRun).map((x) => x.id)).toEqual(["REQ-REWARDS-BOUNDED", "REQ-ACCOUNT-BOUNDED", "REQ-NO-BACKDATED-REWARDS"]);
   });
 
+  it("states the frontier-3 runs that later verified Compound, each with every requirement VERIFIED", () => {
+    expect(h.laterVerified).toEqual({ verified: 2, runs: 10, experiment: "frontier-3" });
+    for (const run of ["proofforge-full-5", "proofforge-full-9"]) {
+      const p = JSON.parse(read(`results/frontier-3/judged/rw-compound-comp/${run}/passport.json`));
+      expect(p.status).toBe("VERIFIED");
+      expect(p.requirements.map((r: { id: string }) => r.id)).toEqual(expect.arrayContaining(["REQ-REWARDS-BOUNDED", "REQ-ACCOUNT-BOUNDED", "REQ-NO-BACKDATED-REWARDS"]));
+      expect(p.requirements.every((r: { status: string }) => r.status === "VERIFIED"), run).toBe(true);
+    }
+  });
+
   it("draws each guarantee as a bell with the rules of the verified ones", () => {
     h.guarantees.forEach((x, gi) => {
       const top = depth.get(x.node)!;

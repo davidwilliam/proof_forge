@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { CheckFix } from "@/components/CheckFix";
+import { CatchWaffles, KpiStrip, RunStrips } from "@/components/FrontierViz";
 import { Pipeline } from "@/components/Pipeline";
 import { HeroLenses } from "@/components/HeroLenses";
 import { Seal } from "@/components/Seal";
@@ -41,13 +42,17 @@ import {
   type RealCodeRow,
 } from "@/lib/flagships";
 import { readRealworld } from "@/lib/generated";
+import { COMPOUND_FRONTIER, caseTrail, compoundFrontier, compoundLead, homeKpis, homeStrips, lossParts, matrixRows, type TrailStep } from "@/lib/home-view";
+import { LIBRARY_COUNTS } from "@/lib/library-data";
 import { PROOF_GRAPH, layoutGraph } from "@/lib/proofgraph";
 import { GRAPH_TASK, bellOf, guarantees, layoutLayers } from "@/lib/lenses";
 import { holeRun } from "@/lib/hole";
 import { EXPECTED_PROJECTS, describeInput, listWords, pendingProjects, type RwProject, type RwVersion } from "@/lib/realworld";
-import { WinsHeadline } from "@/components/Wins";
-import { countsSentence, headlines } from "@/lib/wins";
+import { countsSentence, headlines, pValue, runsOf } from "@/lib/wins";
 import { WINS } from "@/lib/wins-data";
+import { CaseViewer } from "./_home/CaseViewer";
+import { CompareMatrix } from "./_home/CompareMatrix";
+import "./home.css";
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 const usd = (n: number) => `$${n < 0.1 ? n.toFixed(n < 0.045 ? 3 : 2) : n.toFixed(2)}`;
@@ -94,118 +99,31 @@ export default function Home() {
       </section>
 
       <div className="page home-body">
-      <HomeWins />
+        <HomeWins />
+        <Comparison />
 
-      <div className="hero-grid">
-        <HeroCase f={FEATURED} />
-        <TrustModel />
-      </div>
-      <div className="hero-foot">
-        <div className="hero-facts">
-          <p>
-            Built during the {HACKATHON.event}: everything in the repository, from the judge, the Passport and the counterexample stage to the
-            real-world tasks, the ProofForgeFin library and this site, was created on or after the day of the first commit, {longDay(HACKATHON.firstCommit)};
-            submissions close {longDay(HACKATHON.submissionsDue)} (<a href={githubFile("ORIGIN.md")}>ORIGIN.md</a>).
+        <section className="home-section" id="check" aria-labelledby="home-check">
+          <h2 id="home-check">Check a fix against its locked specification</h2>
+          <p className="home-section-lead">
+            Pick a real failure and a version of its code, and the ProofForge API judges it now. If the API is slow or down, the panel shows the
+            committed Passport of the same file and says so.
           </p>
-          <p>{SCOPE}</p>
-        </div>
-      </div>
+          <CheckFix />
+        </section>
 
-      <Comparison />
+        <Cases />
 
-      <section className="home-section" id="check" aria-labelledby="home-check">
-        <h2 id="home-check">Check a fix against its locked specification</h2>
-        <p className="home-section-lead">
-          Pick a real failure and a version of its code, and the ProofForge API judges it now. If the API is slow or down, the panel shows the
-          committed Passport of the same file and says so.
-        </p>
-        <CheckFix />
-      </section>
+        <Lift />
 
-      <Lift />
+        <Library />
 
-      <Library />
+        <Trust />
 
-      <FeaturedCase f={FEATURED} />
+        <Benchmark />
 
-      <section className="home-section" aria-labelledby="home-cases">
-        <h2 id="home-cases">{listWords(FLAGSHIPS.filter((f) => f !== FEATURED).map((f) => f.incident))}, step by step</h2>
-        <div className="cases">
-          {FLAGSHIPS.filter((f) => f !== FEATURED).map((f) => (
-            <CaseCard key={f.key} f={f} />
-          ))}
-        </div>
-      </section>
+        <RealWorld projects={rw.projects} pending={pendingProjects(rw)} />
 
-      <Claims />
-
-      <section className="home-section" aria-labelledby="home-breadth">
-        <h2 id="home-breadth">
-          The benchmark: {BENCHMARK.tasks} repair tasks in {count(BENCHMARK.families.length)} areas
-        </h2>
-        <p className="home-section-lead">
-          Beyond the incidents, the benchmark has {BENCHMARK.splits.dev} development, {BENCHMARK.splits.val} validation and{" "}
-          {BENCHMARK.splits.test} test tasks. The test areas never appear in development or in any prompt used to build the agents. Every
-          task has two reference solutions, a buggy start candidate and seeded attacks.
-        </p>
-        <ul className="families">
-          {BENCHMARK.families.map((x) => (
-            <li key={x.key}>
-              <strong>{x.tasks}</strong> {x.label.toLowerCase()}
-            </li>
-          ))}
-          {IMPLEMENTS ? (
-            <li>
-              <strong>
-                {IMPLEMENTS.value} of {IMPLEMENTS.of}
-              </strong>{" "}
-              {IMPLEMENTS.label}
-            </li>
-          ) : null}
-        </ul>
-        <div className="home-evidence">
-          <E2Card />
-          <E1Card />
-        </div>
-        <SplitExample />
-      </section>
-
-      <RealWorld projects={rw.projects} pending={pendingProjects(rw)} />
-
-      <section className="home-section" aria-labelledby="home-next">
-        <h2 id="home-next">Check the evidence yourself</h2>
-        <div className="home-ctas">
-          <a className="home-cta" href={githubFile(FEATURED.repair.passport.path)}>
-            <strong>Open the {FEATURED.incident} Passport</strong>
-            <span>
-              Statuses for all {requirementCount(FEATURED.repair.passport)} requirements, hashes, kernels, axioms and the command that
-              reproduces it. sha256 <span className="hash">{FEATURED.repair.passport.sha256.slice(0, 16)}</span>
-            </span>
-          </a>
-          <Link className="home-cta" href="/forge">
-            <strong>Open the live forge session</strong>
-            <span>Replay a recorded Muse Spark repair, then watch a fresh check of its final candidate assign every status.</span>
-          </Link>
-          <Link className="home-cta" href="/results">
-            <strong>Read the results</strong>
-            <span>E1 and E2 per arm, per task family and per case, with the seeded attacks named.</span>
-          </Link>
-        </div>
-        <div className="reproduce card">
-          <h3>Reproduce a Passport</h3>
-          <p className="muted small">
-            From a clone of the repository with the pinned Lean image built (see the README). <code>verify</code> rebuilds the project,
-            reruns every check and compares each hash and status.
-          </p>
-          <pre>
-            <code>{FLAGSHIPS.map((f) => f.repair.passport.reproduce).join("\n")}</code>
-          </pre>
-          <p className="muted small" style={{ margin: 0 }}>
-            For agents: <a href="/llms.txt">llms.txt</a> and <a href="/evidence.json">evidence.json</a> list every claim, figure, Passport
-            hash, source file and command on this page.
-          </p>
-        </div>
-      </section>
+        <Evidence />
       </div>
     </main>
   );
@@ -263,27 +181,6 @@ function HeroGraph() {
   );
 }
 
-/** The largest gains of the ledger (results/wins/ledger.json), right after the hero, with the counts and the way to every comparison. */
-function HomeWins() {
-  return (
-    <section className="home-section home-wins" id="wins" aria-labelledby="home-wins">
-      <h2 id="home-wins">How far ProofForge takes Meta&apos;s models</h2>
-      <p className="home-section-lead">
-        The same Meta model on the same tasks and caps, on its own and with ProofForge, both judged against the same locked specification.{" "}
-        {countsSentence(WINS)} Every run is in the ledger with its Passport.
-      </p>
-      <WinsHeadline items={headlines(WINS)} />
-      <p className="home-wins-more">
-        <Link className="btn btn-primary" href="/frontier">
-          Every comparison
-        </Link>
-        <a className="btn" href={githubFile(WINS.readme)}>
-          The ledger on GitHub
-        </a>
-      </p>
-    </section>
-  );
-}
 
 /** The graph's caption, under the facts so the first screen holds the figures. */
 function GraphCaption() {
@@ -460,81 +357,29 @@ function PassportLink({ p, label }: { p: PassportRef; label?: string }) {
   );
 }
 
-/** The hardest real result, on the first screen: four versions of Cetus's overflow check against one locked specification. */
-function HeroCase({ f }: { f: Flagship }) {
+/** The largest gains of the ledger (results/wins/ledger.json) as run strips, right after the hero, with the ledger's totals and the way to every comparison. */
+function HomeWins() {
   return (
-    <figure className="hero-case card" aria-labelledby="hero-case-title">
-      <figcaption id="hero-case-title">
-        <strong>
-          {f.incident}, {longDay(f.date)}: {f.loss.amount} {f.loss.short}.
-        </strong>{" "}
-        Four versions of its overflow check, one locked specification of five requirements.
-      </figcaption>
-      <ol className="hc-steps">
-        {f.timeline.map((v) => (
-          <li key={v.key} className="hc-step" data-verdict={v.verdict}>
-            <span className="hc-title">
-              {v.title} <span className="hc-detail">{v.detail}</span>
-            </span>
-            <code className="hc-code">{v.code.join("; ")}</code>
-            <span className="hc-finding">
-              <Status value={v.verdict} /> {v.short}
-              {v.key === "pr6" ? (
-                <>
-                  {" "}
-                  The counterexample is a Lean theorem, <code>{CETUS_HOTFIX.statement}</code>, accepted by all {CETUS_HOTFIX.kernels} kernels.
-                </>
-              ) : null}
-            </span>
-          </li>
-        ))}
-      </ol>
-      <p className="hc-foot small">
-        <PassportLink p={pr6.passport} label="Hotfix Passport" /> <PassportLink p={f.repair.passport} label="Muse repair Passport" />{" "}
-        <a href="#case-cetus">The Cetus case in full</a>
+    <section className="home-section home-wins" id="wins" aria-labelledby="home-wins">
+      <h2 id="home-wins">How far ProofForge takes Meta&apos;s models</h2>
+      <p className="home-section-lead">
+        The same Meta model on the same tasks and caps, on its own and with ProofForge, both judged against the same locked specification.{" "}
+        {countsSentence(WINS)} Every run is in the ledger with its Passport. Below, every dot is a measured run, filled when it ended with a
+        VERIFIED Passport.
       </p>
-    </figure>
-  );
-}
-
-function TrustModel() {
-  const e2 = (key: string) => E2.arms.find((a) => a.key === key)!;
-  return (
-    <div className="trust card" aria-labelledby="trust-title">
-      <h2 id="trust-title" className="trust-title">
-        What ProofForge checks before it says VERIFIED
-      </h2>
-      <ol className="trust-list">
-        <li>The requirements are Lean 4 statements, locked by hash before any model sees the task.</li>
-        <li>
-          Lean&apos;s Comparator checks the proof in a fresh sandbox with six independent kernels (Lean default and paranoid, lean4lean,
-          nanoda, con-leche, con-ron); leanchecker replays it and an axiom audit rejects anything beyond <code>propext</code>,{" "}
-          <code>Classical.choice</code> and <code>Quot.sound</code>.
-        </li>
-        <li>The executable rebuilt from the same source runs on 2,001 generated property cases.</li>
-        <li>
-          A refutation is a theorem too: the negation of the requirement on the failing input, checked by the same kernels.{" "}
-          {COUNTEREXAMPLES.kernelChecked} of {COUNTEREXAMPLES.refuted} refuted requirements over {COUNTEREXAMPLES.candidates} candidates are
-          refuted this way.
-        </li>
-        <li>
-          The Passport binds the specification, the source, the executable and the judge image by hash. <code>bin/proofforge verify</code>{" "}
-          re-runs it from a clone.
-        </li>
-      </ol>
-      <p className="trust-e2">
-        On {E2.bad} seeded bad repairs, ordinary checking (the build passes, the theorem names exist, the axioms are clean) accepted{" "}
-        <strong>{e2("ordinary").badAccepted}</strong>. ProofForge accepted <strong>{e2("proofforge").badAccepted}</strong>, and rejected{" "}
-        {e2("proofforge").goodRejected} of {E2.good} correct ones. The bad cases were written by the build team.
+      <KpiStrip items={homeKpis(WINS)} label="The ledger in figures" />
+      <div className="hw-strips">
+        <RunStrips items={homeStrips(WINS)} />
+      </div>
+      <p className="home-wins-more">
+        <Link className="btn btn-primary" href="/frontier">
+          Every comparison
+        </Link>
+        <a className="btn" href={githubFile(WINS.readme)}>
+          The ledger on GitHub
+        </a>
       </p>
-      <p className="trust-spec">
-        The specifications are measured too: changed at one site each, the reference solutions give {fmt(SPEC_STRENGTH.compiled)}{" "}
-        compiling variants, and the {SPEC_STRENGTH.specifications} locked specifications reject {fmt(SPEC_STRENGTH.rejected)} of them,{" "}
-        {fmt(SPEC_STRENGTH.kernelChecked)} with kernel-checked counterexamples. The {SPEC_STRENGTH.survivedDiffers} that pass while behaving
-        differently are listed as specification gaps (<a href={githubFile(SPEC_STRENGTH.doc)}>SPEC_STRENGTH.md</a>,{" "}
-        <a href={githubFile(`${SPEC_STRENGTH.source}/README.md`)}>results</a>).
-      </p>
-    </div>
+    </section>
   );
 }
 
@@ -547,36 +392,35 @@ function Comparison() {
   const compoundLibrary = (compound.library?.withLibrary.runs.length ?? 0) + (compound.library?.topdown?.runs.length ?? 0);
   // Tasks where every run of every arm was accepted.
   const easy = COMPARISON.filter((r) => [r.alone, ...r.harness].every((x) => x.accepted === x.runs.length) && !r.library);
+  const rows = matrixRows(WINS, FLAGSHIPS);
+  const { f3, pooled } = compoundFrontier(WINS);
   return (
     <section className="home-section" id="compare" aria-labelledby="home-compare">
       <h2 id="home-compare">Muse alone and Muse with ProofForge, on the real failures</h2>
       <p className="home-section-lead">
         Every run is Muse Spark 1.3, capped at ${RUN_CAPS.usdList} at list prices and {RUN_CAPS.seconds / 3600} hours, and judged by ProofForge
-        against the same locked specification. Muse alone replies with whole files and sees only Lean&apos;s errors and the axiom audit. With the
-        ProofForge harness it fixes behavior against the property tests first, then proves one obligation at a time with snippet checks; the
-        second harness arm adds Muse Wonder 1.0 as lemma planner. On Compound, Knight and Balancer the counts include{" "}
-        <a href={githubFile(`${LIBRARY_RUN.source}/README.md`)}>{LIBRARY_RUN.source}</a>, where the planner arm also imports the ProofForgeFin
-        library.
+        against the same locked specification. Each dot is a run, filled when it was accepted; point at a group of dots, or focus it, to read its
+        runs.
       </p>
-      <div className="ledger-wrap">
-        <table className="ledger compare">
-          <thead>
-            <tr>
-              <th scope="col">Failure</th>
-              <th scope="col">Muse alone, accepted</th>
-              <th scope="col">With the ProofForge harness, accepted</th>
-              <th scope="col">Vulnerable code, kernel-checked counterexamples</th>
-              <th scope="col">From the specification alone, accepted</th>
-            </tr>
-          </thead>
-          <tbody>
-            {COMPARISON.map((row) => (
-              <CompareRow key={row.key} row={row} f={FLAGSHIPS.find((x) => x.key === row.key) ?? null} />
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="compare-notes">
+      <details className="hm-more hm-arms">
+        <summary>How the arms differ</summary>
+        <p>
+          Muse alone replies with whole files and sees only Lean&apos;s errors and the axiom audit. With the ProofForge harness it fixes behavior
+          against the property tests first, then proves one obligation at a time with snippet checks; the second harness arm adds Muse Wonder 1.0
+          as lemma planner. On Compound, Knight and Balancer the counts include{" "}
+          <a href={githubFile(`${LIBRARY_RUN.source}/README.md`)}>{LIBRARY_RUN.source}</a>, where the planner arm also imports the ProofForgeFin
+          library, and on Compound the runs of Muse Code (Muse Spark 1.3 in Muse Code, on its own and with ProofForge) in frontier-2 and
+          frontier-3, at the same caps.
+        </p>
+      </details>
+      <CompareMatrix rows={rows} initial={{ row: rows.findIndex((r) => r.key === "compound"), col: "proofforge", group: "f3-proofforge" }} />
+      <div className="compare-notes hm-notes">
+        <p className="hm-lead-note">
+          <strong>{compoundLead(WINS)}</strong> Both verified runs prove the three sequence bounds (rewards, each account, no backdated rewards)
+          that no earlier run of either arm proved, with ProofForgeFin.Accumulator.Market. Preregistered one-sided Fisher exact p ={" "}
+          {pValue(f3.test!.p)}; pooled with frontier-2, p = {pValue(pooled.test!.p)} (
+          <a href={githubFile(COMPOUND_FRONTIER.readme)}>frontier-3</a>).
+        </p>
         <p>
           On {listWords(easy.map((r) => shortIncident(r.incident)))} both arms succeed: Muse alone and the harness were accepted in every run. On{" "}
           {listWords(COST_PER_VERIFIED.map((c) => shortIncident(c.incident)))} the arm with the Muse Wonder planner succeeds more often and at a
@@ -587,35 +431,62 @@ function Comparison() {
           ).join("; ")}
           .
         </p>
-        <p>
-          On Compound nothing succeeds: no run of any method has proved all {compound.requirements} of its requirements. Muse alone verified{" "}
-          {accepted(aloneRuns(compound))} runs,{" "}
-          {compound.harness
-            .filter((h) => h.arm !== "A2")
-            .map((h) => `the harness ${accepted(h)}`)
-            .join(", ")}
-          , the harness with the planner {accepted(plannerRuns(compound)!)} ({compoundLibrary} of them with the library) and implementation from
-          the specification {accepted(compound.implement)}. The specification is provable: the build team&apos;s proof that uses the library is VERIFIED on the deployed judge (
-          <a href={githubFile(LIBRARY.compoundLivePassportFile)}>Passport {LIBRARY.compoundLivePassport.slice(0, 8)}</a>). The two Muse-alone
-          Compound runs in baseline-flagships-1 ended early, when one model call reached its 600 s timeout, a defect that treated it as the
-          run&apos;s wall-clock stop; the {count(compound.library!.alone!.runs.length)} in library-1 ran the full {RUN_CAPS.seconds / 3600} hours.
-        </p>
-        <p>
-          The figures that need ProofForge in every row are the specification each run proves, the counterexamples that refute the vulnerable
-          code, and the check that makes an acceptance mean every requirement holds for every input.
-        </p>
-        <p>
-          The {count(failures)} failures with quoted losses total {lossTotalPhrase()}. The figures measure different things: the amounts taken
-          from Cetus and from Balancer and its forks, Hundred&apos;s reported losses, the net profit of Euler&apos;s attacker (later returned),
-          and Knight Capital&apos;s realized trading loss, which was not an exploit and is reconstructed from the SEC order.
-        </p>
-        <p className="muted">
-          Runs: <a href={githubFile("results/baseline-flagships-1/README.md")}>baseline-flagships-1</a>,{" "}
-          <a href={githubFile(`${LIBRARY_RUN.source}/README.md`)}>library-1</a>,{" "}
-          <a href={githubFile("results/library-live-1/README.md")}>library-live-1</a>,{" "}
-          <a href={githubFile("results/counterexamples-1/README.md")}>counterexamples-1</a> and each task&apos;s results README.
-        </p>
       </div>
+      <details className="hm-more">
+        <summary>The comparison as a table, the Compound runs before frontier-3 and the loss figures</summary>
+        <div className="ledger-wrap">
+          <table className="ledger compare">
+            <thead>
+              <tr>
+                <th scope="col">Failure</th>
+                <th scope="col">Muse alone, accepted</th>
+                <th scope="col">With the ProofForge harness, accepted</th>
+                <th scope="col">Vulnerable code, kernel-checked counterexamples</th>
+                <th scope="col">From the specification alone, accepted</th>
+              </tr>
+            </thead>
+            <tbody>
+              {COMPARISON.map((row) => (
+                <CompareRow key={row.key} row={row} f={FLAGSHIPS.find((x) => x.key === row.key) ?? null} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="compare-notes">
+          <p>
+            Before frontier-3, no run of any method had proved all {compound.requirements} of Compound&apos;s requirements. Muse alone verified{" "}
+            {accepted(aloneRuns(compound))} runs,{" "}
+            {compound.harness
+              .filter((h) => h.arm !== "A2")
+              .map((h) => `the harness ${accepted(h)}`)
+              .join(", ")}
+            , the harness with the planner {accepted(plannerRuns(compound)!)} ({compoundLibrary} of them with the library) and implementation from
+            the specification {accepted(compound.implement)}; in frontier-2, Muse Code verified {runsOf(compoundFrontier(WINS).f2.alone)} on its own
+            and {runsOf(compoundFrontier(WINS).f2.proofforge)} with ProofForge. The specification is provable: the build team&apos;s proof that uses
+            the library is VERIFIED on the deployed judge (
+            <a href={githubFile(LIBRARY.compoundLivePassportFile)}>Passport {LIBRARY.compoundLivePassport.slice(0, 8)}</a>). The two Muse-alone
+            Compound runs in baseline-flagships-1 ended early, when one model call reached its 600 s timeout, a defect that treated it as the
+            run&apos;s wall-clock stop; the {count(compound.library!.alone!.runs.length)} in library-1 ran the full {RUN_CAPS.seconds / 3600} hours.
+          </p>
+          <p>
+            The figures that need ProofForge in every row are the specification each run proves, the counterexamples that refute the vulnerable
+            code, and the check that makes an acceptance mean every requirement holds for every input.
+          </p>
+          <p>
+            The {count(failures)} failures with quoted losses total {lossTotalPhrase()}. The figures measure different things: the amounts taken
+            from Cetus and from Balancer and its forks, Hundred&apos;s reported losses, the net profit of Euler&apos;s attacker (later returned),
+            and Knight Capital&apos;s realized trading loss, which was not an exploit and is reconstructed from the SEC order.
+          </p>
+          <p className="muted">
+            Runs: <a href={githubFile("results/baseline-flagships-1/README.md")}>baseline-flagships-1</a>,{" "}
+            <a href={githubFile(`${LIBRARY_RUN.source}/README.md`)}>library-1</a>,{" "}
+            <a href={githubFile("results/library-live-1/README.md")}>library-live-1</a>,{" "}
+            <a href={githubFile("results/counterexamples-1/README.md")}>counterexamples-1</a>,{" "}
+            <a href={githubFile(COMPOUND_FRONTIER.earlier)}>frontier-2</a>, <a href={githubFile(COMPOUND_FRONTIER.readme)}>frontier-3</a> and each
+            task&apos;s results README.
+          </p>
+        </div>
+      </details>
     </section>
   );
 }
@@ -627,6 +498,7 @@ function CompareRow({ row, f }: { row: ComparisonRow; f: Flagship | null }) {
   const planner = plannerRuns(row);
   const arms = [...row.harness.filter((h) => h.arm !== "A2"), ...(planner ? [planner] : [])];
   const withLibrary = row.library ? row.library.withLibrary.runs.length + (row.library.topdown?.runs.length ?? 0) : 0;
+  const mc = row.key === "compound" ? compoundFrontier(WINS) : null;
   return (
     <tr>
       <td className="ledger-incident">
@@ -642,10 +514,25 @@ function CompareRow({ row, f }: { row: ComparisonRow; f: Flagship | null }) {
         <span className="ledger-sub">{f ? `${capital(f.loss.amount)} ${f.loss.short}` : "COMP rewards credited but never emitted"}</span>
       </td>
       <td className="compare-cell" data-label="Muse alone, accepted" data-zero={alone.accepted === 0 || undefined}>
+        {mc ? (
+          <span className="compare-arm">
+            <strong>{runsOf(mc.pooled.alone)}</strong> Muse Code on its own, frontier-2 and frontier-3
+          </span>
+        ) : null}
         <strong>{accepted(alone)}</strong>
         <span className="ledger-sub">runs{row.library?.alone ? `, ${row.library.alone.runs.length} of them in library-1` : ""}</span>
       </td>
       <td className="compare-cell" data-label="With the ProofForge harness, accepted">
+        {mc ? (
+          <>
+            <span className="compare-arm">
+              <strong>{runsOf(mc.f3.proofforge)}</strong> Muse Code with ProofForge, frontier-3
+            </span>
+            <span className="compare-arm" data-zero={mc.f2.proofforge.verified === 0 || undefined}>
+              <strong>{runsOf(mc.f2.proofforge)}</strong> Muse Code with ProofForge, frontier-2
+            </span>
+          </>
+        ) : null}
         {arms.map((h) => (
           <span key={h.arm} className="compare-arm" data-zero={h.accepted === 0 || undefined}>
             <strong>{accepted(h)}</strong> {armName[h.arm]}
@@ -668,11 +555,47 @@ function CompareRow({ row, f }: { row: ComparisonRow; f: Flagship | null }) {
   );
 }
 
+/** One row of dots, filled for the completed ones. */
+function DotRow({ label, on, n, note }: { label: string; on: number; n: number; note?: string }) {
+  return (
+    <div className="hm-dotrow" role="img" aria-label={`${label}: ${on} of ${n}${note ? `, ${note}` : ""}`}>
+      <span className="hm-dotrow-l">{label}</span>
+      <span className="hm-dots" aria-hidden="true">
+        {Array.from({ length: n }, (_, i) => (
+          <span key={i} className={i < on ? "hm-dot hm-dot-on" : "hm-dot"} />
+        ))}
+      </span>
+      <span className="hm-dotrow-n">
+        <strong>{on}</strong> of {n}
+      </span>
+    </div>
+  );
+}
+
+/** One run's requirements: filled squares for the ones it proved. */
+function ReqRow({ label, proved, of, verified }: { label: string; proved: number; of: number; verified: boolean }) {
+  return (
+    <div className="hm-dotrow" role="img" aria-label={`${label}: ${proved} of ${of} requirements proved${verified ? ", VERIFIED" : ""}`}>
+      <span className="hm-dotrow-l">{label}</span>
+      <span className="hm-dots" aria-hidden="true">
+        {Array.from({ length: of }, (_, i) => (
+          <span key={i} className={i < proved ? "hm-sq hm-sq-on" : "hm-sq"} />
+        ))}
+      </span>
+      <span className="hm-dotrow-n">
+        <strong>{proved}</strong> of {of}
+        {verified ? <span className="hm-verified"> VERIFIED</span> : null}
+      </span>
+    </div>
+  );
+}
+
 function Lift() {
   const [open, glimmer] = OPEN_WEIGHTS;
   const compoundLib = COMPARISON.find((r) => r.key === "compound")!.library!;
   const compoundLibraryRuns = compoundLib.withLibrary.runs.length + (compoundLib.topdown?.runs.length ?? 0);
   const pct = (x: number) => `${x >= 0 ? "+" : ""}${Math.round(x * 100)}`;
+  const { f3 } = compoundFrontier(WINS);
   return (
     <section className="home-section" id="lift" aria-labelledby="home-lift">
       <h2 id="home-lift">Where the harness and the planner change the outcome</h2>
@@ -690,14 +613,21 @@ function Lift() {
               </strong>{" "}
               of {open.a0.n} test tasks completed, alone and with the harness
             </p>
-            <p className="small">
-              With the harness every final executable passed the property tests ({open.binaryPass.a1} of {open.a1.n}); alone, {open.binaryPass.a0}{" "}
-              built. Difference {pct((open.a1.completed - open.a0.completed) / open.paired)} points, 95% interval {pct(open.ci95[0])} to{" "}
-              {pct(open.ci95[1])}, McNemar p = {open.mcnemarP.toFixed(2)}.
-            </p>
-            <p className="small muted">
-              {open.serving}. <a href={githubFile(open.source.replace("e1.json", "e1.md"))}>Report</a>
-            </p>
+            <div className="hm-dotrows">
+              <DotRow label="Alone" on={open.a0.completed} n={open.a0.n} note="test tasks completed" />
+              <DotRow label="With the harness" on={open.a1.completed} n={open.a1.n} note="test tasks completed" />
+            </div>
+            <details className="hm-more">
+              <summary>Tests and serving</summary>
+              <p className="small">
+                With the harness every final executable passed the property tests ({open.binaryPass.a1} of {open.a1.n}); alone, {open.binaryPass.a0}{" "}
+                built. Difference {pct((open.a1.completed - open.a0.completed) / open.paired)} points, 95% interval {pct(open.ci95[0])} to{" "}
+                {pct(open.ci95[1])}, McNemar p = {open.mcnemarP.toFixed(2)}.
+              </p>
+              <p className="small muted">
+                {open.serving}. <a href={githubFile(open.source.replace("e1.json", "e1.md"))}>Report</a>
+              </p>
+            </details>
           </article>
         ) : null}
         {glimmer ? (
@@ -713,40 +643,63 @@ function Lift() {
               </strong>{" "}
               with the harness
             </p>
-            <p className="small">
-              Incomplete: the GPU host paused the workspace after 31 of 60 runs were scored, and {glimmer.outage?.runs.length} harness runs it
-              ended are excluded ({glimmer.a1.completed} of {glimmer.a1.n} counting them). Alone, no version compiled; with the harness{" "}
-              {glimmer.binaryPass.a1} final executables passed the property tests. McNemar p = {glimmer.mcnemarP.toFixed(2)} on{" "}
-              {glimmer.paired} paired tasks.
-            </p>
-            <p className="small muted">
-              {capital(glimmer.serving)}. <a href={githubFile(glimmer.source.replace("e1.json", "README.md"))}>Report</a>
-            </p>
+            <div className="hm-dotrows">
+              <DotRow label="Alone" on={glimmer.a0.completed} n={glimmer.a0.n} note="test tasks completed" />
+              <DotRow label="With the harness" on={glimmer.outage?.a1Completed ?? glimmer.a1.completed} n={glimmer.outage?.a1N ?? glimmer.a1.n} note="test tasks completed, runs ended by the outage excluded" />
+            </div>
+            <details className="hm-more">
+              <summary>Tests, the outage and serving</summary>
+              <p className="small">
+                Incomplete: the GPU host paused the workspace after 31 of 60 runs were scored, and {glimmer.outage?.runs.length} harness runs it
+                ended are excluded ({glimmer.a1.completed} of {glimmer.a1.n} counting them). Alone, no version compiled; with the harness{" "}
+                {glimmer.binaryPass.a1} final executables passed the property tests. McNemar p = {glimmer.mcnemarP.toFixed(2)} on {glimmer.paired}{" "}
+                paired tasks.
+              </p>
+              <p className="small muted">
+                {capital(glimmer.serving)}. <a href={githubFile(glimmer.source.replace("e1.json", "README.md"))}>Report</a>
+              </p>
+            </details>
           </article>
         ) : null}
         <article className="card lift-card">
           <h3>Muse Wonder as planner</h3>
-          <ul className="lift-list">
-            {PLANNER.map((p) => (
-              <li key={p.task}>
-                <strong>{p.incident}</strong>: the harness alone proved {p.a1.join(" and ")} of {p.requirements} requirements in its two runs; with
-                the planner, {p.a2.join(" and ")}
-                {p.a2Accepted ? `, and the second run was VERIFIED` : `; neither was accepted`}.
-              </li>
-            ))}
-          </ul>
-          <p className="small">
-            With the ProofForgeFin library ({LIBRARY_RUN.source}), the planner arm verified{" "}
-            {COMPARISON.filter((r) => r.library && r.library.withLibrary.accepted > 0)
-              .map((r) => `${shortIncident(r.incident)} in ${r.library!.withLibrary.accepted} of ${r.library!.withLibrary.runs.length}`)
-              .join(" and ")}{" "}
-            further runs, and Compound in none of {compoundLibraryRuns}.
-          </p>
-          <p className="small muted">
-            Muse alone was also accepted on Knight in one of two runs. <a href={githubFile("results/compound-1/README.md")}>Compound runs</a>,{" "}
-            <a href={githubFile("results/knight-1/README.md")}>Knight runs</a>,{" "}
-            <a href={githubFile(`${LIBRARY_RUN.source}/README.md`)}>library-1</a>
-          </p>
+          <p className="lift-figure">Requirements proved per run, harness alone (A1) and with the planner (A2)</p>
+          {PLANNER.map((p) => (
+            <div key={p.task} className="hm-dotrows">
+              <p className="hm-dotrows-h">{p.incident}</p>
+              {p.a1.map((n, i) => (
+                <ReqRow key={`a1-${i}`} label={`A1, run ${i + 1}`} proved={n} of={p.requirements} verified={false} />
+              ))}
+              {p.a2.map((n, i) => (
+                <ReqRow key={`a2-${i}`} label={`A2, run ${i + 1}`} proved={n} of={p.requirements} verified={p.a2Accepted > 0 && i === p.a2.length - 1 && n === p.requirements} />
+              ))}
+            </div>
+          ))}
+          <details className="hm-more">
+            <summary>The runs, with the library and since</summary>
+            <ul className="lift-list">
+              {PLANNER.map((p) => (
+                <li key={p.task}>
+                  <strong>{p.incident}</strong>: the harness alone proved {p.a1.join(" and ")} of {p.requirements} requirements in its two runs; with
+                  the planner, {p.a2.join(" and ")}
+                  {p.a2Accepted ? `, and the second run was VERIFIED` : `; neither was accepted`}.
+                </li>
+              ))}
+            </ul>
+            <p className="small">
+              With the ProofForgeFin library ({LIBRARY_RUN.source}), the planner arm verified{" "}
+              {COMPARISON.filter((r) => r.library && r.library.withLibrary.accepted > 0)
+                .map((r) => `${shortIncident(r.incident)} in ${r.library!.withLibrary.accepted} of ${r.library!.withLibrary.runs.length}`)
+                .join(" and ")}{" "}
+              further runs, and Compound in none of {compoundLibraryRuns}. Compound was then verified by Muse Code with ProofForge in frontier-3,{" "}
+              {runsOf(f3.proofforge)} runs.
+            </p>
+            <p className="small muted">
+              Muse alone was also accepted on Knight in one of two runs. <a href={githubFile("results/compound-1/README.md")}>Compound runs</a>,{" "}
+              <a href={githubFile("results/knight-1/README.md")}>Knight runs</a>,{" "}
+              <a href={githubFile(`${LIBRARY_RUN.source}/README.md`)}>library-1</a>, <a href={githubFile(COMPOUND_FRONTIER.readme)}>frontier-3</a>
+            </p>
+          </details>
         </article>
       </div>
     </section>
@@ -754,39 +707,67 @@ function Lift() {
 }
 
 function Library() {
+  const L = LIBRARY_COUNTS;
   const compound = COMPARISON.find((r) => r.key === "compound")!.library!;
   const libRuns = compound.withLibrary.runs.length + (compound.topdown?.runs.length ?? 0);
   const verifiedEvery = COMPARISON.filter((r) => r.library && r.library.withLibrary.accepted === r.library.withLibrary.runs.length).map((r) =>
     shortIncident(r.incident),
   );
+  const { f3 } = compoundFrontier(WINS);
   return (
-    <section className="home-section" id="library" aria-labelledby="home-library">
+    <section className="home-section hm-lib" id="library" aria-labelledby="home-library">
       <h2 id="home-library">ProofForgeFin, the proved library behind the judge</h2>
-      <div className="library card">
-        <p>
-          {fmt(LIBRARY.theorems)} theorems and {fmt(LIBRARY.definitions)} definitions in {LIBRARY.files} Lean files: floor and ceiling division,
-          fixed point at any scale, share accounting, runs of operations with invariants over every reachable state, and conservation over
-          accounts, with no dependency beyond Lean&apos;s core library. All {fmt(LIBRARY.constantsChecked)} constants of the library and its
-          demonstrations are accepted by the six kernels, and leanchecker replays all {LIBRARY.modulesReplayed} modules. Candidates may import
-          it; the judge vendors the exact version and every Passport records it.
-        </p>
-        <p>
-          A Compound candidate whose three sequence bounds come from the library is VERIFIED, eight of eight requirements, on the deployed
-          judge (Passport{" "}
-          <Link className="hash" href={`/passport/${LIBRARY.compoundLivePassport}`}>
-            {LIBRARY.compoundLivePassport.slice(0, 16)}
-          </Link>
-          , <a href={githubFile(LIBRARY.compoundLivePassportFile)}>committed</a>). The build team wrote it from the reference solution (
-          <a href={githubFile(LIBRARY.compoundFixture)}>compound_lib.lean</a>). No Muse run has proved Compound yet: in{" "}
-          <a href={githubFile(`${LIBRARY_RUN.source}/README.md`)}>{LIBRARY_RUN.source}</a>, {count(libRuns)} runs of Muse with ProofForge, the planner and
-          the library proved at most {LIBRARY_COMPOUND.bestProved} of the eight requirements and{" "}
-          {LIBRARY_COMPOUND.runsProvingABound === 0 ? "none" : LIBRARY_COMPOUND.runsProvingABound} of the three sequence bounds. With the
-          library, the planner arm verified {listWords(verifiedEvery)} in every run.
-        </p>
-        <p className="small muted" style={{ margin: 0 }}>
-          <a href={githubFile("lib/README.md")}>lib/README.md</a> lists every module, the axiom audit and the kernel check.
-        </p>
-      </div>
+      <p className="home-section-lead">
+        Floor and ceiling division, fixed point at any scale, share accounting, runs of operations with invariants over every reachable state,
+        and conservation over accounts, with no dependency beyond Lean&apos;s core library. With it, Muse Code with ProofForge verified Compound
+        in {runsOf(f3.proofforge)} frontier-3 runs.
+      </p>
+      <KpiStrip
+        label="ProofForgeFin in figures"
+        items={[
+          { value: fmt(L.theorems), label: "theorems" },
+          { value: fmt(L.definitions), label: "definitions" },
+          { value: String(L.files), label: "Lean files" },
+          { value: fmt(L.latestFullRun.safeConstants), label: "constants of the library and its demonstrations, accepted by all six kernels" },
+          { value: fmt(L.demoTheorems), label: `theorems in ${L.demoFiles} files of demonstrations` },
+        ]}
+      />
+      <details className="hm-more">
+        <summary>What the library holds, how it is checked, and Compound with it</summary>
+        <div className="library">
+          <p>
+            {fmt(L.theorems)} theorems and {fmt(L.definitions)} definitions in {L.files} Lean files: floor and ceiling division, fixed point at
+            any scale, share accounting, runs of operations with invariants over every reachable state, and conservation over accounts, with no
+            dependency beyond Lean&apos;s core library. All {fmt(L.latestFullRun.safeConstants)} safe constants of the library and its
+            demonstrations are accepted by the six kernels, with leanchecker exiting 0, in the latest full run{" "}
+            <a href={githubFile(L.latestFullRun.source)}>lib/README.md</a> reports (with the additions of library-compound-gaps-1). The last full
+            run committed with its record checked {fmt(L.committedFullRun.safeConstants)}, and leanchecker replayed all{" "}
+            {L.committedFullRun.modulesReplayed} modules (<a href={githubFile(L.committedFullRun.file)}>{L.committedFullRun.file}</a>); the{" "}
+            {fmt(L.latestModuleRun.constants)} constants of {listWords(L.latestModuleRun.modules)} with the additions were checked on their own (
+            <a href={githubFile(L.latestModuleRun.file)}>{L.latestModuleRun.file}</a>). Candidates may import it; the judge vendors the exact
+            version and every Passport records it.
+          </p>
+          <p>
+            In <a href={githubFile(COMPOUND_FRONTIER.readme)}>frontier-3</a>, every ProofForge run imported ProofForgeFin.Accumulator.Market, and
+            Muse Code with ProofForge verified Compound in {runsOf(f3.proofforge)} runs; both verified runs prove the three sequence bounds with it.{" "}
+            <a href={githubFile(COMPOUND_FRONTIER.gaps)}>library-compound-gaps-1</a> reads the runs that did not verify and adds the list glue
+            they wrote to the library. A Compound candidate whose three sequence bounds come from the library is VERIFIED, eight of eight
+            requirements, on the deployed judge (Passport{" "}
+            <Link className="hash" href={`/passport/${LIBRARY.compoundLivePassport}`}>
+              {LIBRARY.compoundLivePassport.slice(0, 16)}
+            </Link>
+            , <a href={githubFile(LIBRARY.compoundLivePassportFile)}>committed</a>). The build team wrote it from the reference solution (
+            <a href={githubFile(LIBRARY.compoundFixture)}>compound_lib.lean</a>). Before frontier-3, in{" "}
+            <a href={githubFile(`${LIBRARY_RUN.source}/README.md`)}>{LIBRARY_RUN.source}</a>, {count(libRuns)} runs of Muse with ProofForge, the
+            planner and the library proved at most {LIBRARY_COMPOUND.bestProved} of the eight requirements and{" "}
+            {LIBRARY_COMPOUND.runsProvingABound === 0 ? "none" : LIBRARY_COMPOUND.runsProvingABound} of the three sequence bounds. With the
+            library, the planner arm verified {listWords(verifiedEvery)} in every run.
+          </p>
+          <p className="small muted" style={{ margin: 0 }}>
+            <a href={githubFile("lib/README.md")}>lib/README.md</a> lists every module, the axiom audit and the kernel check.
+          </p>
+        </div>
+      </details>
     </section>
   );
 }
@@ -795,44 +776,236 @@ function minutesBetween(a: string, b: string) {
   return (Date.parse(b) - Date.parse(a)) / 60000;
 }
 
-function FeaturedCase({ f }: { f: Flagship }) {
+function longDate(iso: string) {
+  return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+/** The incidents, featured first, as one viewer: a tab per incident with its loss and verdict trail, a panel per incident. */
+function Cases() {
+  const cases = [FEATURED, ...FLAGSHIPS.filter((f) => f !== FEATURED)];
+  return (
+    <section className="home-section" id="cases" aria-labelledby="home-cases">
+      <h2 id="home-cases">{listWords(cases.map((f) => f.incident))}, step by step</h2>
+      <p className="home-section-lead">
+        For each incident, the reported loss, every version of the code against the same locked requirements (one square per requirement:
+        red when refuted, green when proved, filled in the text colour when an earlier attempt proved it without reaching a Passport, outlined when not proved) and the real code run against them. The attack itself is under each case.
+      </p>
+      <CaseViewer keys={cases.map((f) => f.key)} tabs={cases.map((f) => <CaseTab key={f.key} f={f} />)} panels={cases.map((f) => <CasePanel key={f.key} f={f} />)} />
+    </section>
+  );
+}
+
+function CaseTab({ f }: { f: Flagship }) {
+  const l = lossParts(f.loss.amount);
+  return (
+    <>
+      <span className="cv-tab-name">
+        {f.incident} <span className="cv-tab-year">{f.year}</span>
+      </span>{" "}
+      <span className="cv-tab-loss">
+        {l.qualifier ? <span className="cv-tab-q">{l.qualifier} </span> : null}
+        {l.figure}
+      </span>{" "}
+      <span className="cv-tab-trail" aria-hidden="true">
+        {caseTrail(f).map((s) => (
+          <span key={s.key} className="cv-v" data-v={s.verdict} />
+        ))}
+      </span>
+    </>
+  );
+}
+
+/** A requirement per square, refuted first, then proved, then not proved; the words carry the counts. */
+function ReqMarks({ s }: { s: TrailStep }) {
+  const session = s.provedInSession ?? 0;
+  const marks = [
+    ...Array<string>(s.counts.refuted).fill("REFUTED"),
+    ...Array<string>(s.counts.verified).fill("VERIFIED"),
+    ...Array<string>(Math.min(session, s.counts.unresolved)).fill("SESSION"),
+    ...Array<string>(s.counts.unresolved - Math.min(session, s.counts.unresolved)).fill("UNRESOLVED"),
+  ];
+  const words = [
+    s.counts.refuted ? `${s.counts.refuted} refuted` : null,
+    s.counts.verified ? `${s.counts.verified} proved` : null,
+    session ? `${session} proved in its session without a Passport` : null,
+    s.counts.unresolved - session > 0 ? `${s.counts.unresolved - session} not proved` : null,
+  ].filter(Boolean);
+  return (
+    <span className="tr-marks" role="img" aria-label={`${s.total} requirements: ${words.join(", ")}`}>
+      <span className="tr-squares" aria-hidden="true">
+        {marks.map((m, i) => (
+          <span key={i} className="tr-sq" data-s={m} />
+        ))}
+      </span>
+      <span className="tr-count">
+        {s.verdict === "VERIFIED"
+          ? `${s.counts.verified} of ${s.total} proved`
+          : s.verdict === "REFUTED"
+            ? `${s.counts.refuted} of ${s.total} refuted`
+            : `${session} of ${s.total} proved in its session, no Passport`}
+      </span>
+    </span>
+  );
+}
+
+function CasePanel({ f }: { f: Flagship }) {
+  const featured = f === FEATURED;
+  const trail = caseTrail(f);
   const merged = f.timeline.filter((v) => v.merged);
   const gap = merged.length >= 2 ? Math.round(minutesBetween(merged[0]!.merged!, merged[merged.length - 1]!.merged!) / 10) * 10 : null;
   return (
-    <section className="home-section featured" id={`case-${f.key}`} aria-labelledby="featured-title">
-      <h2 id="featured-title">
-        {f.incident}, {f.year}: four versions of one function, one locked statement
-      </h2>
-      <p className="home-section-lead">
-        On {longDate(f.date)} an attacker drained the {f.system}: {f.loss.amount} {f.loss.basis}. {f.bug} {f.incident} merged a hotfix
-        that day and a final fix {gap ? `about ${gap} minutes later` : "later"}. ProofForge checked all three, and an independent Muse
-        Spark repair of the original, against the same locked Lean statement.
-      </p>
-      <ol className="timeline">
+    <article className="cp" aria-labelledby={`cp-title-${f.key}`}>
+      <header className="cp-head">
+        <div className="cp-loss">
+          <p className="cp-loss-fig">{capital(f.loss.amount)}</p>
+          <p className="cp-loss-basis">
+            {f.loss.basis}.{" "}
+            {f.loss.citations.map((c, i) => (
+              <span key={c.url}>
+                {i ? ", " : null}
+                <a href={c.url}>{c.label}</a>
+              </span>
+            ))}
+          </p>
+        </div>
+        <div className="cp-what">
+          <h3 id={`cp-title-${f.key}`}>
+            {f.incident}, {f.year}
+            {featured ? ": four versions of one function, one locked statement" : ""}
+          </h3>
+          {featured ? (
+            <p className="cp-bug">
+              On {longDate(f.date)} an attacker drained the {f.system}: {f.loss.amount} {f.loss.basis}. {f.bug} {f.incident} merged a hotfix that
+              day and a final fix {gap ? `about ${gap} minutes later` : "later"}. ProofForge checked all three, and an independent Muse Spark repair
+              of the original, against the same locked Lean statement: four versions of its overflow check, one locked specification of{" "}
+              {count(requirementCount(f.repair.passport))} requirements.
+            </p>
+          ) : (
+            <p className="cp-bug">{f.bug}</p>
+          )}
+          {f.context ? <p className="cp-context">{f.context}</p> : null}
+        </div>
+      </header>
+
+      <ol className="tr" aria-label={`${f.incident}: the versions of the code and their verdicts`}>
+        {trail.map((s, i) => {
+          const v = f.timeline.find((x) => x.key === s.key);
+          return (
+            <li key={s.key} className="tr-step" data-verdict={s.verdict} data-author={v ? (v.commit ? "upstream" : "muse") : s.key === "repair" ? "muse" : undefined}>
+              {i > 0 ? <span className="tr-arrow" aria-hidden="true" /> : null}
+              <p className="tr-title">
+                {s.title} <Status value={s.verdict} />
+              </p>
+              <p className="tr-detail">{s.detail}</p>
+              {v ? <code className="tr-code">{v.code.join("; ")}</code> : null}
+              <ReqMarks s={s} />
+              {v ? <p className="tr-short">{v.short}</p> : null}
+              {s.passport ? (
+                <p className="tr-foot">
+                  <PassportLink p={s.passport} />
+                </p>
+              ) : null}
+            </li>
+          );
+        })}
+      </ol>
+
+      {featured ? <FeaturedDetail f={f} /> : <CaseVerdicts f={f} />}
+
+      <div className="cp-grid">
+        <RealCode f={f} />
+        {featured ? <RepairFacts f={f} /> : <Attack f={f} />}
+      </div>
+    </article>
+  );
+}
+
+/** What the kernel checked on each version of the featured incident. */
+function FeaturedDetail({ f }: { f: Flagship }) {
+  return (
+    <details className="hm-more">
+      <summary>What the check shows on each version, with the commits and Passports</summary>
+      <ul className="cp-findings">
         {f.timeline.map((v) => (
-          <li key={v.key} className="tl" data-verdict={v.verdict} data-author={v.commit ? "upstream" : "muse"}>
-            <div className="tl-head">
-              <h3>{v.title}</h3>
-            </div>
-            <p className="tl-detail">{v.detail}</p>
-            <pre className="tl-code">
-              <code>{v.code.join("\n")}</code>
-            </pre>
-            <p className="tl-finding">
-              <Status value={v.verdict} /> {v.finding}
-            </p>
-            <p className="tl-foot">
-              <PassportLink p={v.passport} />
-              <span className="hash muted">{v.commit ? `commit ${v.commit.slice(0, 7)}` : `run ${f.repair.run.split("/").pop()}`}</span>
-            </p>
+          <li key={v.key}>
+            <strong>{v.title}</strong> ({v.detail}): <Status value={v.verdict} /> {v.finding}
+            {v.key === "pr6" ? (
+              <>
+                {" "}
+                The counterexample is a Lean theorem, <code>{CETUS_HOTFIX.statement}</code>, accepted by all {CETUS_HOTFIX.kernels} kernels.
+              </>
+            ) : null}{" "}
+            <PassportLink p={v.passport} /> <span className="hash muted">{v.commit ? `commit ${v.commit.slice(0, 7)}` : `run ${f.repair.run.split("/").pop()}`}</span>
           </li>
         ))}
-      </ol>
-      <div className="featured-grid">
-        <RealCode f={f} />
-        <RepairFacts f={f} />
+      </ul>
+      <p className="small">
+        <PassportLink p={pr6.passport} label="Hotfix Passport" /> <PassportLink p={f.repair.passport} label="Muse repair Passport" />
+      </p>
+    </details>
+  );
+}
+
+/** The refutation of the vulnerable code and the verified repair, side by side. */
+function CaseVerdicts({ f }: { f: Flagship }) {
+  return (
+    <div className="cp-verdicts">
+      <div className="verdict-box" data-verdict="REFUTED">
+        <div className="verdict-head">
+          <Status value="REFUTED" />
+          <span>{f.vulnerable.label}</span>
+        </div>
+        <p>{f.outcome}</p>
+        <p className="small">
+          <a href={githubFile(f.vulnerable.witness)}>Kernel-checked counterexample</a>
+          {f.vulnerable.passport ? (
+            <>
+              {" "}
+              and <PassportLink p={f.vulnerable.passport} />
+            </>
+          ) : null}
+        </p>
       </div>
-    </section>
+      <div className="verdict-box" data-verdict="VERIFIED">
+        <div className="verdict-head">
+          <Seal size={28} />
+          <Status value="VERIFIED" />
+          <span>
+            {f.repair.model} repair{f.repair.planner ? `, planned by ${f.repair.planner}` : ""}
+          </span>
+        </div>
+        <p>
+          The repair {f.repair.change}. It proves all {requirementCount(f.repair.passport)} requirements, among them that{" "}
+          {lowerFirst(f.property)} Attempt {f.repair.attempt}, {fmt(f.repair.seconds)} s, {usd(f.repair.usdList)} at list prices.
+        </p>
+        <p className="small">
+          <PassportLink p={f.repair.passport} />
+        </p>
+      </div>
+      {f.unresolved.length ? <Unresolved f={f} /> : null}
+    </div>
+  );
+}
+
+function Attack({ f }: { f: Flagship }) {
+  if (!f.attack.length) return null;
+  return (
+    <div className="card cp-attack">
+      <h4>The attack, with the state after each step</h4>
+      <details className="hm-more">
+        <summary>
+          {capital(count(f.attack.length))} steps: {f.attack[0]!.text}
+        </summary>
+        <ol className="attack">
+          {f.attack.map((s, i) => (
+            <li key={i}>
+              <span>{s.text}</span>
+              {s.after ? <span className="attack-after">{s.after}</span> : null}
+            </li>
+          ))}
+        </ol>
+      </details>
+    </div>
   );
 }
 
@@ -932,70 +1105,6 @@ function RealBar({ row, total, unit }: { row: RealCodeRow; total: number; unit: 
   );
 }
 
-function CaseCard({ f }: { f: Flagship }) {
-  return (
-    <article className="card case" id={`case-${f.key}`}>
-      <h3>
-        {f.incident}, {f.year}
-      </h3>
-      <p className="case-loss">
-        <strong>{capital(f.loss.amount)}</strong> {f.loss.basis}.{" "}
-        {f.loss.citations.map((c, i) => (
-          <span key={c.url}>
-            {i ? ", " : null}
-            <a href={c.url}>{c.label}</a>
-          </span>
-        ))}
-      </p>
-      <p className="case-bug">{f.bug}</p>
-      {f.context ? <p className="case-context small muted">{f.context}</p> : null}
-      <h4>The attack, with the state after each step</h4>
-      <ol className="attack">
-        {f.attack.map((s, i) => (
-          <li key={i}>
-            <span>{s.text}</span>
-            {s.after ? <span className="attack-after">{s.after}</span> : null}
-          </li>
-        ))}
-      </ol>
-      <div className="verdict-box" data-verdict="REFUTED">
-        <div className="verdict-head">
-          <Status value="REFUTED" />
-          <span>{f.vulnerable.label}</span>
-        </div>
-        <p>{f.outcome}</p>
-        <p className="small">
-          <a href={githubFile(f.vulnerable.witness)}>Kernel-checked counterexample</a>
-          {f.vulnerable.passport ? (
-            <>
-              {" "}
-              and <PassportLink p={f.vulnerable.passport} />
-            </>
-          ) : null}
-        </p>
-      </div>
-      <div className="verdict-box" data-verdict="VERIFIED">
-        <div className="verdict-head">
-          <Seal size={28} />
-          <Status value="VERIFIED" />
-          <span>
-            {f.repair.model} repair{f.repair.planner ? `, planned by ${f.repair.planner}` : ""}
-          </span>
-        </div>
-        <p>
-          The repair {f.repair.change}. It proves all {requirementCount(f.repair.passport)} requirements, among them that{" "}
-          {lowerFirst(f.property)} Attempt {f.repair.attempt}, {fmt(f.repair.seconds)} s, {usd(f.repair.usdList)} at list prices.
-        </p>
-        <p className="small">
-          <PassportLink p={f.repair.passport} />
-        </p>
-      </div>
-      {f.unresolved.length ? <Unresolved f={f} /> : null}
-      <RealCode f={f} />
-    </article>
-  );
-}
-
 function Unresolved({ f }: { f: Flagship }) {
   const total = requirementCount(f.repair.passport);
   return (
@@ -1021,56 +1130,111 @@ function Unresolved({ f }: { f: Flagship }) {
   );
 }
 
-function Claims() {
+/** What VERIFIED takes, the seeded attacks it stops, and what is proved and what is not. */
+function Trust() {
+  const e2 = (key: string) => E2.arms.find((a) => a.key === key)!;
+  const catches = headlines(WINS).find((h) => h.key === "catches")!;
   const reconstruction = FLAGSHIPS.map((f) => f.reconstruction).filter((x): x is string => !!x);
   return (
-    <section className="home-section" id="claims" aria-labelledby="home-claims">
-      <h2 id="home-claims">What is proved, and what is not</h2>
-      <div className="claims-grid">
-        <div className="card claims-col">
-          <h3>Proved</h3>
-          <ul>
-            <li>
-              Each requirement is a Lean 4 statement about the Lean port of the vulnerable logic, locked by hash. A VERIFIED requirement
-              holds for every input, not a sample.
-            </li>
-            <li>
-              A VERIFIED status comes only from ProofForge&apos;s own check: <code>lake comparator --paranoid</code> with six kernels in a
-              fresh sandbox, leanchecker, an axiom audit, and property tests on the executable rebuilt from the same source.
-            </li>
-            <li>Each REFUTED port has a counterexample checked by the Lean kernel.</li>
-          </ul>
+    <section className="home-section" id="trust" aria-labelledby="trust-title">
+      <h2 id="trust-title">What ProofForge checks before it says VERIFIED</h2>
+      <p className="home-section-lead">
+        Each square is one of the {WINS.catches.badCases} seeded bad candidates of the E2 suite, filled when the check accepted it. None of the
+        three rejected any of the {WINS.catches.goodCases} good candidates.
+      </p>
+      <CatchWaffles e={WINS.catches} />
+      <details className="hm-more">
+        <summary>What was measured</summary>
+        <p>{catches.text}</p>
+        <p>{catches.note}</p>
+        <p className="win-links">
+          {catches.links.map((l) => (
+            <a key={l.path} href={githubFile(l.path)}>
+              {l.label}
+            </a>
+          ))}
+        </p>
+        <p className="trust-e2">
+          On {E2.bad} seeded bad repairs, ordinary checking (the build passes, the theorem names exist, the axioms are clean) accepted{" "}
+          <strong>{e2("ordinary").badAccepted}</strong>. ProofForge accepted <strong>{e2("proofforge").badAccepted}</strong>, and rejected{" "}
+          {e2("proofforge").goodRejected} of {E2.good} correct ones. The bad cases were written by the build team.
+        </p>
+        <div className="hm-e2">
+          <E2Card />
         </div>
-        <div className="card claims-col">
-          <h3>Not proved</h3>
-          <ul>
-            <li>The deployed Solidity and Move code is not itself proved.</li>
-            <li>
-              The Lean ports are reviewed hand translations. They are tested against the real code on the stated inputs (
-              {listWords(FLAGSHIPS.flatMap((f) => (f.realCode ? [`${fmt(f.realCode.total)} ${f.realCode.unit} for ${f.incident}`] : [])))}
-              ); the translation is not machine-checked.
-            </li>
-            <li>
-              Each port models only the logic its task README names: for example, Euler has one asset and no interest, and Hundred&apos;s
-              borrowing is not modeled.
-            </li>
-            {reconstruction.map((r) => (
-              <li key={r}>{r}</li>
-            ))}
-            <li>Loss figures are quoted from the sources each task README cites.</li>
-          </ul>
-        </div>
-      </div>
+      </details>
       <div className="card claims-steps">
         <h3>How a repair counts</h3>
         <Pipeline className="pipeline-lg" />
+        <details className="hm-more">
+          <summary>The checks in detail, and how the specifications are measured</summary>
+              <ol className="trust-list">
+                <li>The requirements are Lean 4 statements, locked by hash before any model sees the task.</li>
+                <li>
+                  Lean&apos;s Comparator checks the proof in a fresh sandbox with six independent kernels (Lean default and paranoid, lean4lean,
+                  nanoda, con-leche, con-ron); leanchecker replays it and an axiom audit rejects anything beyond <code>propext</code>,{" "}
+                  <code>Classical.choice</code> and <code>Quot.sound</code>.
+                </li>
+                <li>The executable rebuilt from the same source runs on 2,001 generated property cases.</li>
+                <li>
+                  A refutation is a theorem too: the negation of the requirement on the failing input, checked by the same kernels.{" "}
+                  {COUNTEREXAMPLES.kernelChecked} of {COUNTEREXAMPLES.refuted} refuted requirements over {COUNTEREXAMPLES.candidates} candidates are
+                  refuted this way.
+                </li>
+                <li>
+                  The Passport binds the specification, the source, the executable and the judge image by hash. <code>bin/proofforge verify</code>{" "}
+                  re-runs it from a clone.
+                </li>
+              </ol>
+              <p className="trust-spec">
+                The specifications are measured too: changed at one site each, the reference solutions give {fmt(SPEC_STRENGTH.compiled)} compiling
+                variants, and the {SPEC_STRENGTH.specifications} locked specifications reject {fmt(SPEC_STRENGTH.rejected)} of them,{" "}
+                {fmt(SPEC_STRENGTH.kernelChecked)} with kernel-checked counterexamples. The {SPEC_STRENGTH.survivedDiffers} that pass while behaving
+                differently are listed as specification gaps (<a href={githubFile(SPEC_STRENGTH.doc)}>SPEC_STRENGTH.md</a>,{" "}
+                <a href={githubFile(`${SPEC_STRENGTH.source}/README.md`)}>results</a>).
+              </p>
+        </details>
+      </div>
+      <div className="card hm-claims" id="claims">
+        <h3>What is proved, and what is not</h3>
+        <div className="hm-claims-cols">
+          <div>
+              <h4>Proved</h4>
+              <ul>
+                <li>
+                  Each requirement is a Lean 4 statement about the Lean port of the vulnerable logic, locked by hash. A VERIFIED requirement holds
+                  for every input, not a sample.
+                </li>
+                <li>
+                  A VERIFIED status comes only from ProofForge&apos;s own check: <code>lake comparator --paranoid</code> with six kernels in a fresh
+                  sandbox, leanchecker, an axiom audit, and property tests on the executable rebuilt from the same source.
+                </li>
+                <li>Each REFUTED port has a counterexample checked by the Lean kernel.</li>
+              </ul>
+          </div>
+          <div>
+              <h4>Not proved</h4>
+              <ul>
+                <li>The deployed Solidity and Move code is not itself proved.</li>
+                <li>
+                  The Lean ports are reviewed hand translations. They are tested against the real code on the stated inputs (
+                  {listWords(FLAGSHIPS.flatMap((f) => (f.realCode ? [`${fmt(f.realCode.total)} ${f.realCode.unit} for ${f.incident}`] : [])))}); the
+                  translation is not machine-checked.
+                </li>
+                <li>
+                  Each port models only the logic its task README names: for example, Euler has one asset and no interest, and Hundred&apos;s borrowing
+                  is not modeled.
+                </li>
+                {reconstruction.map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+                <li>Loss figures are quoted from the sources each task README cites.</li>
+              </ul>
+          </div>
+        </div>
       </div>
     </section>
   );
-}
-
-function longDate(iso: string) {
-  return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 }
 
 function Shares({ values, highlight }: { values: readonly number[]; highlight?: number }) {
@@ -1090,8 +1254,8 @@ function SplitExample() {
   return (
     <figure className="split-mini card" aria-labelledby="split-caption">
       <figcaption id="split-caption">
-        The smallest task: a payout splitter pays 100 cents to three recipients. The code under repair loses a cent while each share
-        looks right; Muse Spark&apos;s proved repair conserves the total.
+        The smallest task: a payout splitter pays 100 cents to three recipients. The code under repair loses a cent while each share looks
+        right; Muse Spark&apos;s proved repair conserves the total.
       </figcaption>
       <div className="split-mini-rows">
         <div className="split-values" data-outcome="bad">
@@ -1159,23 +1323,83 @@ function E1Card() {
         ))}
       </ul>
       <p className="home-card-note">
-        A repair counts when the judge accepts the final candidate and its rebuilt executable passes {fmt(E1.propertyCases)} property
-        cases. Muse Spark 1.3 produces repairs that pass the full check in every setup. The {E1.tasks * E1.arms.length}{" "}
-        runs cost ${E1.batchUsdList.toFixed(2)} at standard list prices.
+        A repair counts when the judge accepts the final candidate and its rebuilt executable passes {fmt(E1.propertyCases)} property cases.
+        Muse Spark 1.3 produces repairs that pass the full check in every setup. The {E1.tasks * E1.arms.length} runs cost $
+        {E1.batchUsdList.toFixed(2)} at standard list prices.
       </p>
     </article>
+  );
+}
+
+function Benchmark() {
+  const splits = [
+    { key: "dev", label: "development", n: BENCHMARK.splits.dev },
+    { key: "val", label: "validation", n: BENCHMARK.splits.val },
+    { key: "test", label: "test", n: BENCHMARK.splits.test },
+  ];
+  return (
+    <section className="home-section" id="benchmark" aria-labelledby="home-breadth">
+      <h2 id="home-breadth">
+        The benchmark: {BENCHMARK.tasks} repair tasks in {count(BENCHMARK.families.length)} areas
+      </h2>
+      <p className="home-section-lead">
+        Beyond the incidents, the benchmark has {BENCHMARK.splits.dev} development, {BENCHMARK.splits.val} validation and {BENCHMARK.splits.test}{" "}
+        test tasks. The test areas never appear in development or in any prompt used to build the agents. Every task has two reference
+        solutions, a buggy start candidate and seeded attacks.
+      </p>
+      <div className="hm-splits" role="img" aria-label={`${BENCHMARK.tasks} tasks: ${splits.map((s) => `${s.n} ${s.label}`).join(", ")}`}>
+        {splits.map((s) => (
+          <span key={s.key} className="hm-split" data-split={s.key} style={{ flexGrow: s.n }}>
+            <strong>{s.n}</strong> {s.label}
+          </span>
+        ))}
+      </div>
+      <ul className="families hm-families">
+        {BENCHMARK.families.map((x) => (
+          <li key={x.key}>
+            <span className="hm-tiles" aria-hidden="true">
+              {Array.from({ length: x.tasks }, (_, i) => (
+                <span key={i} className="hm-tile" />
+              ))}
+            </span>
+            <span>
+              <strong>{x.tasks}</strong> {x.label.toLowerCase()}
+            </span>
+          </li>
+        ))}
+        {IMPLEMENTS ? (
+          <li>
+            <span className="hm-tiles" aria-hidden="true">
+              {Array.from({ length: IMPLEMENTS.of }, (_, i) => (
+                <span key={i} className={i < IMPLEMENTS!.value ? "hm-tile hm-tile-on" : "hm-tile"} />
+              ))}
+            </span>
+            <span>
+              <strong>
+                {IMPLEMENTS.value} of {IMPLEMENTS.of}
+              </strong>{" "}
+              {IMPLEMENTS.label}
+            </span>
+          </li>
+        ) : null}
+      </ul>
+      <div className="home-evidence hm-bench">
+        <E1Card />
+        <SplitExample />
+      </div>
+    </section>
   );
 }
 
 function RealWorld({ projects, pending }: { projects: RwProject[]; pending: string[] }) {
   const names = [...EXPECTED_PROJECTS.map((e) => e.name), ...projects.map((p) => p.name)].filter((n, i, all) => all.indexOf(n) === i);
   return (
-    <section className="home-section" aria-labelledby="home-realworld">
+    <section className="home-section" id="released" aria-labelledby="home-realworld">
       <h2 id="home-realworld">Released bugs in {listWords(names)}</h2>
       <p className="home-section-lead">
-        These bugs shipped in released versions of open-source money code. Each release&apos;s own code, at a pinned commit, was run on
-        generated inputs and its outputs compared with a reference implementation whose requirements are proved in Lean 4. The projects&apos;
-        code was tested against the proved reference; it was not itself proved.
+        These bugs shipped in released versions of open-source money code. Each release&apos;s own code, at a pinned commit, was run on generated
+        inputs and its outputs compared with a reference implementation whose requirements are proved in Lean 4. The projects&apos; code was
+        tested against the proved reference; it was not itself proved.
       </p>
       {projects.length === 0 ? (
         <div className="notice small muted">
@@ -1183,7 +1407,7 @@ function RealWorld({ projects, pending }: { projects: RwProject[]; pending: stri
           <code>results/realworld-1/summary.json</code>.
         </div>
       ) : (
-        <div className="rw-projects">
+        <div className="rw-projects hm-rw">
           {projects.map((p) => (
             <RwCard key={p.key} p={p} />
           ))}
@@ -1248,6 +1472,7 @@ function RwCard({ p }: { p: RwProject }) {
 function RwVersionRow({ v }: { v: RwVersion }) {
   const violating = v.violating_cases ?? 0;
   const w = v.witness;
+  const pct = v.cases ? (100 * violating) / v.cases : 0;
   return (
     <li className="rw-version">
       <div className="rw-version-head">
@@ -1256,6 +1481,11 @@ function RwVersionRow({ v }: { v: RwVersion }) {
         <span className="spacer" />
         {violating > 0 ? <Status value="REFUTED" /> : v.cases ? <Status value="PASS" /> : null}
       </div>
+      {v.cases != null ? (
+        <span className="bar-track hm-rw-bar" aria-hidden="true">
+          <span className="bar-fill" data-tone="bad" style={{ width: `${Math.max(pct, violating ? 1 : 0)}%` }} />
+        </span>
+      ) : null}
       <p className="rw-count">
         {v.status === "fixed" ? "The fixed release. " : v.status === "buggy" ? "Released with the bug. " : null}
         {v.cases != null ? (
@@ -1265,7 +1495,8 @@ function RwVersionRow({ v }: { v: RwVersion }) {
         ) : null}
       </p>
       {violating > 0 && w ? (
-        <div className="rw-witness">
+        <details className="hm-more rw-witness">
+          <summary>An input it fails on</summary>
           <p className="rw-witness-input">
             Example: {describeInput(w.input)}
             {w.requirement ? (
@@ -1295,7 +1526,7 @@ function RwVersionRow({ v }: { v: RwVersion }) {
               </>
             ) : null}
           </dl>
-        </div>
+        </details>
       ) : null}
     </li>
   );
@@ -1305,4 +1536,51 @@ function shortRef(url: string): string {
   const m = /github\.com\/[^/]+\/[^/]+\/(pull|issues)\/(\d+)/.exec(url);
   if (!m) return url;
   return `${m[1] === "pull" ? "pull request" : "issue"} ${m[2]}`;
+}
+
+function Evidence() {
+  return (
+    <section className="home-section" id="evidence" aria-labelledby="home-next">
+      <h2 id="home-next">Check the evidence yourself</h2>
+      <div className="home-ctas">
+        <a className="home-cta" href={githubFile(FEATURED.repair.passport.path)}>
+          <strong>Open the {FEATURED.incident} Passport</strong>
+          <span>
+            Statuses for all {requirementCount(FEATURED.repair.passport)} requirements, hashes, kernels, axioms and the command that reproduces
+            it. sha256 <span className="hash">{FEATURED.repair.passport.sha256.slice(0, 16)}</span>
+          </span>
+        </a>
+        <Link className="home-cta" href="/forge">
+          <strong>Open the live forge session</strong>
+          <span>Replay a recorded Muse Spark repair, then watch a fresh check of its final candidate assign every status.</span>
+        </Link>
+        <Link className="home-cta" href="/results">
+          <strong>Read the results</strong>
+          <span>E1 and E2 per arm, per task family and per case, with the seeded attacks named.</span>
+        </Link>
+      </div>
+      <div className="reproduce card">
+        <h3>Reproduce a Passport</h3>
+        <p className="muted small">
+          From a clone of the repository with the pinned Lean image built (see the README). <code>verify</code> rebuilds the project, reruns
+          every check and compares each hash and status.
+        </p>
+        <pre>
+          <code>{FLAGSHIPS.map((f) => f.repair.passport.reproduce).join("\n")}</code>
+        </pre>
+        <p className="muted small" style={{ margin: 0 }}>
+          For agents: <a href="/llms.txt">llms.txt</a> and <a href="/evidence.json">evidence.json</a> list every claim, figure, Passport hash,
+          source file and command on this page.
+        </p>
+      </div>
+      <div className="hero-facts hm-origin">
+        <p>
+          Built during the {HACKATHON.event}: everything in the repository, from the judge, the Passport and the counterexample stage to the
+          real-world tasks, the ProofForgeFin library and this site, was created on or after the day of the first commit,{" "}
+          {longDay(HACKATHON.firstCommit)}; submissions close {longDay(HACKATHON.submissionsDue)} (<a href={githubFile("ORIGIN.md")}>ORIGIN.md</a>).
+        </p>
+        <p>{SCOPE}</p>
+      </div>
+    </section>
+  );
 }

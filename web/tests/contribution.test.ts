@@ -291,35 +291,7 @@ describe("the Wonder planner", () => {
 });
 
 describe("ProofForgeFin", () => {
-  function count(dir: string) {
-    const files: string[] = [];
-    const walk = (d: string) => {
-      for (const n of readdirSync(d)) {
-        const f = path.join(d, n);
-        if (statSync(f).isDirectory()) walk(f);
-        else if (n.endsWith(".lean")) files.push(f);
-      }
-    };
-    walk(path.join(ROOT, "lib", dir));
-    let theorems = 0;
-    let definitions = 0;
-    for (const f of files) {
-      const src = readFileSync(f, "utf8").replace(/\/-[\s\S]*?-\//g, "").replace(/--[^\n]*/g, "");
-      theorems += (src.match(/^\s*(?:@\[[^\]]*\]\s*)*(?:private\s+|protected\s+)*(?:theorem|lemma)\s/gm) ?? []).length;
-      definitions += (src.match(/^\s*(?:@\[[^\]]*\]\s*)*(?:private\s+|protected\s+|noncomputable\s+|partial\s+)*(?:def|abbrev)\s/gm) ?? []).length;
-    }
-    return { files: files.length, theorems, definitions };
-  }
-
-  it("declaration counts", () => {
-    expect(count("ProofForgeFin")).toEqual({ files: LIBRARY.files, theorems: LIBRARY.theorems, definitions: LIBRARY.definitions });
-    expect(count("ProofForgeFinDemo").theorems).toBe(LIBRARY.demoTheorems);
-  });
-
-  it("the kernel check and the Compound fixture", () => {
-    const readme = text("lib/README.md").replace(/\s+/g, " ");
-    expect(readme).toContain(`all ${LIBRARY.constantsChecked.toLocaleString("en-US")} safe constants`);
-    expect(readme).toContain(`accepts all ${LIBRARY.modulesReplayed} modules`);
+  it("the Compound fixture and the deployed judge's Passport", () => {
     expect(fileSha256(LIBRARY.compoundFixture)).toBe(LIBRARY.compoundFixtureSha256);
     expect(LIBRARY.compoundLivePassport).toMatch(/^[0-9a-f]{64}$/);
   });
