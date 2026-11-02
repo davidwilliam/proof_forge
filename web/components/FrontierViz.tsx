@@ -172,8 +172,11 @@ export function DimensionBars({ d }: { d: WinsData }) {
   );
 }
 
-/** The E2 attacks: one dot per seeded bad candidate, filled when the check accepted it. */
-export function CatchWaffles({ e }: { e: Catches }) {
+/**
+ * The E2 attacks: one dot per seeded bad candidate, filled when the check accepted it. Only the
+ * bad-case counts are read, so the /results page can pass figures aggregated from GET /api/results.
+ */
+export function CatchWaffles({ e }: { e: Pick<Catches, "badCases" | "badAccepted"> }) {
   const panels = [
     { label: "Ordinary checking", sub: "the build passes, the theorem names exist, the axioms are clean", n: e.badAccepted.ordinary },
     { label: "Rebuild and property tests", sub: "the executable rebuilt from the file, with the property tests", n: e.badAccepted.rebuildAndTests },
