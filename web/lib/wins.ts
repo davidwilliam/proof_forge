@@ -192,6 +192,8 @@ export const KIND_LABEL: Record<Kind, string> = {
 
 /** IDs of the headline wins, hardest real-world tasks first. */
 export const HEADLINE_IDS = {
+  oz: "frontier-2/rw-oz-sqrt",
+  ozFirst: "hard-task-1/rw-oz-sqrt",
   vyper: "vyper-replication-1/rw-vyper-sqrt+hard-task-1",
   vyperFirst: "hard-task-1/rw-vyper-sqrt",
   vyperReplication: "vyper-replication-1/rw-vyper-sqrt",
@@ -206,14 +208,19 @@ export interface Headline {
   figureAlt: string;
   text: string;
   note: string;
+  /** The first card spans the row. */
+  lead?: boolean;
   /** Repository paths: the full comparison in results/wins/README.md, then the reports. */
   links: { label: string; path: string }[];
 }
 
 const reportLinks = (paths: string[]) => paths.map((p) => ({ label: p.replace(/\/(README|e1|e2)\.md$/, "").replace(/^results\//, ""), path: p }));
 
-/** The four largest gains, each with its figures as the ledger states them. */
+/** The largest gains, each with its figures as the ledger states them; the first leads. */
 export function headlines(d: WinsData): Headline[] {
+  const oz = comparison(d, HEADLINE_IDS.oz);
+  const oz1 = comparison(d, HEADLINE_IDS.ozFirst);
+  const ozCap = oz.alone.caps[0]!;
   const v = comparison(d, HEADLINE_IDS.vyper);
   const v1 = comparison(d, HEADLINE_IDS.vyperFirst);
   const v2 = comparison(d, HEADLINE_IDS.vyperReplication);
@@ -227,6 +234,15 @@ export function headlines(d: WinsData): Headline[] {
   const bCap = b.alone.caps[0]!;
   const e = d.catches;
   return [
+    {
+      key: "oz",
+      lead: true,
+      figure: `${oz.alone.verified} → ${oz.proofforge.verified}`,
+      figureAlt: `of ${oz.proofforge.runs}`,
+      text: `OpenZeppelin Math.sqrt behind the Aerodrome first deposit, a task no measured run had verified before: ${modelName(oz.model)} in Muse Code verified ${runsOf(oz.proofforge)} runs with ProofForge, at ${usd(oz.proofforge.usdPerVerified)} per verified run, and ${runsOf(oz.alone)} on its own after spending ${usd(oz.alone.usdTotal)}.`,
+      note: `Preregistered one-sided ${oz.test!.name.replace(/^one-sided /, "")} p = ${pValue(oz.test!.p)}. ProofForgeFin now supplies the convergence of Newton's integer square root over any number of steps and the bridge from 256-bit words to natural numbers, neither in Lean's core library; both were built after the first experiment on this task, where neither arm verified (${runsOf(oz1.proofforge)} and ${runsOf(oz1.alone)}). Caps of $${ozCap.usd} and ${ozCap.seconds / 3600} hours per run, list prices.`,
+      links: [{ label: "Full comparison", path: oz.links.comparison }, ...reportLinks([...new Set([...oz.links.reports, ...oz1.links.reports])])],
+    },
     {
       key: "vyper",
       figure: `${v.alone.verified} → ${v.proofforge.verified}`,

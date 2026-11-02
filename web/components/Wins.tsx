@@ -17,7 +17,7 @@ export function WinsHeadline({ items, headingLevel = 3 }: { items: Headline[]; h
   return (
     <ul className="wins-headline" aria-label="Headline wins">
       {items.map((h) => (
-        <li key={h.key} className="card win-card">
+        <li key={h.key} className={h.lead ? "card win-card win-card-lead" : "card win-card"}>
           <H className="win-figure">
             {h.figure} <span className="win-figure-alt">{h.figureAlt}</span>
           </H>

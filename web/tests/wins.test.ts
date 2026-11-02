@@ -65,6 +65,22 @@ describe("the frontier, measured: Meta's models on their own and with ProofForge
     }
   });
 
+  it("OpenZeppelin sqrt leads: 10 of 10 with ProofForge, 0 of 10 on its own, preregistered", () => {
+    const l = lc(HEADLINE_IDS.oz);
+    expect([l.alone.verified, l.alone.runs, l.proofforge.verified, l.proofforge.runs]).toEqual([0, 10, 10, 10]);
+    expect(l.proofforge.list_usd_per_verified).toBe(1.99);
+    expect(l.test).toMatchObject({ preregistered: true, significant_at_0_05: true });
+    expect(l.test!.p).toBeCloseTo(5.413e-6, 9);
+    const first = lc(HEADLINE_IDS.ozFirst);
+    expect([first.alone.verified, first.proofforge.verified]).toEqual([0, 0]);
+    expect(headlines(WINS)[0]!.key).toBe("oz");
+    expect(H.oz!.lead).toBe(true);
+    expect([H.oz!.figure, H.oz!.figureAlt]).toEqual(["0 → 10", "of 10"]);
+    for (const s of ["10 of 10 runs with ProofForge", "0 of 10 on its own", "$1.99 per verified run", "$95.45", "Preregistered one-sided Fisher exact p = 0.0000054",
+      "a task no measured run had verified before", "Newton's integer square root", "256-bit words"])
+      expect(all(H.oz!)).toContain(s);
+  });
+
   it("Vyper CVE-2025-26622: both preregistered experiments, 10 of 15 on its own, 14 of 15 with ProofForge, 2.1x cheaper", () => {
     const l = lc(HEADLINE_IDS.vyper);
     expect([l.alone.verified, l.alone.runs, l.proofforge.verified, l.proofforge.runs]).toEqual([10, 15, 14, 15]);
