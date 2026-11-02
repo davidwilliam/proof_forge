@@ -240,39 +240,56 @@ def test_phase0_request_asks_for_the_specification_terms():
         assert label == "implement" and user.endswith(repair.SPEC_SHAPED), user[-300:]
         assert "Phase 1 of 2: " + ("implement" if mode == "implement" else "fix") in user
         assert repair.SPEC_SHAPED not in system
+    # --spec-notes off: the phase-0 request of the code that ran e1-test-open-2.
+    seen.clear()
+    out = pathlib.Path(tempfile.mkdtemp(prefix="pf-spend-"))
+    (out / "start.lean").write_text(PORT["source"])
+    s = repair.Session(GRANTS, "m", out / "start.lean", out, budget.Budget(None, None))
+    try:
+        s.run_tests = lambda: '{"status": "REFUTED"}'
+        a = argparse.Namespace(model="m", effort="medium", phase0_turns=1, whole_file_reserve=0.0, spec_notes="off")
+        with patch.object(repair, "dialog", fake_dialog), patch("baseline.run", lambda *x, **k: None):
+            repair.orchestrate(s, a, middle=lambda *x: None)
+    finally:
+        close(s)
+    assert seen[0][1].endswith("then call run_tests until it reports PASS."), seen[0][1][-200:]
+    assert repair.parser().parse_args([]).spec_notes == "on"
     for word in ("Grants", "Acl", "permissions", "ValidCommand", "ValidQuery"):
         assert word not in repair.SPEC_SHAPED, word
 
 
 def test_whole_file_phase_says_the_definition_may_change():
     """Phase 3's first request ends with the note; the rest of it is A0's protocol on the current
-    file. A0 itself passes no note (test_a0_first_request_is_unchanged)."""
-    import baseline
-
+    file. A0 itself passes no note (test_a0_first_request_is_unchanged); with --spec-notes off
+    phase 3 passes none either."""
     class Stop(Exception):
         pass
-    seen = {}
+    users = {}
+    for notes in ("on", "off"):
+        seen = {}
 
-    def call(model, messages, purpose, **extra):
-        seen["messages"] = messages
-        raise Stop()
-    out = pathlib.Path(tempfile.mkdtemp(prefix="pf-spend-"))
-    (out / "start.lean").write_text(PORT["source"])
-    s = repair.Session(GRANTS, "m", out / "start.lean", out, budget.Budget(None, None))
-    try:
-        s.run_tests = lambda: '{"status": "PASS"}'
-        s.call = call
-        a = argparse.Namespace(model="m", effort="medium", phase0_turns=1, whole_file_reserve=0.0)
+        def call(model, messages, purpose, **extra):
+            seen["messages"] = messages
+            raise Stop()
+        out = pathlib.Path(tempfile.mkdtemp(prefix="pf-spend-"))
+        (out / "start.lean").write_text(PORT["source"])
+        s = repair.Session(GRANTS, "m", out / "start.lean", out, budget.Budget(None, None))
         try:
-            repair.orchestrate(s, a, middle=lambda *x: None)
-        except Stop:
-            pass
-    finally:
-        close(s)
-    system, user = seen["messages"][0]["content"], seen["messages"][1]["content"]
+            s.run_tests = lambda: '{"status": "PASS"}'
+            s.call = call
+            a = argparse.Namespace(model="m", effort="medium", phase0_turns=1, whole_file_reserve=0.0,
+                                   spec_notes=notes)
+            try:
+                repair.orchestrate(s, a, middle=lambda *x: None)
+            except Stop:
+                pass
+        finally:
+            close(s)
+        system, users[notes] = seen["messages"][0]["content"], seen["messages"][1]["content"]
+        assert system.startswith(repair.task_brief(GRANTS))
     note = repair.WHOLE_FILE_NOTE.format(defs="`Grants.step`")
-    assert user.endswith("\n\n" + note) and "(current, partly repaired)" in user, user[-400:]
-    assert system.startswith(repair.task_brief(GRANTS)) and note not in system
+    assert users["on"] == users["off"] + "\n\n" + note, users["on"][-400:]
+    assert "(current, partly repaired)" in users["off"] and users["off"].rstrip().endswith("end Grants")
     assert "may rewrite it together with the proofs" in note and repair.SPEC_TERMS in note
 
 

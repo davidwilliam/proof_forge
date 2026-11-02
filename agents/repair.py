@@ -1276,6 +1276,7 @@ def orchestrate(s, a, middle=None):
     spec = spec_text(s)
     impl = s.mode == "implement"
     defs = ", ".join(f"`{s.ns}.{d}`" for d in s.task.definitions)
+    notes = getattr(a, "spec_notes", "on") != "off"   # SPEC_SHAPED and WHOLE_FILE_NOTE
     # Phase 0: behavior first. The binary must pass the requirement-derived tests.
     tests_ok = {"v": False}
     orig_run_tests = s.run_tests
@@ -1290,7 +1291,7 @@ def orchestrate(s, a, middle=None):
     user0 = (f"{spec}\n\n=== candidate/Solution.lean (current, {'placeholder' if impl else 'buggy'}) ===\n{s._source()}\n\n"
              f"Phase 1 of 2: {'implement' if impl else 'fix'} {defs} so it meets the requirements. Keep every required theorem in the file "
              "(use `sorry` proofs for now). Write the file with write_solution, then call run_tests until it reports PASS."
-             + SPEC_SHAPED)
+             + (SPEC_SHAPED if notes else ""))
     ok0 = tests_ok["v"] or dialog(s, a.model, a.effort, system, user0, {"write_solution", "run_tests", "read_file"} | lib_tools(s),
                                   a.phase0_turns, lambda: tests_ok["v"], "implement")[0]
     s.log(kind="phase", phase="implement", ok=ok0)
@@ -1310,7 +1311,7 @@ def orchestrate(s, a, middle=None):
             baseline.run(s, argparse.Namespace(model=a.model, effort=a.effort, max_turns=200),
                          state="current, partly implemented" if impl else "current, partly repaired",
                          library_text=library_brief(s.lib_index, tools=False) if s.library else "",
-                         note=WHOLE_FILE_NOTE.format(defs=defs))
+                         note=WHOLE_FILE_NOTE.format(defs=defs) if notes else "")
         finally:
             s.verbatim = False
 
@@ -2226,6 +2227,9 @@ def parser():
     ap.add_argument("--restructures", type=int, default=2,
                     help="topdown: revised skeletons after a refuted helper or when every open helper is stuck")
     ap.add_argument("--phase0-turns", type=int, default=12)
+    ap.add_argument("--spec-notes", default="on", choices=["on", "off"],
+                    help="on (default): phase 0 asks for the definition in the specification's terms and phase 3 "
+                         "says it may be rewritten; off: the requests of results/e1-test-open-2")
     ap.add_argument("--whole-file-reserve", type=float, default=WHOLE_FILE_RESERVE,
                     help="fraction of the dollar cap the per-requirement phases leave to the whole-file phase while "
                          "no required theorem is proved, scaled by the share still open (0: off)")
@@ -2276,6 +2280,7 @@ def features_summary(s, a):
     return {"portfolio": {"enabled": a.portfolio == "on", "heartbeats": a.portfolio_heartbeats,
                           "seconds": a.portfolio_seconds, **portfolio.summary(s)},
             "goal_tool": leanserver.summary(s, a), "refute": refute.summary(s, a), "variants": variants.summary(s, a),
+            "spec_notes": getattr(a, "spec_notes", "on"),
             "whole_file_reserve": {"fraction": getattr(a, "whole_file_reserve", 0.0),
                                    "reached": getattr(s, "reserve_hit", None)}}
 
