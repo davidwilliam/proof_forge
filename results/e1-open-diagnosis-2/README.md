@@ -67,7 +67,7 @@ Phase 0 again guarded on `s.users.contains r.user && r.user != 0`. Phase 2 made 
 | 38e3955 | Phase 0's request ends with `SPEC_SHAPED`: the definition will be proved about and not changed, so write it in the specification's terms where it provides them (decide validity with its predicate, with a `Decidable` instance, or with one Boolean function and one lemma equating it to the predicate; build results with its functions; stay computable) | The association in point 1. Replayed with Lean, nothing banked: the portfolio proves both validity requirements (valid input answered, invalid input a no-op) on A0's definitions of acl-b2, acl-b3 and grants-b4 and on none of A1's phase-0 files (6 of 8 against 0 of 8 over the four tasks; A0's grants-b3 definition needs its `_iff` lemma first) |
 | b21ef39 | Phase 3's first request ends with `WHOLE_FILE_NOTE`: the earlier phases kept the definition fixed, it may be rewritten with the proofs, and how. `baseline.run` takes the note as an optional argument; A0 passes none | Point 4: 21 of 21 phase-3 files on grants-b3 and -b4 kept a Boolean guard |
 | 74caeaa | `--spec-notes on|off` (default on): with off, the phase-0 and phase-3 requests are those of e1-test-open-2, for ablation | |
-| 7044972 | `docs/ARCHITECTURE.md` | |
+| 7044972, 7baa4e0 | `docs/ARCHITECTURE.md` | |
 
 Nothing names a task or a family. A0 is unchanged: `agents/baseline.py` gained only the optional `note` argument, which A0 never passes, and its first request on three tasks is byte for byte the one of the code that ran e1-test-open-2 (sha256 of model, messages, purpose and options, in the test). The prompts of the per-requirement dialogs are unchanged.
 
