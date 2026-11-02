@@ -476,6 +476,7 @@ class Session:
     refute_samples = 0       # --refute: instances per new helper statement (agents/refute.py)
     variants_k = 0           # --variants (agents/variants.py)
     verbatim = False         # whole-file phase: files are saved as written, without reordering
+    reserve = 0.0            # --whole-file-reserve while the per-requirement phases run (reserve_reached)
     full_messages = True     # compile(): every error of the build output (A0's FileSession: the tail)
     LOG_LOCK = threading.Lock()   # parallel variants log into the same events
 
@@ -1104,6 +1105,8 @@ def dialog(s, model, effort, system, user, tool_names, max_turns, done, label, s
     for turn in range(max_turns):
         if stop is not None and stop.is_set():
             return False, messages
+        if reserve_reached(s):   # the rest of the budget goes to the whole-file phase
+            return False, messages
         try:
             r, u = s.call(model, messages, f"repair:{s.task.id}:{label}:turn{turn}", tools=tools, **extra)
         except APIError as e:
@@ -1190,6 +1193,49 @@ def obligation_query(s, stmt):
     return stmt + "\n" + "\n".join(docs)
 
 
+# Whole-file reserve (`--whole-file-reserve R`, a fraction of the dollar cap): the dialogs of the
+# per-requirement phases stop once the list dollars spent reach cap - R * cap * open / n, where
+# `open` of the `n` required theorems still have `sorry` (or are missing) in their own text. Dialogs
+# that keep proving requirements run almost to the cap; dialogs that prove none leave R of the cap
+# to the whole-file phase, which may rewrite the definition. In results/e1-test-open-2 the per-
+# requirement phases spent $2.69 of $3 on permissions-acl-b3 (2 of 9 proved, no whole-file phase)
+# and $2.64 on permissions-grants-b4 (4 of 8); A0 verified them for $0.32 and $0.06. Replayed on
+# the recorded spend of the A1 runs of e1-test-open-1, e1-test-open-2, e1-test-1 and e1-dev-2, 0.5
+# stops only runs that did not verify (results/e1-open-diagnosis-2/README.md). 0 turns it off.
+WHOLE_FILE_RESERVE = 0.5
+
+
+def open_required(s):
+    """Required theorems whose own text in the candidate is missing or has `sorry` (no Lean run)."""
+    return [t for t in s.theorems if not own_sorry_free(s, t)]
+
+
+def reserve_limit(cap, frac, n_open, n):
+    """List dollars the per-requirement phases may spend with `n_open` of `n` requirements open."""
+    return cap - frac * cap * n_open / n
+
+
+def reserve_reached(s):
+    """True, while the per-requirement phases run (`s.reserve` set by orchestrate()), once they
+    have spent what the whole-file reserve leaves them; logged once (phase `reserve`) and final for
+    the session. The whole-file phase itself is never stopped by it."""
+    frac, cap = s.reserve or 0.0, s.budget.usd_cap
+    if frac <= 0 or cap is None or not s.theorems:
+        return False
+    if getattr(s, "reserve_hit", None):
+        return True
+    left = open_required(s)
+    limit = reserve_limit(cap, frac, len(left), len(s.theorems))
+    if s.budget.usd_list < limit:
+        return False
+    s.reserve_hit = {"usd_list": round(s.budget.usd_list, 4), "limit": round(limit, 4), "open": len(left),
+                     "n": len(s.theorems)}
+    s.log(kind="phase", phase="reserve", **s.reserve_hit)
+    print(f"[reserve] per-requirement phases stop at ${s.budget.usd_list:.2f} with {len(left)} of "
+          f"{len(s.theorems)} open", flush=True)
+    return True
+
+
 def orchestrate(s, a, middle=None):
     """Phase 0 (behavior first), then `middle` (default: phases 1 and 2, structured(); the
     top-down loop passes topdown_phases()), then phase 3 (whole-file repair) if not accepted."""
@@ -1215,7 +1261,11 @@ def orchestrate(s, a, middle=None):
                                   a.phase0_turns, lambda: tests_ok["v"], "implement")[0]
     s.log(kind="phase", phase="implement", ok=ok0)
     if ok0:
-        (middle or structured)(s, a, system, spec)
+        s.reserve = getattr(a, "whole_file_reserve", 0.0) or 0.0
+        try:
+            (middle or structured)(s, a, system, spec)
+        finally:
+            s.reserve = 0.0
     # Phase 3: spend the rest of the budget on whole-file repair from the current file,
     # with the same protocol as the compile-and-retry baseline.
     if not s.accepted:
@@ -1241,15 +1291,19 @@ def structured(s, a, system, spec):
     for t in s.theorems:
         if status.get(t) == "PROVED" or own_sorry_free(s, t):
             continue
+        if reserve_reached(s):
+            break
         prove_target(s, a, system, spec, t, a.obligation_turns, "pass1")
         status = s.check_status()
     # Phase 2: resolve what is left, decomposing hard goals with the planner (A2), and
     # repeat while a round makes progress.
     pending = [t for t, v in s.check_status().items() if v != "PROVED"]
     for _ in range(a.rounds):
-        if not pending:
+        if not pending or reserve_reached(s):
             break
         for t in pending:
+            if reserve_reached(s):
+                break
             resolve(s, a, system, spec, t, 0)
         prune(s)
         now = [t for t, v in s.check_status().items() if v != "PROVED"]
@@ -1383,6 +1437,8 @@ def plan(s, a, spec, t, attempt):
             f"{attempt}_` and no `?` or `!` in names.")
     extra = {} if a.planner_effort == "default" else {"reasoning_effort": a.planner_effort}
     for tries in range(3):
+        if reserve_reached(s):
+            break
         try:
             r, u = s.call(a.planner, [{"role": "system", "content": PLANNER_SYSTEM}, {"role": "user", "content": user}],
                           f"plan:{s.task.id}:{t}:{attempt}", timeout=900, **extra)
@@ -1879,6 +1935,8 @@ def structure(s, a, system, spec, rnd, feedback=""):
         extra = {} if a.planner_effort == "default" else {"reasoning_effort": a.planner_effort}
         replies = []
         for tries in range(a.skeleton_tries):
+            if reserve_reached(s):
+                break
             try:
                 r, _ = s.call(a.planner, messages, f"skeleton:{s.task.id}:{rnd}:{tries}", timeout=900, **extra)
             except APIError as e:
@@ -2133,6 +2191,9 @@ def parser():
     ap.add_argument("--restructures", type=int, default=2,
                     help="topdown: revised skeletons after a refuted helper or when every open helper is stuck")
     ap.add_argument("--phase0-turns", type=int, default=12)
+    ap.add_argument("--whole-file-reserve", type=float, default=WHOLE_FILE_RESERVE,
+                    help="fraction of the dollar cap the per-requirement phases leave to the whole-file phase while "
+                         "no required theorem is proved, scaled by the share still open (0: off)")
     ap.add_argument("--obligation-turns", type=int, default=12)
     ap.add_argument("--start", help="starting candidate (default: the task's candidate/Solution.lean)")
     ap.add_argument("--effort", default="medium", choices=["low", "medium", "high", "default"])
@@ -2179,7 +2240,9 @@ def features_summary(s, a):
     """The summary.json records of the tactic portfolio and the three feedback features."""
     return {"portfolio": {"enabled": a.portfolio == "on", "heartbeats": a.portfolio_heartbeats,
                           "seconds": a.portfolio_seconds, **portfolio.summary(s)},
-            "goal_tool": leanserver.summary(s, a), "refute": refute.summary(s, a), "variants": variants.summary(s, a)}
+            "goal_tool": leanserver.summary(s, a), "refute": refute.summary(s, a), "variants": variants.summary(s, a),
+            "whole_file_reserve": {"fraction": getattr(a, "whole_file_reserve", 0.0),
+                                   "reached": getattr(s, "reserve_hit", None)}}
 
 
 def resume_setup(s, a, priors, record):
