@@ -82,3 +82,11 @@ runs whose model calls the provider refused for billing.
 - The other 36 runs are unaffected: every model call they made returned before 20:36:06, apart
   from transient timeouts and one 502 that the client retried.
 - `results/hard-task-2` does not start before the rerun ends.
+
+## Addendum 2, 2026-11-02
+
+The Baseten account still refuses every call with HTTP 402 (15 attempts from 11:20 to 11:50 local
+time, and a card added on the account did not clear it), and the rerun of Addendum 1 cannot start
+until the account is funded. The machine is otherwise idle, so the order of the two experiments is
+reversed: `results/hard-task-2` runs first, and the rerun starts once it has ended and the account
+answers. Nothing else in Addendum 1 changes; no rerun call has been made.
