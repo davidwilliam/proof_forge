@@ -39,35 +39,93 @@ the rates, or an advance, which emits `k * (rate₁ + rate₂)`.
 * `pot_le_of`, `potOf_le_of`: the potential at the start from bounds on what each account is owed
   and on the emission not yet indexed; `start_reinit`, `owed_reinit_le`, `unindexed_reinit_le`:
   an index still at 0 set to `init` (with its unindexed emission dropped) raises nothing owed.
+* A start where rewards begin on the sides that never had any: `Clock.reinit init c` sets each
+  index still at 0 to `init`; `inv_reinit`, `pot_reinit_le` and `potOf_reinit_le` give the
+  invariant and both potential bounds at a state whose clock is `c.reinit M.init`, from facts
+  about `c`, with the starts `reinitStart`.
 * `Settle₁.then_adjust`, `Settle₂.then_adjust`, `Settle₁.transfer`, `Settle₂.transfer`: an
   account settled and then given new units on that side, and two accounts settled and then
   exchanging units, as chains of steps.
+* `Clock.catchUp₁_mk`, `Clock.catchUp₂_mk`, `Clock.advance_mk`: the clock operations on a clock
+  written by its fields, for `simp`.
 
 ## Using the module
 
-For a specification with a state `St`, accounts `Acct`, a step `exec : St → Op → St`, a run
-`run`, rewards emitted `emitted : Nat × Nat → List Op → Nat` and rates after a run
-`speedsAfter`, all defined by structural recursion:
+For a specification with a state `St`, accounts `Acct`, an implementation `impl` of its calls, a
+step `exec : St → Op → St` that runs them, a run `run`, rewards emitted
+`emitted : Nat × Nat → List Op → Nat` and rates after a run `speedsAfter`, all defined by
+structural recursion. Names below other than this module's (`impl`, `next`, `upd`, `ok`) stand for
+the specification's or the proof's own.
 
-1. `def M : Market St Acct` reads the state: `clock s := ⟨now, index₁, last₁, rate₁, index₂,
-   last₂, rate₂⟩` from the state's fields, `accts`, `units₁`, `rec₁`, ..., `credited a :=
-   a.accrued + a.wallet`, `dflt_units₁ := rfl`.
-2. For each call that brings a side up to date and credits an account (a hook, a distribution),
-   a lemma `M.Settle₁ who s s'` (or `Settle₂`): `obtain` the call's equation, then the clock
-   equation by `simp` with the index update rewritten to `catchUp`, the account change by `rfl`
-   and its credited amount by `omega` once the protocol's start is rewritten to `firstStart`.
-3. `theorem exec_act ... : M.Act sp s (next sp op) (emittedBy sp op) (exec s op)` by cases on the
-   operation: `.moves` with `Reach.refl` for a refused operation, `Settle₁.then_adjust` for a
-   hook followed by a change of units, `Settle₁.transfer` for two hooks and a transfer,
-   `Reach.single`, `Reach.tail`, `Reach.trans` and `Reach.of_getD` for other chains (a payment is
-   `Step.adjust`, a change of nothing the market reads is `Step.same`); `.retune` for a rate
-   change; `.advance k ⟨rfl, rfl⟩` for time passing.
-4. The start: `M.Inv g₁ g₂ sp s₀` and a bound on `M.pot g₁ g₂ s₀` (`pot_le_of`) or on
-   `M.potOf g₁ g₂ w s₀` (`potOf_le_of`).
-5. `M.rewards_bounded run emitted speedsAfter exec_act hone h0 hs ops` bounds the credited total
+0. The proof is shortest when each call of `impl` reads `if ok s w then some (next s w) else none`
+   with `next` written with the specification's own update functions: the case analysis of
+   step 4 then rewrites a call by `simp only [impl, h_ok, ite_true]`. A port of deployed code
+   needs that equation first, one lemma per call.
+1. The reading: `def M : Market St Acct where one := scale; init := start value; clock s :=
+   ⟨now, index₁, last₁, rate₁, index₂, last₂, rate₂⟩` from the state's fields, `accts s`,
+   `dflt` (the record of an account beyond the list), `units₁`, `units₂`, `rec₁`, `rec₂`,
+   `credited a := a.accrued + a.paid`, `dflt_units₁ := rfl`, `dflt_units₂ := rfl`. `simp [M]`
+   does not unfold `M.clock s`; state a goal about it by its fields with
+   `show Clock.mk _ _ _ _ _ _ _ = ...`.
+2. Bridges, each by `rfl` or one `split`: an index update that reads
+   `if 0 < now - last ∧ 0 < rate ∧ 0 < total then index + (now - last) * rate * one / total
+   else index` is `catchUp one index last rate now total`
+   (`theorem upd_index : (upd sd now T).index = catchUp one sd.index sd.last sd.rate now T := by
+   unfold upd catchUp; split <;> rfl`, and the same for its last update and its rate); a start
+   `if r = 0 then (if init ≤ i then init else 0) else r` is `firstStart init r i` and
+   `if r = 0 then g else r` is `effStart g r` by `rfl`, so `firstStart_le_index` and
+   `effStart_le_firstStart` apply to it; `(now - last) * rate` is `unindexed last rate now`.
+   For lists: `Ledger.getD_of_forall` (a property of every account and of `dflt` holds of the
+   account read at any position), `Ledger.getD_modify_of_keeps` (a field the change keeps reads
+   the same after it), `Ledger.modify_congr` (a change written with values read before it is the
+   change written with the record).
+3. One settlement per side and settling call, for its `next`:
+   ```
+   theorem settle₁ (s : St) (w : Nat) : M.Settle₁ w s (next s w) := by
+     refine ⟨?_, credit (new index), rfl, fun a => ⟨rfl, rfl, rfl, rfl, ?_⟩⟩
+     · show Clock.mk _ _ _ _ _ _ _ = Clock.catchUp₁ _ _ (Clock.mk _ _ _ _ _ _ _)
+       simp only [Clock.catchUp₁, next, upd_index, upd_last, upd_rate]; rfl
+     · exact Nat.le_of_eq (Nat.add_right_comm _ _ _)
+   ```
+   where `credit i a` sets the account's side-1 checkpoint to `i` and adds its units times
+   `i - firstStart init (checkpoint) i`, rounded down at scale `one`, to its accrued amount (the
+   last line is that equation when `credited a = a.accrued + a.paid`).
+4. `theorem exec_act (g₁ g₂ : Nat) (sp : Nat × Nat) (s : St) (op : Op) (hI : M.Inv g₁ g₂ sp s) :
+   M.Act sp s (nextSpeeds sp op) (emittedBy sp op) (exec impl s op)` by `cases op`. The
+   preconditions of the calls come from `hI.last₁`, `hI.last₂` and `hI.recs`; the invariant
+   after a settlement `h` is `(Market.Step.bound (.settle₁ h) hI).1`. Per operation:
+   * a call, then a change of the account's units on that side:
+     `.moves (Market.Settle₁.then_adjust (settle₁ s w) rfl rfl (fun a => ⟨Nat.le_refl _, rfl, rfl⟩) fun _ => rfl)`;
+   * two calls, then a transfer between the two accounts: `Market.Settle₁.transfer` with the
+     second settlement taken at the first one's result;
+   * a refused operation: `.moves (Market.Reach.refl s)`; nothing the market reads changes:
+     `.moves (Market.Reach.single (.same rfl rfl))`; a payment `f` (accrued moved to paid):
+     `.adjust ⟨rfl, f, rfl, fun a => ⟨h a, rfl, rfl⟩, .inl fun _ => rfl, .inl fun _ => rfl⟩`
+     with `h a` the credited amount not raised (`show` its fields, then `omega`);
+     a chain: `((Market.Reach.single (.settle₂ h₂)).tail (.settle₁ h₁)).tail step`;
+   * a rate change: `.retune ⟨rfl, rfl, side₁, side₂⟩ rate₁ rate₂`, each side
+     `.inl ⟨rfl, rfl, rfl⟩` (kept) or `.inr ⟨upd_index _ _ _, upd_last _ _ _⟩` (brought up to
+     date) after a `split` on the specification's choice;
+   * time: `.advance k ⟨rfl, rfl⟩`.
+   Name the constructors through `Market` (`Market.Reach.refl`, `Market.Step.bound`) or with a
+   leading dot against the expected type (`.moves`, `.retune`, `.advance`, `.settle₁`, `.adjust`,
+   `.same`); `M.Act.moves` and `M.Reach.refl` do not elaborate, since Lean reads `M.Act` as a
+   function.
+5. The start. When rewards begin at the start on the sides that never had any, prove
+   `M.clock s₀ = Clock.reinit M.init c` for the clock `c` before, by its fields
+   (`show Clock.mk _ _ _ _ _ _ _ = _; simp only [...]; split <;> split <;> rfl`), and take
+   `M.inv_reinit hc ...`, `M.pot_reinit_le g₁ g₂ hc hr` and `M.potOf_reinit_le g₁ g₂ w hc hr`:
+   what each account was owed is `M.owed g₁ g₂ c a`, the unindexed emission `c.un₁ + c.un₂`.
+   Otherwise `M.Inv g₁ g₂ sp s₀` with `pot_le_of` or `potOf_le_of`.
+6. `M.rewards_bounded run emitted speedsAfter exec_act hone h0 hs ops` bounds the credited total
    after any run, `account_rewards_bounded` one account, and `rewards_after_no_position_bounded`
    an account that holds nothing after a history; the equations of `run`, `emitted` and
-   `speedsAfter` are proved by `rfl` automatically.
+   `speedsAfter` are proved by `rfl` automatically, and `hone : 0 < M.one` by
+   `show 0 < 10 ^ 36; decide` (or the scale's own literal). State the start bound first, with the
+   starts given, and pass it: `have hs := M.pot_reinit_le g₁ g₂ hc hr` then
+   `exact M.rewards_bounded run emitted speedsAfter exec_act hone h0 hs ops`. Written inside the
+   one `exact`, the bound is unified with the requirement before its own statement is known, and
+   Lean can run out of heartbeats there.
 -/
 
 namespace ProofForgeFin.Accumulator
@@ -150,6 +208,20 @@ theorem swap_catchUp₂ (one total : Nat) (c : Clock) :
 /-- Bringing side 1 up to date never lowers its index. -/
 theorem le_catchUp₁_index₁ (one total : Nat) (c : Clock) :
     c.index₁ ≤ (c.catchUp₁ one total).index₁ := le_catchUp _ _ _ _ _ _
+
+/-- Side 1 of a clock given by its fields brought up to date. -/
+@[simp] theorem catchUp₁_mk (one total now i₁ l₁ r₁ i₂ l₂ r₂ : Nat) :
+    (Clock.mk now i₁ l₁ r₁ i₂ l₂ r₂).catchUp₁ one total =
+      Clock.mk now (catchUp one i₁ l₁ r₁ now total) now r₁ i₂ l₂ r₂ := rfl
+
+/-- Side 2 of a clock given by its fields brought up to date. -/
+@[simp] theorem catchUp₂_mk (one total now i₁ l₁ r₁ i₂ l₂ r₂ : Nat) :
+    (Clock.mk now i₁ l₁ r₁ i₂ l₂ r₂).catchUp₂ one total =
+      Clock.mk now i₁ l₁ r₁ (catchUp one i₂ l₂ r₂ now total) now r₂ := rfl
+
+/-- Time passing on a clock given by its fields. -/
+@[simp] theorem advance_mk (k now i₁ l₁ r₁ i₂ l₂ r₂ : Nat) :
+    (Clock.mk now i₁ l₁ r₁ i₂ l₂ r₂).advance k = Clock.mk (now + k) i₁ l₁ r₁ i₂ l₂ r₂ := rfl
 
 end Clock
 
@@ -1302,6 +1374,87 @@ theorem unindexed_reinit_le (c : Prop) [Decidable c] (l r now : Nat) :
   split
   · simp
   · exact Nat.le_refl _
+
+end Market
+
+/-! ## A start where rewards begin on the sides that never had any -/
+
+namespace Clock
+
+/-- Each index still at 0 set to `init`, with its last update moved to now (rewards starting on a
+side that never had any); a side whose index is positive is kept. -/
+def reinit (init : Nat) (c : Clock) : Clock :=
+  ⟨c.now, if c.index₁ = 0 then init else c.index₁, if c.index₁ = 0 then c.now else c.last₁, c.rate₁,
+    if c.index₂ = 0 then init else c.index₂, if c.index₂ = 0 then c.now else c.last₂, c.rate₂⟩
+
+/-- `reinit` leaves at most the emission of side 1 that was unindexed before. -/
+theorem un₁_reinit_le (init : Nat) (c : Clock) : (c.reinit init).un₁ ≤ c.un₁ :=
+  Market.unindexed_reinit_le (c.index₁ = 0) c.last₁ c.rate₁ c.now
+
+/-- `reinit` leaves at most the emission of side 2 that was unindexed before. -/
+theorem un₂_reinit_le (init : Nat) (c : Clock) : (c.reinit init).un₂ ≤ c.un₂ :=
+  Market.unindexed_reinit_le (c.index₂ = 0) c.last₂ c.rate₂ c.now
+
+end Clock
+
+/-- The start of an index after `Clock.reinit`: `init` for an index that was still at 0, its
+start `g` otherwise. -/
+def reinitStart (init index g : Nat) : Nat := if index = 0 then init else g
+
+namespace Market
+
+variable {σ : Type u} {α : Type v} (M : Market σ α)
+
+/-- The invariant at a state whose clock is `c` with every index still at 0 set to `init`
+(`M.clock s = c.reinit M.init`), from facts about `c`: each index started from 0 or `init` and
+is at or above its start, no side was brought up to date in the future, and no checkpoint is above
+its index. The starts are `reinitStart`, the rates those of `c`. -/
+theorem inv_reinit {s : σ} {c : Clock} {g₁ g₂ : Nat} (hc : M.clock s = c.reinit M.init)
+    (hg₁ : g₁ = 0 ∨ g₁ = M.init) (hgi₁ : g₁ ≤ c.index₁) (hg₂ : g₂ = 0 ∨ g₂ = M.init)
+    (hgi₂ : g₂ ≤ c.index₂) (hl₁ : c.last₁ ≤ c.now) (hl₂ : c.last₂ ≤ c.now)
+    (hr : ∀ a ∈ M.accts s, M.rec₁ a ≤ c.index₁ ∧ M.rec₂ a ≤ c.index₂) :
+    M.Inv (reinitStart M.init c.index₁ g₁) (reinitStart M.init c.index₂ g₂) (c.rate₁, c.rate₂) s := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> rw [hc] <;> simp only [Clock.reinit]
+  · split <;> omega
+  · split <;> omega
+  · intro a ha
+    have := hr a ha
+    constructor <;> split <;> omega
+  · exact start_reinit hg₁ hgi₁
+  · exact start_reinit hg₂ hgi₂
+
+/-- What an account is owed after `Clock.reinit`, counted from the starts `reinitStart`, is at
+most what it was owed at `c`, counted from the starts `g₁` and `g₂`. -/
+theorem owed_reinit_le' {s : σ} {c : Clock} (g₁ g₂ : Nat) (hc : M.clock s = c.reinit M.init)
+    (a : α) (hr : M.rec₁ a ≤ c.index₁ ∧ M.rec₂ a ≤ c.index₂) :
+    M.owed (reinitStart M.init c.index₁ g₁) (reinitStart M.init c.index₂ g₂) (M.clock s) a ≤
+      M.owed g₁ g₂ c a := by
+  unfold owed reinitStart
+  rw [hc]
+  exact Nat.add_le_add (owed_reinit_le _ hr.1) (owed_reinit_le _ hr.2)
+
+/-- The potential after `Clock.reinit`: at most the amounts credited at scale `one`, plus what each
+account was owed at `c`, plus `one` times the emission `c` left unindexed. With
+`rewards_bounded` this is the bound from a start where rewards begin on sides that never had
+any. -/
+theorem pot_reinit_le {s : σ} {c : Clock} (g₁ g₂ : Nat) (hc : M.clock s = c.reinit M.init)
+    (hr : ∀ a ∈ M.accts s, M.rec₁ a ≤ c.index₁ ∧ M.rec₂ a ≤ c.index₂) :
+    M.pot (reinitStart M.init c.index₁ g₁) (reinitStart M.init c.index₂ g₂) s ≤
+      M.creditSum s * M.one + ((M.accts s).map (M.owed g₁ g₂ c)).sum + M.one * (c.un₁ + c.un₂) :=
+  M.pot_le_of (fun a ha => M.owed_reinit_le' g₁ g₂ hc a (hr a ha))
+    (by rw [hc]; exact Clock.un₁_reinit_le _ _) (by rw [hc]; exact Clock.un₂_reinit_le _ _)
+
+/-- The potential of account `w` after `Clock.reinit`: at most its credited amount at scale
+`one`, plus what it was owed at `c`, plus `one` times the emission `c` left unindexed on the
+sides where it holds units. With `account_rewards_bounded` this is the bound for one account. -/
+theorem potOf_reinit_le {s : σ} {c : Clock} (g₁ g₂ w : Nat) (hc : M.clock s = c.reinit M.init)
+    (hr : M.rec₁ (M.acct s w) ≤ c.index₁ ∧ M.rec₂ (M.acct s w) ≤ c.index₂) :
+    M.potOf (reinitStart M.init c.index₁ g₁) (reinitStart M.init c.index₂ g₂) w s ≤
+      M.credited (M.acct s w) * M.one + M.owed g₁ g₂ c (M.acct s w) +
+        M.one * ((if 0 < M.units₁ (M.acct s w) then c.un₁ else 0) +
+          (if 0 < M.units₂ (M.acct s w) then c.un₂ else 0)) :=
+  M.potOf_le_of (M.owed_reinit_le' g₁ g₂ hc _ hr)
+    (by rw [hc]; exact Clock.un₁_reinit_le _ _) (by rw [hc]; exact Clock.un₂_reinit_le _ _)
 
 end Market
 

@@ -30,6 +30,7 @@ account's term. The modules prove everything above that.
   supply side and a borrow side), for any state read as one: settlements, adjustments, retunes and
   the passage of time as transitions, the invariant and both potentials over every run, and the
   bounds on the credited amounts of all accounts, of one account, and of an account that holds
-  nothing after a history. A proof supplies how to read its state and one case analysis of its
-  step.
+  nothing after a history, including from a start where rewards begin on the sides that never
+  had any (`Clock.reinit`). A proof supplies how to read its state and one case analysis of its
+  step; the module doc gives the recipe.
 -/
