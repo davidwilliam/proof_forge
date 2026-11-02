@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.0;
 
 // Runs operation sequences on Euler v1 deployed locally from the contracts at a pinned commit,

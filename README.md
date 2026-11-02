@@ -313,3 +313,8 @@ Measured on the deployed host:
 | `results/`, `reports/`, `recordings/` | measured results, the G0 gate report, recorded sessions |
 
 What was built during the hackathon, and the dependencies that were not, are listed in `ORIGIN.md`.
+
+## License
+
+Apache License 2.0 (`LICENSE`). The ProofForge name and logo are not licensed for other uses; `NOTICE` gives the terms
+and the licenses of the brand kit's fonts.
