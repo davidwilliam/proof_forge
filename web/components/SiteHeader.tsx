@@ -140,10 +140,7 @@ function ResourcesMenu({ path }: { path: string }) {
       <div className="res-panel" id={panelId} hidden={!open} onKeyDown={onPanelKey}>
         {RESOURCES.map((g) => (
           <div className="res-group" key={g.group}>
-            <p className="res-group-label" id={`${panelId}-${g.group.replace(/\W+/g, "-")}`}>
-              {g.group}
-            </p>
-            <ul aria-labelledby={`${panelId}-${g.group.replace(/\W+/g, "-")}`}>
+            <ul aria-label={g.group}>
               {g.items.map((r) => {
                 const body = (
                   <>

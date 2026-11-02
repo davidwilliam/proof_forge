@@ -69,10 +69,9 @@ export default function AboutPage() {
       </section>
 
       <section className="ab-section" aria-labelledby="ab-why">
-        <h2 id="ab-why">Why it exists</h2>
+        <h2 id="ab-why">Why it exists: financial code fails in ways tests miss</h2>
         <div className="ab-why">
           <div className="ab-why-text">
-            <p className="ab-big">Financial code fails in ways tests miss.</p>
             <p>
               The payout task in <code>formal/</code> is a splitter whose bug loses a cent: $1.00 to three recipients pays 33 + 33 + 33, and the
               existing unit tests pass. In the E2 suite, one seeded attack pays seven or more recipients without the remainder; the test generator
