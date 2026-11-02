@@ -97,7 +97,8 @@ def time_limit(seconds):
         _local.deadline = prev
 
 
-def run(cmd, timeout=900, on_timeout=None):
+def run(cmd, timeout=900, on_timeout=None, keep=4000):
+    """Run `cmd`; the record keeps the last `keep` characters of its output (`output_tail`)."""
     t0 = time.monotonic()
     if deadline() is not None:
         timeout = min(timeout, deadline() - t0)
@@ -128,7 +129,7 @@ def run(cmd, timeout=900, on_timeout=None):
         "elapsed_ms": int((time.monotonic() - t0) * 1000),
         "stdout_sha256": sha256_bytes(stdout.encode()),
         "stderr_sha256": sha256_bytes(stderr.encode()),
-        "output_tail": (stdout + stderr)[-4000:],
+        "output_tail": (stdout + stderr)[-keep:],
     }
 
 
@@ -334,16 +335,17 @@ def container_argv(project: pathlib.Path, script: str, name: str, interactive=Fa
     ]
 
 
-def in_container(project: pathlib.Path, script: str, timeout=900):
+def in_container(project: pathlib.Path, script: str, timeout=900, keep=4000):
     """Run `script` in the pinned Lean image with `project` as the working directory. Inside
     the image itself (PF_IN_IMAGE=1, as in the verify image and on Linux hosts) it runs
     directly; Comparator's bubblewrap sandbox applies in both cases. Through Docker the run
     starts only once the container sees the host's version of every input file (view_check):
     a container that sees another version is stopped before the script and a new one is
-    started after a pause, up to VIEW_WAIT seconds, then StaleView is raised."""
+    started after a pause, up to VIEW_WAIT seconds, then StaleView is raised. The record keeps
+    the last `keep` characters of the output."""
     if IN_IMAGE:
         with container_slot():
-            return run(container_argv(project, script, ""), timeout=timeout)
+            return run(container_argv(project, script, ""), timeout=timeout, keep=keep)
     project = pathlib.Path(project)
     manifest = view_manifest(project)
     waited, pause = 0.0, 0.5
@@ -351,7 +353,7 @@ def in_container(project: pathlib.Path, script: str, timeout=900):
         name = f"pf-{os.getpid()}-{time.monotonic_ns()}"
         cmd = container_argv(project, view_check(manifest) + script, name)
         with container_slot():
-            r = run(cmd, timeout=timeout,
+            r = run(cmd, timeout=timeout, keep=keep,
                     on_timeout=lambda: subprocess.run(["docker", "kill", name], capture_output=True))
         r["command"] = cmd[:-1] + [script]   # the record names the script, not the view check
         if r["exit_code"] != VIEW_EXIT or VIEW_MARK not in r["output_tail"]:
