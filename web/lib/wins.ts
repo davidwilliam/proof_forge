@@ -194,6 +194,8 @@ export const KIND_LABEL: Record<Kind, string> = {
 export const HEADLINE_IDS = {
   oz: "frontier-2/rw-oz-sqrt",
   ozFirst: "hard-task-1/rw-oz-sqrt",
+  compound: "frontier-3/rw-compound-comp",
+  compoundPooled: "frontier-3+frontier-2/rw-compound-comp",
   vyper: "vyper-replication-1/rw-vyper-sqrt+hard-task-1",
   vyperFirst: "hard-task-1/rw-vyper-sqrt",
   vyperReplication: "vyper-replication-1/rw-vyper-sqrt",

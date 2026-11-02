@@ -81,6 +81,18 @@ describe("the frontier, measured: Meta's models on their own and with ProofForge
       expect(all(H.oz!)).toContain(s);
   });
 
+  it("Compound Proposal 62: the first verified repairs, 2 of 10 with ProofForge, 0 of 10 on its own and 0 of 20 pooled", () => {
+    const l = lc(HEADLINE_IDS.compound);
+    expect([l.alone.verified, l.alone.runs, l.proofforge.verified, l.proofforge.runs]).toEqual([0, 10, 2, 10]);
+    expect(l.proofforge.list_usd_per_verified).toBe(42.72);
+    expect(l.test).toMatchObject({ p: 0.2368, preregistered: true, significant_at_0_05: false });
+    const pooled = lc(HEADLINE_IDS.compoundPooled);
+    expect([pooled.alone.verified, pooled.alone.runs, pooled.test!.p]).toEqual([0, 20, 0.1034]);
+    const c = WINS.comparisons.find((x) => x.id === HEADLINE_IDS.compound)!;
+    expect([c.alone.reqMean, c.proofforge.reqMean]).toEqual([2.2, 4.5]);
+    expect(WINS.comparisons.filter((x) => x.task === "rw-compound-comp" && x.id !== HEADLINE_IDS.compound && x.id !== HEADLINE_IDS.compoundPooled).every((x) => x.alone.verified + x.proofforge.verified === 0)).toBe(true);
+  });
+
   it("Vyper CVE-2025-26622: both preregistered experiments, 10 of 15 on its own, 14 of 15 with ProofForge, 2.1x cheaper", () => {
     const l = lc(HEADLINE_IDS.vyper);
     expect([l.alone.verified, l.alone.runs, l.proofforge.verified, l.proofforge.runs]).toEqual([10, 15, 14, 15]);
