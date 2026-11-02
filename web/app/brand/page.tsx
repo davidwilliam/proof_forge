@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Metadata } from "next";
 import { CopyButton } from "@/components/DownloadJson";
 import { Lockup } from "@/components/SiteHeader";
+import { githubFile } from "@/lib/flagships";
 import {
   ASSETS,
   KIT,
@@ -465,6 +466,10 @@ export default function BrandPage() {
             </li>
           ))}
         </ul>
+        <p className="muted small">
+          The ProofForge name and logo are not covered by the code&apos;s Apache License 2.0. Use the kit to refer to ProofForge, as its guide
+          describes; <a href={githubFile("NOTICE")}>NOTICE</a> gives the terms and the licenses of the fonts.
+        </p>
         <p className="muted small bk-zip-note">
           The zip also holds PNG exports up to 4096 px wide, vector PDFs, favicons and installable icons, app icons with ICO and ICNS, reference
           sheets, the build sources with their fonts, and the splash animation as HTML, MP4 and GIF.

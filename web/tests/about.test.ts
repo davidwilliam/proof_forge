@@ -57,9 +57,13 @@ describe("the /about page", () => {
     expect(read("harness/fin_kernels.py")).toContain(`KERNELS = [${[...KERNELS].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)).map((k) => `"${k}"`).join(", ")}]`);
   });
 
-  it("states no license, since the repository states none", () => {
-    expect(read("README.md")).not.toMatch(/licen[cs]e/i);
+  it("states the repository's license, Apache 2.0, with the name and logo excluded as NOTICE says", () => {
+    expect(read("LICENSE")).toContain("Apache License\n                           Version 2.0, January 2004");
+    expect(read("NOTICE")).toContain("grants no permission to use them");
+    expect(read("README.md")).toContain("Apache License 2.0 (`LICENSE`)");
+    expect(JSON.parse(read("web/package.json")).license).toBe("Apache-2.0");
     const html = renderToStaticMarkup(createElement(AboutPage));
-    expect(html.replace("SIL Open Font License", "")).not.toMatch(/licen[cs]e/i);
+    expect(html).toContain("Apache License 2.0");
+    expect(html).toContain("The ProofForge name and logo are not");
   });
 });

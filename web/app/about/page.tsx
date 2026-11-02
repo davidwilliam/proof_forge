@@ -180,6 +180,10 @@ export default function AboutPage() {
           <a href={REPO_URL}>The repository</a>
           <a href={githubFile("README.md")}>README.md</a>
         </p>
+        <p className="muted small">
+          ProofForge is open source under the <a href={githubFile("LICENSE")}>Apache License 2.0</a>. The ProofForge name and logo are not
+          covered by it; <a href={githubFile("NOTICE")}>NOTICE</a> gives the terms.
+        </p>
       </section>
 
       <section className="ab-section" aria-labelledby="ab-thanks">
