@@ -335,6 +335,11 @@ def container_argv(project: pathlib.Path, script: str, name: str, interactive=Fa
     ]
 
 
+def recorded(cmd, project):
+    """The command as the record keeps it: the host's temporary project path becomes `<project>`."""
+    return [a.replace(str(project), "<project>") for a in cmd]
+
+
 def in_container(project: pathlib.Path, script: str, timeout=900, keep=4000):
     """Run `script` in the pinned Lean image with `project` as the working directory. Inside
     the image itself (PF_IN_IMAGE=1, as in the verify image and on Linux hosts) it runs
@@ -344,8 +349,11 @@ def in_container(project: pathlib.Path, script: str, timeout=900, keep=4000):
     started after a pause, up to VIEW_WAIT seconds, then StaleView is raised. The record keeps
     the last `keep` characters of the output."""
     if IN_IMAGE:
+        cmd = container_argv(project, script, "")
         with container_slot():
-            return run(container_argv(project, script, ""), timeout=timeout, keep=keep)
+            r = run(cmd, timeout=timeout, keep=keep)
+        r["command"] = recorded(cmd, project)
+        return r
     project = pathlib.Path(project)
     manifest = view_manifest(project)
     waited, pause = 0.0, 0.5
@@ -355,7 +363,7 @@ def in_container(project: pathlib.Path, script: str, timeout=900, keep=4000):
         with container_slot():
             r = run(cmd, timeout=timeout, keep=keep,
                     on_timeout=lambda: subprocess.run(["docker", "kill", name], capture_output=True))
-        r["command"] = cmd[:-1] + [script]   # the record names the script, not the view check
+        r["command"] = recorded(cmd[:-1] + [script], project)   # the record names the script, not the view check
         if r["exit_code"] != VIEW_EXIT or VIEW_MARK not in r["output_tail"]:
             if waited:
                 r["view_wait_s"] = round(waited, 1)

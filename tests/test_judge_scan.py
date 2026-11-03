@@ -1,4 +1,4 @@
-"""Implementation scan regressions; no Docker or Lean runs.
+"""Implementation scan regressions and the recorded form of container commands; no Docker or Lean runs.
 
 Run: python3 tests/test_judge_scan.py
 """
@@ -33,6 +33,24 @@ def test_a_theorem_named_only_in_a_comment_does_not_count():
     src = GOOD.read_text().replace("theorem req_conservation ", "lemma conservation_draft ", 1)
     r = scan(src + "\n-- theorem req_conservation : Conserves step\n")
     assert "required theorem missing: req_conservation" in r["problems"]
+
+
+
+def test_a_recorded_container_command_names_no_host_path():
+    from unittest.mock import patch
+    project = pathlib.Path(tempfile.mkdtemp(prefix="pf-judge-"))
+    seen = []
+
+    def fake_run(cmd, timeout=900, on_timeout=None, keep=4000):
+        seen.append(cmd)
+        return {"command": list(cmd), "exit_code": 0, "elapsed_ms": 1, "output_tail": ""}
+
+    with patch.object(judge, "run", fake_run):
+        for in_image in (True, False):
+            with patch.object(judge, "IN_IMAGE", in_image):
+                r = judge.in_container(project, "lake build")
+            assert str(project) in " ".join(seen[-1])
+            assert str(project) not in " ".join(r["command"]) and "<project>" in " ".join(r["command"]), r["command"]
 
 
 if __name__ == "__main__":
