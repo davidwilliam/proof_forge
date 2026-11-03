@@ -4,8 +4,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import Home from "../app/page";
-import { COMPARISON, COST_PER_VERIFIED, LIBRARY } from "../lib/contribution";
-import { FLAGSHIPS } from "../lib/flagships";
+import { COMPARISON, COMPOUND, COMPOUND_CASE, COST_PER_VERIFIED, LIBRARY } from "../lib/contribution";
+import { FEATURED, FLAGSHIPS } from "../lib/flagships";
 import { LIBRARY_COUNTS } from "../lib/library-data";
 import { ROOT } from "../scripts/lib/results.mjs";
 
@@ -73,6 +73,51 @@ describe("the home page below the hero, as served", () => {
       if (f.realCode) for (const row of f.realCode.rows) has(row.note);
       expect(html).toContain(`id="case-${f.key}"`);
     }
+  });
+
+  it("shows Compound Proposal 62 as the sixth case, last, with its own tab, panel and deep link", () => {
+    const tabs = [...html.matchAll(/id="case-tab-([a-z0-9-]+)"/g)].map((m) => m[1]);
+    expect(tabs).toEqual([FEATURED.key, ...FLAGSHIPS.filter((f) => f !== FEATURED).map((f) => f.key), "compound"]);
+    expect(html).toContain('id="case-compound"');
+    expect(html).toContain('aria-controls="case-compound"');
+    expect(html).toContain('href="#case-compound"');
+    // The tab: name, year and the README's dollar figure with the words that bound it.
+    const tab = /<button[^>]*id="case-tab-compound"[^>]*>(.*?)<\/button>/s.exec(html)![1]!;
+    expect(tab).toContain("Compound Proposal 62");
+    expect(tab).toContain("2021");
+    expect(tab).toContain("at worst about");
+    expect(tab).toContain("$80 million");
+    expect([...tab.matchAll(/data-v="([A-Z]+)"/g)].map((m) => m[1])).toEqual(["REFUTED", "UNRESOLVED", "VERIFIED", "VERIFIED"]);
+    // The panel: loss in COMP, the bug, the trail, both verdicts and the real code.
+    const panel = /<div id="case-compound"[^>]*>(.*?)<\/article>/s.exec(html)![1]!;
+    expect(panel).toContain("At worst 280,000 COMP");
+    expect(panel).toContain("about $80 million at the time");
+    expect(panel).toContain(COMPOUND.loss.basis);
+    for (const s of COMPOUND.loss.sources) expect(panel).toContain(s);
+    expect(panel).toContain("b7aca6c04101c9fc");
+    expect(panel).toContain("4f7e8adfccefae85");
+    expect(panel).toContain(COMPOUND_CASE.port.sha256.slice(0, 12));
+    expect(panel).toContain(COMPOUND_CASE.fix.sha256.slice(0, 12));
+    expect([...panel.matchAll(/class="tr-step" data-verdict="([A-Z]+)" data-author="([a-z]+)"/g)].map((m) => `${m[1]} ${m[2]}`)).toEqual([
+      "REFUTED upstream",
+      "UNRESOLVED muse",
+      "VERIFIED muse",
+      "VERIFIED upstream",
+    ]);
+    has("0 of 20 runs verified");
+    has("2 of 10 runs verified");
+    // The README's code spans become <code>.
+    has(COMPOUND.bug.replace(/`([^`]+)`/g, " $1 "));
+    expect(panel).toContain("<code>&gt;=</code>");
+    has(COMPOUND.vulnerable.finding);
+    has("Verified in 2 of 10 runs of frontier-3, at $6.70 and $7.41 at list prices");
+    has("REQ-REWARDS-BOUNDED, REQ-ACCOUNT-BOUNDED and REQ-NO-BACKDATED-REWARDS");
+    expect(panel).toContain(`${COMPOUND.realCode.sequences} sequences`);
+    expect(panel).toContain("503 sequences");
+    for (const row of COMPOUND.realCode.rows) has(row.note);
+    for (const n of COMPOUND.notProved) has(n);
+    // The section names all six incidents.
+    has(`${FLAGSHIPS.find((f) => f.key === "hundred")!.incident} and Compound Proposal 62, step by step`);
   });
 
   it("lists every headline gain with its text and note", () => {

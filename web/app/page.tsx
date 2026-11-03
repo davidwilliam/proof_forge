@@ -6,11 +6,14 @@ import { CreatorBand } from "@/components/CreatorBand";
 import { CatchWaffles, KpiStrip, RunStrips } from "@/components/FrontierViz";
 import { Pipeline } from "@/components/Pipeline";
 import { HeroLenses } from "@/components/HeroLenses";
+import { inlineCode } from "@/components/InlineCode";
 import { Seal } from "@/components/Seal";
 import { Status } from "@/components/ui";
 import {
   CETUS_HOTFIX,
   COMPARISON,
+  COMPOUND,
+  COMPOUND_CASE,
   COST_PER_VERIFIED,
   COUNTEREXAMPLES,
   HACKATHON,
@@ -43,7 +46,19 @@ import {
   type RealCodeRow,
 } from "@/lib/flagships";
 import { readRealworld } from "@/lib/generated";
-import { COMPOUND_FRONTIER, caseTrail, compoundFrontier, compoundLead, homeKpis, homeStrips, lossParts, matrixRows, type TrailStep } from "@/lib/home-view";
+import {
+  COMPOUND_FRONTIER,
+  caseTrail,
+  compoundFrontier,
+  compoundLead,
+  compoundTabLoss,
+  compoundTrail,
+  homeKpis,
+  homeStrips,
+  lossParts,
+  matrixRows,
+  type TrailStep,
+} from "@/lib/home-view";
 import { LIBRARY_COUNTS } from "@/lib/library-data";
 import { PROOF_GRAPH, layoutGraph } from "@/lib/proofgraph";
 import { GRAPH_TASK, bellOf, guarantees, layoutLayers } from "@/lib/lenses";
@@ -356,10 +371,10 @@ function HeroFigures() {
   );
 }
 
-function PassportLink({ p, label }: { p: PassportRef; label?: string }) {
+function PassportLink({ p, label, digits = 12 }: { p: PassportRef; label?: string; digits?: number }) {
   return (
     <a className="passport-link" href={githubFile(p.path)}>
-      {label ?? "Passport"} <span className="hash">{p.sha256.slice(0, 12)}</span>
+      {label ?? "Passport"} <span className="hash">{p.sha256.slice(0, digits)}</span>
     </a>
   );
 }
@@ -509,8 +524,8 @@ function CompareRow({ row, f }: { row: ComparisonRow; f: Flagship | null }) {
   return (
     <tr>
       <td className="ledger-incident">
-        {f ? (
-          <a href={`#case-${f.key}`}>
+        {f || row.key === COMPOUND.key ? (
+          <a href={`#case-${row.key}`}>
             {row.incident}, {row.year}
           </a>
         ) : (
@@ -787,34 +802,41 @@ function longDate(iso: string) {
   return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 }
 
-/** The incidents, featured first, as one viewer: a tab per incident with its loss and verdict trail, a panel per incident. */
+/** The incidents, featured first and Compound Proposal 62 last, as one viewer: a tab per incident with its loss and verdict trail, a panel per incident. */
 function Cases() {
   const cases = [FEATURED, ...FLAGSHIPS.filter((f) => f !== FEATURED)];
+  const compound = compoundTrail(WINS);
   return (
     <section className="home-section" id="cases" aria-labelledby="home-cases">
-      <h2 id="home-cases">{listWords(cases.map((f) => f.incident))}, step by step</h2>
+      <h2 id="home-cases">{listWords([...cases.map((f) => f.incident), COMPOUND.incident])}, step by step</h2>
       <p className="home-section-lead">
         For each incident, the reported loss, every version of the code against the same locked requirements (one square per requirement:
-        red when refuted, green when proved, filled in the text colour when an earlier attempt proved it without reaching a Passport, outlined when not proved) and the real code run against them. The attack itself is under each case.
+        red when refuted, green when proved, filled in the text colour when an earlier attempt proved it without reaching a Passport, outlined when not proved) and the real code run against them. The attack itself is under each case; for {COMPOUND.incident}, what the proofs do not cover.
       </p>
-      <CaseViewer keys={cases.map((f) => f.key)} tabs={cases.map((f) => <CaseTab key={f.key} f={f} />)} panels={cases.map((f) => <CasePanel key={f.key} f={f} />)} />
+      <CaseViewer
+        keys={[...cases.map((f) => f.key), COMPOUND.key]}
+        tabs={[
+          ...cases.map((f) => <CaseTab key={f.key} incident={f.incident} year={f.year} loss={lossParts(f.loss.amount)} trail={caseTrail(f)} />),
+          <CaseTab key={COMPOUND.key} incident={COMPOUND.incident} year={Number(COMPOUND.date.slice(0, 4))} loss={compoundTabLoss()} trail={compound} />,
+        ]}
+        panels={[...cases.map((f) => <CasePanel key={f.key} f={f} />), <CompoundPanel key={COMPOUND.key} trail={compound} />]}
+      />
     </section>
   );
 }
 
-function CaseTab({ f }: { f: Flagship }) {
-  const l = lossParts(f.loss.amount);
+function CaseTab({ incident, year, loss, trail }: { incident: string; year: number; loss: { qualifier: string; figure: string }; trail: TrailStep[] }) {
   return (
     <>
       <span className="cv-tab-name">
-        {f.incident} <span className="cv-tab-year">{f.year}</span>
+        {incident} <span className="cv-tab-year">{year}</span>
       </span>{" "}
       <span className="cv-tab-loss">
-        {l.qualifier ? <span className="cv-tab-q">{l.qualifier} </span> : null}
-        {l.figure}
+        {loss.qualifier ? <span className="cv-tab-q">{loss.qualifier} </span> : null}
+        {loss.figure}
       </span>{" "}
       <span className="cv-tab-trail" aria-hidden="true">
-        {caseTrail(f).map((s) => (
+        {trail.map((s) => (
           <span key={s.key} className="cv-v" data-v={s.verdict} />
         ))}
       </span>
@@ -990,6 +1012,151 @@ function CaseVerdicts({ f }: { f: Flagship }) {
         </p>
       </div>
       {f.unresolved.length ? <Unresolved f={f} /> : null}
+    </div>
+  );
+}
+
+/**
+ * Compound Proposal 62, the sixth real failure: not a flagship record (its loss is not in the total),
+ * shown with the same structure from COMPOUND and COMPOUND_CASE (lib/contribution.ts) and the
+ * frontier-2 and frontier-3 counts of the wins ledger.
+ */
+function CompoundPanel({ trail }: { trail: TrailStep[] }) {
+  const c = COMPOUND;
+  const [figure, ...rest] = c.loss.amount.split(", ");
+  return (
+    <article className="cp" aria-labelledby={`cp-title-${c.key}`}>
+      <header className="cp-head">
+        <div className="cp-loss">
+          <p className="cp-loss-fig">{capital(figure!)}</p>
+          <p className="cp-loss-basis">
+            {rest.join(", ")}, {c.loss.basis}.{" "}
+            {COMPOUND_CASE.citations.map((s, i) => (
+              <span key={s.url}>
+                {i ? ", " : null}
+                <a href={s.url}>{s.label}</a>
+              </span>
+            ))}
+          </p>
+        </div>
+        <div className="cp-what">
+          <h3 id={`cp-title-${c.key}`}>
+            {c.incident}, {c.date.slice(0, 4)}
+          </h3>
+          <p className="cp-bug">{inlineCode(c.bug)}</p>
+        </div>
+      </header>
+
+      <ol className="tr" aria-label={`${c.incident}: the versions of the code and their verdicts`}>
+        {trail.map((s, i) => (
+          <li key={s.key} className="tr-step" data-verdict={s.verdict} data-author={s.author}>
+            {i > 0 ? <span className="tr-arrow" aria-hidden="true" /> : null}
+            <p className="tr-title">
+              {s.title} <Status value={s.verdict} />
+            </p>
+            <p className="tr-detail">{s.detail}</p>
+            {s.runs ? (
+              <p className="tr-count tr-runs">
+                {s.runs.verified} of {s.runs.runs} runs verified
+              </p>
+            ) : null}
+            {s.passport ? <ReqMarks s={s} /> : null}
+            {s.runs ? <p className="tr-short">{s.runs.text}</p> : null}
+            {s.passport ? (
+              <p className="tr-foot">
+                {s.passports ? (
+                  s.passports.map((m, j) => (
+                    <span key={m.label}>
+                      {j ? " " : null}
+                      <PassportLink p={m.passport} label={m.label} />
+                    </span>
+                  ))
+                ) : (
+                  <PassportLink p={s.passport} />
+                )}
+              </p>
+            ) : null}
+          </li>
+        ))}
+      </ol>
+
+      <CompoundVerdicts trail={trail} />
+
+      <div className="cp-grid">
+        <CompoundRealCode />
+        <div className="card cp-attack">
+          <h4>What the proofs do not cover</h4>
+          <ul className="cp-findings">
+            {c.notProved.map((n) => (
+              <li key={n}>{n}</li>
+            ))}
+          </ul>
+          <p className="small muted" style={{ margin: 0 }}>
+            <a href={githubFile(c.readme)}>Task README</a>
+          </p>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+/** The refuted Proposal 62 port and the verified Muse Code repairs of frontier-3. */
+function CompoundVerdicts({ trail }: { trail: TrailStep[] }) {
+  const c = COMPOUND;
+  const C = COMPOUND_CASE;
+  const { f3, model } = compoundFrontier(WINS);
+  const total = trail.find((s) => s.key === "proofforge")!.total;
+  return (
+    <div className="cp-verdicts">
+      <div className="verdict-box" data-verdict="REFUTED">
+        <div className="verdict-head">
+          <Status value="REFUTED" />
+          <span>{c.vulnerable.label}</span>
+        </div>
+        <p>{c.vulnerable.finding}</p>
+        <p className="small">
+          <a href={githubFile(c.vulnerable.witness)}>Kernel-checked counterexample</a> and <PassportLink p={C.port} />
+        </p>
+      </div>
+      <div className="verdict-box" data-verdict="VERIFIED">
+        <div className="verdict-head">
+          <Seal size={28} />
+          <Status value="VERIFIED" />
+          <span>{model} in Muse Code with ProofForge</span>
+        </div>
+        <p>
+          Verified in {runsOf(f3.proofforge)} runs of frontier-3, at {listWords(C.repairs.map((r) => usd(r.usdList)))} at list prices. Both
+          prove all {total} requirements, among them the three bounds over any sequence of operations ({listWords(C.bounds)}) that no earlier
+          run of either arm proved. {c.property.requirement} says that {lowerFirst(c.property.text)}
+        </p>
+        <p className="small">
+          {C.repairs.map((r, i) => (
+            <span key={r.run}>
+              {i ? " " : null}
+              <PassportLink p={r.passport} label={r.run} digits={16} />
+            </span>
+          ))}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function CompoundRealCode() {
+  const rc = COMPOUND.realCode;
+  const rows: RealCodeRow[] = rc.rows.map((r) => ({ label: r.code, commit: null, violating: r.violating, sameAsPort: null, sameAsProved: null, note: r.note }));
+  return (
+    <div className="card realcode">
+      <h3>Against the real Solidity code</h3>
+      <p className="small muted">{rc.method}</p>
+      <ul className="bars">
+        {rows.map((row) => (
+          <RealBar key={row.label} row={row} total={rc.sequences} unit="sequences" />
+        ))}
+      </ul>
+      <p className="small muted" style={{ margin: "14px 0 0" }}>
+        <a href={githubFile(rc.report)}>Report</a>
+      </p>
     </div>
   );
 }
