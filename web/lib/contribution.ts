@@ -361,6 +361,7 @@ export const META_TOOLING = [
     key: "muse-code",
     name: "Muse Code 1.4.14",
     kind: "Meta's coding agent",
+    id: null,
     how: "Runs ProofForge as an MCP server (integrations/muse/proofforge_mcp.py) with the ProofForge skill (.agents/skills/proofforge/SKILL.md) and the ProofForgeFin library in its workspace; headless `muse exec` runs driven by agents/muse_code.py, every model request metered at the wire (integrations/muse/meter.py). The arm on its own is the same Muse Code with Lean only (the MCP server's `lean_build`).",
     paths: ["integrations/muse/proofforge_mcp.py", ".agents/skills/proofforge/SKILL.md", "agents/muse_code.py", "integrations/muse/meter.py"],
     experiments: ["results/frontier-2", "results/frontier-3", "results/hard-task-1", "results/vyper-replication-1", "results/muse-code-1"],
@@ -368,7 +369,8 @@ export const META_TOOLING = [
   {
     key: "muse-spark",
     name: "Muse Spark 1.3",
-    kind: "Meta Model API, Contributor tier (muse-spark-1.3-contributor)",
+    kind: "Meta Model API, Contributor tier",
+    id: "muse-spark-1.3-contributor",
     how: "The model inside Muse Code in every Muse Code run, and the repairer, implementer and prover of arms A0 (on its own), A1 (the ProofForge harness) and A2 (A1 with the Muse Wonder planner).",
     paths: ["agents/meta_client.py", "agents/baseline.py", "agents/repair.py"],
     experiments: ["results/baseline-flagships-1", "results/e1-test-1", "results/library-1"],
@@ -376,7 +378,8 @@ export const META_TOOLING = [
   {
     key: "muse-wonder",
     name: "Muse Wonder 1.0",
-    kind: "Meta Model API (muse-wonder-1.0)",
+    kind: "Meta Model API",
+    id: "muse-wonder-1.0",
     how: "The lemma planner of arm A2: when an obligation resists direct proof, it proposes helper lemma statements that Muse Spark 1.3 then proves, on one budget.",
     paths: ["agents/repair.py"],
     experiments: ["results/library-1", "results/knight-1", "results/balancer-1"],
@@ -384,7 +387,8 @@ export const META_TOOLING = [
   {
     key: "muse-spark-open",
     name: "Muse Spark Open",
-    kind: "Meta's open-weight model on Baseten Model APIs (meta-models/muse-spark-open-1026)",
+    kind: "Meta's open-weight model on Baseten Model APIs",
+    id: "meta-models/muse-spark-open-1026",
     how: "Arms A0 and A1 on the 30 frozen E1 test tasks.",
     paths: ["agents/meta_client.py"],
     experiments: ["results/e1-test-open-1"],
@@ -392,7 +396,8 @@ export const META_TOOLING = [
   {
     key: "muse-glimmer",
     name: "Muse Glimmer 30B",
-    kind: "Self-hosted with vLLM on one Modal H100 (glimmer/muse-glimmer-30b)",
+    kind: "self-hosted with vLLM on one Modal H100",
+    id: "glimmer/muse-glimmer-30b",
     how: "Arms A0 and A1 on the frozen E1 test tasks; incomplete when the host paused the workspace.",
     paths: ["infra/modal/glimmer_vllm.py"],
     experiments: ["results/e1-test-glimmer-1"],

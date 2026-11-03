@@ -338,12 +338,12 @@ describe("the Meta models and tools", () => {
   });
   it("every model ID is priced in agents/budget.py", () => {
     for (const id of ["muse-spark-1.3-contributor", "muse-wonder-1.0", "meta-models/muse-spark-open-1026", "glimmer/muse-glimmer-30b"]) {
-      expect(META_TOOLING.some((m) => m.kind.includes(`(${id})`)), id).toBe(true);
+      expect(META_TOOLING.some((m) => m.id === id), id).toBe(true);
       expect(budget).toContain(`"${id}"`);
     }
   });
   it("the open-weight servings are the ones OPEN_WEIGHTS states", () => {
-    expect(META_TOOLING.find((m) => m.key === "muse-glimmer")!.kind).toContain(OPEN_WEIGHTS.find((o) => o.key === "glimmer")!.serving.replace(/^self-hosted/, "Self-hosted"));
+    expect(META_TOOLING.find((m) => m.key === "muse-glimmer")!.kind).toContain(OPEN_WEIGHTS.find((o) => o.key === "glimmer")!.serving);
     expect(OPEN_WEIGHTS.find((o) => o.key === "spark-open")!.serving).toContain("Baseten Model APIs");
     expect(flat(text("results/frontier-3/PREREGISTRATION.md"))).toContain(`${META_TOOLING[0].name}, \`MUSE_NO_AUTO_UPDATE=1\`, model \`muse-spark-1.3-contributor\``);
   });
