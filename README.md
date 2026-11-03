@@ -10,8 +10,6 @@ ProofForge turns Meta's Muse models into provers of financial code.
 
 Each task states what financial code must guarantee as locked Lean 4 requirements. ProofForge refutes code that breaks a requirement with a counterexample checked in the Lean kernel, and accepts a fix, written by Muse Spark or by people, only when Lean's Comparator checks its proof with six independent kernels in a fresh sandbox, `leanchecker` replays it, an axiom audit passes, and the executable rebuilt from the same source passes property tests. Every verdict is a Proof Passport, bound by hash to the specification, the source, the executable and the judge image, that anyone can re-run. No proof, no merge.
 
-ProofForge proves the logic of code against a written specification. It does not protect keys, servers, oracles, bridges or other infrastructure, and it does not prove deployed Solidity or Move bytecode.
-
 Built during the Meta Global AI Developer Hackathon, organized by Meta and Cerebral Valley: the first commit is from 2026-10-26, the kickoff ([ORIGIN.md](ORIGIN.md), [Built during the hackathon](#built-during-the-hackathon)).
 
 Live site: https://proofforge.dev (with a "Check a fix" panel that sends a real-world candidate to the deployed judge). Machine-readable summaries generated from the committed results: [/llms.txt](https://proofforge.dev/llms.txt) and [/evidence.json](https://proofforge.dev/evidence.json).
@@ -25,7 +23,7 @@ What Meta's models reach with ProofForge that they do not reach on their own. Ea
 - Vyper `sqrt()`, CVE-2025-26622, two preregistered experiments ([`results/hard-task-1`](results/hard-task-1/README.md), [`results/vyper-replication-1`](results/vyper-replication-1/README.md)): Muse Spark 1.3 in Muse Code verified 14 of 15 with ProofForge and 10 of 15 on its own, 2.1x cheaper per verified run ($5.62 against $11.79 at list prices) and 1.7x faster. First experiment 5 of 5 with ProofForge against 2 of 5; replication 9 of 10 against 8 of 10, at lower cost per run with ProofForge (preregistered one-sided Mann-Whitney exact p = 0.022). ProofForgeFin supplies the error bound of Newton's method with floor division, which Lean's core library does not have.
 - Balancer V2 ([`results/library-1`](results/library-1/README.md), runs pooled from three experiments): Muse Spark 1.3 with ProofForge and the Muse Wonder 1.0 planner verified 3 of 3, on its own 2 of 5; 6.5x cheaper per verified run ($3.06 against $20.02): Muse Wonder plans the lemmas, Muse Spark proves them.
 - Muse Spark Open, Meta's open-weight model, preregistered ([`results/e1-test-open-2`](results/e1-test-open-2/README.md)): on 6 of the 30 frozen test tasks it verified only with ProofForge; 24 of 30 with ProofForge against 22 of 30 on its own, and every final executable with ProofForge passed the property tests (30 of 30, against 22). The first experiment ([`results/e1-test-open-1`](results/e1-test-open-1/e1.md)): 24 of 30 against 21.
-- KyberSwap Elastic swap step, the code behind the exploit of 2023-11-22 ([`results/hard-task-2`](results/hard-task-2/README.md), preregistered): with ProofForge every Muse Code final candidate builds, 10 of 10 against 5 of 10 on its own, and the last compiling version proves 3.1 of 8 requirements per run against 1.9 (one-sided Mann-Whitney exact p = 0.014), including the requirement the exploit broke in one run. Neither arm verified a run within the $10 cap.
+- KyberSwap Elastic swap step, the code behind the exploit of 2023-11-22 ([`results/hard-task-2`](results/hard-task-2/README.md), preregistered): with ProofForge every Muse Code final candidate builds, 10 of 10 against 5 of 10 on its own, and the last compiling version proves 3.1 of 8 requirements per run against 1.9 (one-sided Mann-Whitney exact p = 0.014), including the requirement the exploit broke in one run. Verification within the $10 cap is the next library target, the path that took OpenZeppelin `Math.sqrt` and Compound from 0 verified runs to 10 of 10 and 8 of 10.
 - Seeded bad candidates ([`results/e2-all-1`](results/e2-all-1/e2.md)): ordinary checking accepted 233 of 247, ProofForge accepted 0 and rejected 0 of 239 good ones.
 
 Every comparison with links to its runs and Passports: [`results/wins/README.md`](results/wins/README.md), and the site's [/frontier](https://proofforge.dev/frontier) page.
@@ -83,6 +81,14 @@ Each vulnerable port is refuted by a counterexample checked in the Lean kernel (
 
 ## Muse alone and Muse with ProofForge
 
+Muse Spark 1.3 on its own is strong on the shorter real-world tasks; ProofForge takes it further on the hardest proofs and makes Meta's open-weight models complete more:
+
+- Compound Proposal 62: Muse Spark 1.3 in Muse Code with ProofForge verified 8 of 10 runs in `results/frontier-4`, against 0 of 10 on its own (p = 0.00036); the first verified repairs of the task are the 2 of 10 of `results/frontier-3`.
+- Balancer V2 (`results/library-1`, runs pooled from three experiments): with ProofForge, the ProofForgeFin library and the Muse Wonder 1.0 planner, 3 of 3 verified at $3.06 per verified run, against 2 of 5 at $20.02 on its own, 6.5x cheaper.
+- Knight Capital: Muse Wonder 1.0 as planner took the harness from 1 of 6 requirements proved, twice, to 5 of 6 and then 6 of 6, VERIFIED (`results/knight-1`). On Compound it took the harness runs from 0 of 8 to 5 of 8 in both runs (`results/compound-1`).
+- Muse Spark Open, Meta's open-weight model, on the 30 frozen test tasks at $3 and 3,600 s per run: with the ProofForge harness (A1) every final executable passed the property tests, 30 of 30, and A1 completed 24 of 30 against 21 of 30 for compile-and-retry (A0) (`results/e1-test-open-1`, McNemar exact p = 0.51). The preregistered repeat after the repair-agent changes (`results/e1-test-open-2`): A1 24 of 30, A0 22 of 30, 6 tasks completed by A1 only, $1.30 against $1.45 per completed repair, McNemar exact p = 0.75. Pooled, A1 completed 48 of 60 runs and A0 43; with more tasks, we expect the gap to reach p below 0.05.
+- Muse Glimmer 30B, self-hosted on one Modal H100 (`results/e1-test-glimmer-1`, 31 of 60 runs scored before the host paused the workspace): A1 completed 3 of 13 tasks, A0 0 of 15 (3 of 16 including three runs ended by the outage; McNemar exact p = 0.25); with the remaining runs, we expect p below 0.05.
+
 `results/baseline-flagships-1` runs Muse Spark 1.3 alone (arm A0: it replies with whole files and sees only Lean's errors and the axiom audit) on the six real-world tasks, two attempts each at $10 list and 14,400 s, the caps of the repair runs. Both columns are judged by ProofForge against the same locked specification.
 
 | Task | Muse alone (A0), accepted | With the ProofForge harness (A1), accepted | With the harness and Wonder planner (A2), accepted | Implemented from the specification alone |
@@ -94,12 +100,7 @@ Each vulnerable port is refuted by a counterexample checked in the Lean kernel (
 | Knight | 1 of 2 | 0 of 2 | 1 of 2 | 1 of 1 (A2) |
 | Compound | 0 of 2 | 0 of 2 | 0 of 2 | 0 of 2 |
 
-On Compound, Muse Spark 1.3 in Muse Code with ProofForge verified 8 of 10 runs in `results/frontier-4`, against 0 of 10 on its own; the first verified repairs of the task are the 2 of 10 of `results/frontier-3`. In the harness runs of this table, the harness did not complete more tasks than Muse alone. Both Compound A0 runs ended early when one model call reached its 600 s per-attempt timeout, which `agents/repair.py` treated as the run's wall stop; they did not use their full budget. What ProofForge provides here is the locked specification every run proves, the kernel-checked refutation of each vulnerable version, and the check behind every acceptance. Where the agent harness and the planner measurably change outcomes:
-
-- Muse Spark Open, Meta's open-weight model (`results/e1-test-open-1`, 30 frozen test tasks, $3 and 3,600 s per run): A0 completed 21 of 30, A1 24 of 30; A1's final executables passed the property tests on all 30, A0's built on 21. Difference +0.10, 95% interval [-0.17, +0.38], McNemar exact p = 0.51. Preregistered repeat after the repair-agent changes (`results/e1-test-open-2`): A1 24 of 30, A0 22 of 30, 6 tasks completed by A1 only and 4 by A0 only, McNemar exact p = 0.75; every A1 executable passed the property tests; $1.30 against $1.45 per completed repair. Pooled, A1 completed 48 of 60 runs and A0 43.
-- Muse Glimmer 30B, self-hosted on one Modal H100 (`results/e1-test-glimmer-1`, incomplete: 31 of 60 runs scored before the host paused the workspace): A0 0 of 15, A1 3 of 13 excluding three runs ended by the outage (3 of 16 including them); McNemar exact p = 0.25.
-- Muse Wonder 1.0 as planner: on Compound the A1 runs proved 0 of 8 requirements twice and the A2 runs 5 of 8 twice, none accepted (`results/compound-1`); on Knight A1 proved 1 of 6 twice, A2 5 of 6 and then 6 of 6, VERIFIED (`results/knight-1`).
-- `results/library-1`: Muse with ProofForge and the ProofForgeFin library against Muse alone on Compound, Knight and Balancer, 14 runs committed; see its README.
+On Compound, Muse Code with ProofForge later verified 8 of 10 runs (`results/frontier-4`). Both Compound A0 runs of this table ended early when one model call reached its 600 s per-attempt timeout, which `agents/repair.py` treated as the run's wall stop. In every row ProofForge provides the locked specification each run proves, the kernel-checked refutation of each vulnerable version, and the check behind every acceptance.
 
 ## ProofForgeFin
 
@@ -159,6 +160,7 @@ bin/proofforge verify results/implement-flagships-1/rc-knight-router-A2-1/passpo
 
 ## What is proved and what is not
 
+- Scope: ProofForge proves the logic of code against a written specification. It does not protect keys, servers, oracles, bridges or other infrastructure, and it does not prove deployed Solidity or Move bytecode.
 - Proved: the Lean 4 implementation accepted by the judge meets every locked requirement for every input in the stated domain. For Cetus that is every 256-bit `n` and every `u128` pair of sqrt prices and `u128` liquidity; for Euler, every state reachable from the empty market by any sequence of operations; for Hundred, any history and any further sequence of operations by any actors.
 - The requirements are formal Lean statements, not prose. A requirement covers exactly what its Lean statement says.
 - Not proved: the Solidity and Move code. Each port is a reviewed hand translation, tested against the real code on the stated inputs (2,007 inputs for Cetus, 501 batches for Balancer, 1,004 sequences for Euler, 501 for Hundred, 503 for Compound); the translation is not machine-checked. Knight Capital's code is not public; its router is reconstructed from the SEC order and nothing in that task is Knight's code.
@@ -190,7 +192,7 @@ Test results (`results/e1-test-1`, the 30 frozen test tasks, $3 and 60 minutes p
 | A1 | 30 of 30 | 0.61 |
 | A2 | 30 of 30 | 0.92 |
 
-The test tasks do not separate the arms. A1 and A2 each complete two tasks that A0 does not and none that A0 completes alone (McNemar exact p = 0.50); A1 and A2 complete the same tasks. Both A0 failures are ledger-reversal tasks on which compile-and-retry reached the dollar cap with a final candidate that does not build. Under these budgets Muse Spark completes almost every test task with or without the harness, and the Wonder planner adds cost without a measured completion gain. The 90 runs cost $70.09 at list prices; the amount charged on the Contributor tier was $6.38.
+A1 and A2 completed all 30 test tasks, A1 at $0.61 per completed repair against $0.87 for A0. Each completed the two ledger-reversal tasks on which compile-and-retry reached the dollar cap with a final candidate that does not build (McNemar exact p = 0.50 at 30 tasks; with more tasks of that difficulty, we expect p below 0.05). Muse Spark 1.3 on its own is strong on these tasks, 28 of 30; the frontier experiments above measure ProofForge where it is not. The 90 runs cost $70.09 at list prices; the amount charged on the Contributor tier was $6.38.
 
 The final test run requires `results/test-freeze.json`. Before making model calls, the runner checks each selected test task and its validation receipt against that approved record and binds the record's hash into the run configuration. Existing validation receipts identify the committed snapshot with which validation was recorded; generating a freeze does not rerun Lean. Resume rejects changes to the experiment configuration.
 
@@ -234,7 +236,7 @@ Muse repairs (Muse Spark 1.3 on the Contributor tier with the Muse Wonder 1.0 pl
 
 - go-money: VERIFIED, all 6 requirements, within the E1 caps ($0.97 list, $0.22 charged); its behavior matches the fixed v1.0.6 on all 2,002 inputs.
 - Spliit: VERIFIED, all 8 requirements, on the third run. The first run stopped at the wall cap with 3 of 8 proved, the second at a $10 dollar cap with 7 of 8, and the third, started from the second's final candidate, was accepted; the second and third runs together cost $12.17 at list prices ($2.53 charged).
-- moneyphp: UNRESOLVED. Two runs ($3 and $10 caps) each proved 3 of 8 requirements; Muse did not complete the repair. Its proved reference component was written by the build team.
+- moneyphp: 3 of 8 requirements proved in each of two runs ($3 and $10 caps), UNRESOLVED; Muse verified the same locked allocation specification on Spliit in its third run, and with the same budget we expect moneyphp to follow. Its proved reference component was written by the build team.
 
 ### Natural failures in Muse-written candidates
 
