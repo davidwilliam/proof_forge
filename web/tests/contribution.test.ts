@@ -6,6 +6,7 @@ import {
   CETUS_HOTFIX,
   COMPARISON,
   COMPOUND,
+  COMPOUND_CASE,
   COST_PER_VERIFIED,
   COUNTEREXAMPLES,
   HACKATHON,
@@ -387,5 +388,37 @@ describe("Compound Proposal 62", () => {
     expect(c).toContain(`| Proposal 62 build identical to the Lean port, every operation | ${COMPOUND.realCode.sequences} of ${COMPOUND.realCode.sequences} sequences |`);
     for (const row of COMPOUND.realCode.rows) expect(c).toContain(`| ${row.code} build breaks a requirement | ${row.violating}`);
     expect(existsSync(path.join(ROOT, COMPOUND.realCode.report))).toBe(true);
+  });
+  it("the case viewer's Passports, list prices, bounds and sources are the committed files'", () => {
+    const C = COMPOUND_CASE;
+    expect(C.port.path).toBe(COMPOUND.vulnerable.passport);
+    expect(C.fix.path).toBe(COMPOUND.fix.passport);
+    expect(C.repairs.map((r) => r.run)).toEqual(COMPOUND.museRepairs.map((m) => m.run));
+    for (const ref of [C.port, C.fix, ...C.repairs.map((r) => r.passport)]) {
+      const p = readPassport(ref.path);
+      expect(p.recomputedSha256, ref.path).toBe(p.sha256);
+      expect(p.sha256, ref.path).toBe(ref.sha256);
+      expect(p.status, ref.path).toBe(ref.status);
+      expect(p.requirements, ref.path).toEqual(ref.requirements);
+      expect(p.task, ref.path).toBe(COMPOUND.task);
+    }
+    for (const ref of [C.port, C.fix]) expect(ref.reproduce).toBe(readPassport(ref.path).reproduce);
+    const f3 = flatText("results/frontier-3/README.md");
+    const task = JSON.parse(text("realworld/tasks/rw-compound-comp/task.json")) as { requirements: [string, string][] };
+    const leanName = new Map(task.requirements);
+    for (const [i, r] of C.repairs.entries()) {
+      const m = COMPOUND.museRepairs[i]!;
+      expect(r.passport.path).toBe(m.passport);
+      expect(r.passport.reproduce).toBe(`bin/proofforge verify ${m.passport} --candidate ${m.candidate}`);
+      expect(r.usdList, m.summary).toBe((readExact(m.summary) as { meter: { usd_list: number } }).meter.usd_list);
+      expect(f3).toContain(`| ${r.run} | VERIFIED | VERIFIED | 8 of 8 | $${r.usdList.toFixed(2)} |`);
+      for (const b of C.bounds) expect(r.passport.requirements[b], `${r.run} ${b}`).toBe("VERIFIED");
+    }
+    expect(f3).toContain(`at ${C.repairs.map((r) => `$${r.usdList.toFixed(2)}`).join(" and ")} list dollars`);
+    expect(f3).toContain(`both prove the three sequence bounds (${C.bounds.map((b) => `\`${leanName.get(b)}\``).join(", ")})`);
+    expect(C.bounds.map((b) => leanName.get(b))).toEqual([...LIBRARY_COMPOUND.bounds]);
+    const readme = flatText(COMPOUND.readme);
+    expect(C.citations.map((s) => s.url)).toEqual([...COMPOUND.loss.sources]);
+    for (const s of C.citations) expect(readme).toContain(`- ${s.label}, `);
   });
 });

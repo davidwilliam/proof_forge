@@ -5,6 +5,8 @@
 //
 // This module has no runtime imports, so scripts/evidence.mjs can load it on its own.
 
+import type { Citation, PassportRef } from "./flagships";
+
 /** A set of agent runs on one task, all under the same caps. */
 export interface Runs {
   /** A0 compile-and-retry, A1 the ProofForge harness, A2 the harness with Muse Wonder 1.0 as planner. */
@@ -455,6 +457,104 @@ export const COMPOUND = {
     "The specification covers one market; it does not cover several markets sharing compAccrued, the oracle and liquidity checks of the hooks, interest accrual or the Proposal 65 corrections.",
   ],
 } as const;
+
+/**
+ * The Passports of COMPOUND as the home page's case viewer shows them, recorded the way the
+ * flagship records of lib/flagships.ts record theirs; tests/contribution.test.ts recomputes each
+ * hash and status from its file and each list price from the run's summary.json.
+ */
+export const COMPOUND_CASE: {
+  citations: Citation[];
+  port: PassportRef;
+  fix: PassportRef;
+  repairs: { run: string; usdList: number; passport: PassportRef }[];
+  /** The three bounds over any sequence of operations; both verified runs prove them (results/frontier-3/README.md). */
+  bounds: string[];
+} = {
+  // realworld/tasks/rw-compound-comp/README.md, "Sources"
+  citations: [
+    { label: "The Block", url: COMPOUND.loss.sources[0] },
+    { label: "Compound newsletter", url: COMPOUND.loss.sources[1] },
+  ],
+  port: {
+    path: "results/compound-1/passports/port.json",
+    sha256: "3ac121be0f5748feeb430e95637d409048441b55a91e009b2253f3ded07693a3",
+    status: "REFUTED",
+    requirements: {
+      "REQ-CALLS-SUCCEED": "UNRESOLVED",
+      "REQ-SUPPLY-HOOK": "REFUTED",
+      "REQ-BORROW-HOOK": "REFUTED",
+      "REQ-CLAIM": "REFUTED",
+      "REQ-SET-SPEEDS": "UNRESOLVED",
+      "REQ-REWARDS-BOUNDED": "REFUTED",
+      "REQ-ACCOUNT-BOUNDED": "REFUTED",
+      "REQ-NO-BACKDATED-REWARDS": "UNRESOLVED",
+    },
+    reproduce: "bin/proofforge verify results/compound-1/passports/port.json --candidate realworld/tasks/rw-compound-comp/attacks/p62_port.lean",
+  },
+  fix: {
+    path: "results/compound-1/passports/reference.json",
+    sha256: "7ccce9a2ebe8bffb61198e010b595f3126fb0ac5aa21c9906fe73593b2528d4a",
+    status: "VERIFIED",
+    requirements: {
+      "REQ-CALLS-SUCCEED": "VERIFIED",
+      "REQ-SUPPLY-HOOK": "VERIFIED",
+      "REQ-BORROW-HOOK": "VERIFIED",
+      "REQ-CLAIM": "VERIFIED",
+      "REQ-SET-SPEEDS": "VERIFIED",
+      "REQ-REWARDS-BOUNDED": "VERIFIED",
+      "REQ-ACCOUNT-BOUNDED": "VERIFIED",
+      "REQ-NO-BACKDATED-REWARDS": "VERIFIED",
+    },
+    reproduce: "bin/proofforge verify results/compound-1/passports/reference.json --candidate realworld/tasks/rw-compound-comp/reference/SolutionA.lean",
+  },
+  // The judged Passports name the candidate without the runs/ directory; the reproduce line names
+  // the committed candidate, as scripts/evidence.mjs publishes it.
+  repairs: [
+    {
+      run: "proofforge-full-5",
+      // summary.json meter.usd_list
+      usdList: 6.7,
+      passport: {
+        path: "results/frontier-3/judged/rw-compound-comp/proofforge-full-5/passport.json",
+        sha256: "b7aca6c04101c9fc27a6baca82e45dddaf69663c698f95913434c354e97e2beb",
+        status: "VERIFIED",
+        requirements: {
+          "REQ-CALLS-SUCCEED": "VERIFIED",
+          "REQ-SUPPLY-HOOK": "VERIFIED",
+          "REQ-BORROW-HOOK": "VERIFIED",
+          "REQ-CLAIM": "VERIFIED",
+          "REQ-SET-SPEEDS": "VERIFIED",
+          "REQ-REWARDS-BOUNDED": "VERIFIED",
+          "REQ-ACCOUNT-BOUNDED": "VERIFIED",
+          "REQ-NO-BACKDATED-REWARDS": "VERIFIED",
+        },
+        reproduce: "bin/proofforge verify results/frontier-3/judged/rw-compound-comp/proofforge-full-5/passport.json --candidate results/frontier-3/runs/rw-compound-comp/proofforge-full-5/final.lean",
+      },
+    },
+    {
+      run: "proofforge-full-9",
+      usdList: 7.4101,
+      passport: {
+        path: "results/frontier-3/judged/rw-compound-comp/proofforge-full-9/passport.json",
+        sha256: "4f7e8adfccefae8542370f3a9621b72594978fc2166283f4f000eefc9aabfb1e",
+        status: "VERIFIED",
+        requirements: {
+          "REQ-CALLS-SUCCEED": "VERIFIED",
+          "REQ-SUPPLY-HOOK": "VERIFIED",
+          "REQ-BORROW-HOOK": "VERIFIED",
+          "REQ-CLAIM": "VERIFIED",
+          "REQ-SET-SPEEDS": "VERIFIED",
+          "REQ-REWARDS-BOUNDED": "VERIFIED",
+          "REQ-ACCOUNT-BOUNDED": "VERIFIED",
+          "REQ-NO-BACKDATED-REWARDS": "VERIFIED",
+        },
+        reproduce: "bin/proofforge verify results/frontier-3/judged/rw-compound-comp/proofforge-full-9/passport.json --candidate results/frontier-3/runs/rw-compound-comp/proofforge-full-9/final.lean",
+      },
+    },
+  ],
+  bounds: ["REQ-REWARDS-BOUNDED", "REQ-ACCOUNT-BOUNDED", "REQ-NO-BACKDATED-REWARDS"],
+};
 
 export const SCOPE =
   "ProofForge proves the logic of code against a written specification. It does not protect keys, servers, oracles, bridges or other infrastructure, and it does not prove the deployed Solidity or Move bytecode itself.";
