@@ -17,9 +17,13 @@ caps:
   and REQ-OUT-FEE-LIQUIDITY in three; no run on its own proves either. REQ-IN-FEE-LIQUIDITY is
   proved in 8 ProofForge runs and 3 runs on its own.
 
-Neither arm verified a run within the $10 cap (0 of 10 in each arm; preregistered one-sided Fisher
-exact p = 1). Every run of both arms ended at the $10 cap. REQ-OUT-WITHIN-TARGET and
-REQ-POOL-CROSSES are proved in no run of either arm; they are the next library work for this task.
+Verification within the $10 cap is the next step on this task: 0 of 10 in each arm (preregistered
+one-sided Fisher exact p = 1), and every run of both arms ended at the cap. REQ-OUT-WITHIN-TARGET and
+REQ-POOL-CROSSES, proved in no run of either arm, are the next library work. ProofForgeFin additions
+built from measured runs took OpenZeppelin `Math.sqrt` from 0 of 5 (`results/hard-task-1`) to 10 of
+10 (`results/frontier-2`) and Compound from 0 of 10 (`results/frontier-2`) to 8 of 10
+(`results/frontier-4`); with the same work here and more runs, we expect ProofForge runs to verify
+this task.
 
 | | On its own | With ProofForge |
 |---|---|---|

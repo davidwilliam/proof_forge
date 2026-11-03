@@ -18,9 +18,11 @@ either arm proved.
 Every ProofForge final candidate builds (10 of 10); 1 of 10 builds on its own. The last compiling
 version proves 4.5 of 8 requirements per run on average with ProofForge and 2.2 of 8 on its own.
 
-Preregistered one-sided Fisher exact test: p = 0.24 (alpha 0.05; p < 0.05 needs at least 4 of 10
-with 0 of 10 on its own). Preregistered secondary, the runs on its own of `frontier-2` and this
-experiment pooled: 2 of 10 with ProofForge against 0 of 20, one-sided Fisher exact p = 0.10.
+Preregistered one-sided Fisher exact test: p = 0.24 (alpha 0.05). Preregistered secondary, the
+runs on its own of `frontier-2` and this experiment pooled: 2 of 10 with ProofForge against 0 of 20,
+one-sided Fisher exact p = 0.10. The next experiment, `results/frontier-4`, measured the build
+feedback, skill step and library additions built from these ten runs: 8 of 10 with ProofForge
+against 0 of 10 on its own, p = 0.00036.
 
 | | On its own | With ProofForge |
 |---|---|---|

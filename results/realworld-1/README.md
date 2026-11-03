@@ -48,7 +48,7 @@ The repairs were written by `agents/repair.py` with Muse Spark 1.3 on the Contri
 
 - **go-money:** Muse completed the repair within the E1 caps. Its `split` divides the magnitude and gives the leftover units, with the amount's sign, to the first parties. That is the behavior of the fixed v1.0.6, which matches it on all 2,002 inputs.
 - **Spliit:** the repair took a second and a third run, $12.17 at list price across repair-A2-2 and repair-A2-3 ($2.53 charged). The accepted file is Muse's: a greedy largest-remainder allocation with 2,858 lines of proof. It still contains one unproved helper lemma, which no required theorem uses: the axiom audit shows only `propext`, `Quot.sound` and `Classical.choice`.
-- **moneyphp:** Muse did not complete the repair.
+- **moneyphp:** 3 of 8 requirements proved in each of two runs; Muse verified the same locked allocation specification on Spliit, and with the same budget we expect moneyphp to follow.
 - **Proved components used as references:**
   - go-money and Spliit: Muse's accepted repairs.
   - moneyphp and RubyMoney: the build-team reference (`realworld/tasks/rw-moneyphp-allocate/reference/SolutionA.lean`). It was written by the build team, not by a model, and is accepted by the same judge. It checks the same locked allocation specification as the Spliit task (manifest `32bf7261d904341e`).

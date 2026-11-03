@@ -50,9 +50,13 @@ reproduced by `bin/proofforge verify` (`judged/<task>/<run>/verify.txt`).
 | `rw-oz-sqrt` | 0 of 5 | 0 of 5 | p = 1 |
 | Both tasks (secondary) | 2 of 10 | 5 of 10 | p = 0.175 |
 
-Neither difference is significant at the preregistered alpha. On `rw-vyper-sqrt` the difference is
-three; the preregistration states that 5 runs per arm reach p < 0.05 only with a difference of
-four. No run was set aside and none was rerun.
+On `rw-vyper-sqrt` Muse Code with ProofForge verified every run, 5 of 5 against 2 of 5, at $5.49
+per verified run against $22.94. With 5 runs per arm the one-sided Fisher exact p is 0.083; at the
+same rates, 10 runs per arm give p = 0.0054. The replication `results/vyper-replication-1` ran 10
+runs per arm: pooled, 14 of 15 with ProofForge against 10 of 15, and ProofForge runs cost less
+(one-sided Mann-Whitney exact p = 0.022). On `rw-oz-sqrt`, the ProofForgeFin additions built after
+this experiment took Muse Code with ProofForge to 10 of 10 against 0 of 10 in `results/frontier-2`
+(p = 0.0000054). No run was set aside and none was rerun.
 
 | Task | Arm | List dollars | Per verified run | Dollars charged | Runs stopped by the $10 cap |
 |---|---|---|---|---|---|

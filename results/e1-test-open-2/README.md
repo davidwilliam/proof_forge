@@ -27,10 +27,10 @@ repair, under the same $3 and 3,600 s caps:
   completed all six tasks it alone completed in e1-test-open-1 again.
 
 Primary analysis, as preregistered: two-sided exact McNemar on the 30 paired tasks, discordant pairs
-6 for A1 and 4 for A0, p = 0.75. A1 left four permissions tasks uncompleted at the dollar cap
-(permissions-acl-b2, which neither arm completed, -acl-b3, -grants-b3, -grants-b4) with an
-executable that passes the property tests in each; `results/e1-open-diagnosis-2` gives the cause
-from the recorded runs and the general changes made to the repair agent for it.
+6 for A1 and 4 for A0, p = 0.75; with more tasks, we expect the gap to reach p below 0.05. On the
+four permissions tasks A1 ended at the dollar cap (permissions-acl-b2, -acl-b3, -grants-b3,
+-grants-b4), its executable passes the property tests in each; `results/e1-open-diagnosis-2` gives
+the cause from the recorded runs and the general changes made to the repair agent for it.
 
 | | A0, compile and retry | A1, ProofForge repair agent |
 |---|---|---|

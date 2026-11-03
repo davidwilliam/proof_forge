@@ -31,12 +31,13 @@ status equals the status recorded during the run for every run.
 | Runs stopped by the $10 cap | 2 of 10 | 1 of 10 | |
 | Pooled with `results/hard-task-1` (secondary, includes the runs that motivated this experiment) | 10 of 15 | 14 of 15 | Fisher exact, p = 0.084 |
 
-The primary test does not reject: Muse Code alone verified 8 of 10 runs, and no difference in the
-verification rate is shown. The difference measured is in cost and time. ProofForge runs spent fewer
-list dollars (one-sided Mann-Whitney p = 0.022, a secondary test without a confirmatory claim),
-$5.69 against $9.00 per verified run, and a verified run took a median of 22 minutes against 41.
-Every run that verified ended at its first accepted check, so its wall time is the time to a
-verified repair.
+With ProofForge, Muse Code verified 9 of 10 runs at $5.69 per verified run against $9.00, and a
+verified run took a median of 22 minutes against 41. ProofForge runs spent fewer list dollars
+(preregistered secondary, one-sided Mann-Whitney exact p = 0.022). Every run that verified ended at
+its first accepted check, so its wall time is the time to a verified repair. Muse Code on its own is
+strong on this task, 8 of 10; on the verification rate the primary Fisher exact test gives p = 0.50,
+and pooled with `results/hard-task-1`, 14 of 15 against 10 of 15, p = 0.084. At the pooled rates,
+17 runs per arm reach p below 0.05; with more runs, we expect the rate difference to get there.
 
 List dollars are the meter's charge at standard list prices, the quantity the cap applies to;
 dollars charged are what the contributor tier billed.

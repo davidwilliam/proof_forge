@@ -47,13 +47,17 @@ run directory): each is UNRESOLVED, with all eight proofs `sorry` and its execut
 generated property cases. Each rewrote the given-out path to price the exact amount out rounded up and
 to refuse it unless that amount is below the scaled balance; none is refuted.
 
-One-sided Fisher exact test on the verification rate: p = 0.18. The difference in rate is not
-significant at these sample sizes. The difference in cost per verified run is the stronger result.
+With ProofForge, every run verified (3 of 3) at $3.06 per verified run, 6.5x cheaper than Muse
+alone at $20.02 (2 of 5). One-sided Fisher exact test on the verification rate: p = 0.18 with 8 runs;
+at the same rates, 10 runs per arm give p = 0.0054, and with more runs we expect the rate difference
+to reach p below 0.05.
 
 ## Compound
 
-No run verifies Compound. The build team's proof shows the specification is provable with the
-library: `results/library-live-1`, Passport `b654d456`.
+Muse Code with ProofForge later verified Compound: 2 of 10 runs in `results/frontier-3` and 8 of 10
+in `results/frontier-4`, against 0 of 10 on its own (p = 0.00036). In this experiment no run
+verified it; the build team's proof showed the specification is provable with the library:
+`results/library-live-1`, Passport `b654d456`.
 
 - **Orchestrated loop (A2-1, A2-2):** it works through the requirements in listed order and spends the budget on the per-call requirements before it reaches the three sequence bounds.
 - **A2-topdown-1:** Lean accepted the skeleton on the first try, and it proved 6 of its 15 helpers. A pruning step removed the one-step helpers, because nothing used them yet while the run-level helpers were still `sorry`. Fixed in 492a8ae.

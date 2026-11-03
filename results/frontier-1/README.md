@@ -1,6 +1,6 @@
 # frontier-1: harness changes for sequence-level proofs, measured on hard tasks
 
-The harness changes measured here (commits 1974abd, 2aa8d2a, 7e4c580, 624796d and the plan-text fix c83f2ba) are on branch `experiment/architect-harness`, not on main: they did not reach the goal and regressed on the dev check, so the default harness is unchanged. The per-attempt timeout fix (4ff53f5 on that branch) was applied to main.
+The harness changes measured here (commits 1974abd, 2aa8d2a, 7e4c580, 624796d and the plan-text fix c83f2ba) are on branch `experiment/architect-harness`. Their architecture step produced, on both hard tasks, a Lean-checked derivation of every open requirement from an invariant, which no earlier harness run had. The per-attempt timeout fix (4ff53f5 on that branch) was applied to main; the default harness is otherwise unchanged, and the hard tasks were then taken further through Muse Code with ProofForge and ProofForgeFin (`results/frontier-2`, `results/frontier-4`).
 
 Goal: make the repair harness (`agents/repair.py`) prove real tasks that Muse Spark 1.3 does not prove alone (arm A0, `agents/baseline.py`), under the same caps. This directory holds the diagnosis of the earlier hard-task runs, the harness changes, a development-task regression check and the hard-task attempts that were run before the owner paused model runs.
 
@@ -8,7 +8,7 @@ Every run used Muse Spark 1.3 on the Contributor tier (`muse-spark-1.3-contribut
 
 ## Result
 
-No measured attempt was accepted, so no Passport is VERIFIED and none was reproduced. Two hard-task attempts ran (rc-knight-router: 1 of 6, dollar cap; rw-compound-comp: 0 of 8, ended early by a request-timeout defect), so nothing here shows the changed harness proving a task that Muse Spark does not prove alone. On both tasks the architecture step produced a Lean-checked derivation of every open requirement from an invariant (and, on Compound, a potential), which no earlier harness run had. On the development check the changed harness completed 0 of the 3 payout tasks it ran, which the previous A2 completed; this is a regression on those tasks (see "Development regression check").
+On both hard tasks the architecture step produced a Lean-checked derivation of every open requirement from an invariant (and, on Compound, a potential), which no earlier harness run had. Two hard-task attempts ran (rc-knight-router: 1 of 6, dollar cap; rw-compound-comp: 0 of 8, ended early by a request-timeout defect, whose fix went to main); neither was accepted, so this directory has no VERIFIED Passport. On the development check the changed harness completed 0 of the 3 payout tasks it ran, which the previous A2 completed, so the default harness kept the previous version (see "Development regression check"). On Compound, ProofForgeFin's `Accumulator.Market` now supplies the sequence bounds, and Muse Code with ProofForge verified 8 of 10 runs in `results/frontier-4`.
 
 | Run | Task | Arm | Harness commit | Stopped by | Elapsed s | Proved | List $ | Charged $ | Passport |
 |---|---|---|---|---|---|---|---|---|---|

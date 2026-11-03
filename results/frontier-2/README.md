@@ -12,11 +12,13 @@ ended at an accepted check after a median of 12 minutes and $1.78 at list prices
 its own ended at the $10 cap or Muse Code's session limit, after a median of 85 minutes. No measured
 run of any arm had verified this task before (`results/hard-task-1`: 0 of 5 in each arm).
 
-On `rw-compound-comp`, neither arm verified a run (p = 1). With ProofForge every final candidate
-proves the same 5 of 8 requirements, `req_calls_succeed` among them; on its own the final candidate
-proves 3 to 5 of 8 in five runs and does not build in the other five. The three sequence bounds
-(`req_rewards_bounded`, `req_account_bounded`, `req_no_backdated`) are proved in no run of either
-arm.
+On `rw-compound-comp`, with ProofForge every final candidate builds and proves the same 5 of 8
+requirements, `req_calls_succeed` among them; on its own the final candidate proves 3 to 5 of 8 in
+five runs and does not build in the other five. The three sequence bounds (`req_rewards_bounded`,
+`req_account_bounded`, `req_no_backdated`) are proved in no run of either arm here, and no run
+verified (p = 1). The library and harness work built from these runs took Muse Code with ProofForge
+to 2 of 10 verified in `results/frontier-3` and 8 of 10 in `results/frontier-4`, every verified run
+proving all three bounds, against 0 of 10 on its own.
 
 | | `rw-oz-sqrt` on its own | `rw-oz-sqrt` with ProofForge | `rw-compound-comp` on its own | `rw-compound-comp` with ProofForge |
 |---|---|---|---|---|

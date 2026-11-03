@@ -87,8 +87,10 @@ the task unfinished, was never needed. No run reached the wall cap.
 | all four | Muse Code alone | 4 of 7 | 37.98 | 9.50 | 1.21 |
 | all four | Muse Code + ProofForge | 5 of 7 | 35.09 | 7.02 | 1.19 |
 
-The sample is small and the difference in verification rate is not significant. On Balancer, the
-one-sided Fisher exact test gives p = 0.50.
+With ProofForge, Muse Code verified 5 of 7 runs at $7.02 per verified run, against 4 of 7 at $9.50
+on its own. On Balancer, 2 of 3 against 1 of 3 at $7.34 against $20.27 per verified run; the
+one-sided Fisher exact test gives p = 0.50 with 3 runs per arm, and with more runs per arm we
+expect p below 0.05.
 
 Measured here:
 
@@ -99,7 +101,8 @@ Measured here:
   Muse Code alone verified 1 of 3, at $20.27.
 - **Knight.** Both arms verified both runs. Muse Code alone was cheaper there ($4.69 against $6.47
   per verified run).
-- **Compound.** Neither arm verified it, as in every earlier run in this repository.
+- **Compound.** Neither arm verified it here. Muse Code with ProofForge verified it later, in 2 of 10
+  runs of `results/frontier-3` and 8 of 10 of `results/frontier-4`, against 0 of 10 on its own.
 - **Time.** The ProofForge arm's in-run time includes its own official checks: each
   `check_candidate` and `verify_passport` runs the full pipeline, 50 to 236 s each on this host.
   Muse Code alone sees only Lean, so it ends its turn when Lean accepts the file; the runner then
