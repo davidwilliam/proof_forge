@@ -3,7 +3,7 @@ ProofForge tester trial, 28 October 2026 (America/New_York)
 Verdict: all substantive expectations in docs/TRIAL.md passed on commit
 8fa5d2a745e15073f84dad5d94c56cde55d05442. No blocking product defect found.
 
-Participant: Codex, accepted as a tester by the owner. The owner is recruiting
+Participant: an automated coding agent, accepted as a tester by the owner. The owner is recruiting
 additional testers separately. This was a fresh clone on an existing Apple
 Silicon Mac with Docker cache and GitHub authentication, not a cold machine.
 
