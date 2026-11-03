@@ -184,12 +184,17 @@ from 1000 to 950. The same file proves that the upgrade changes no account.
   plus the unindexed emission, which never grows except when blocks pass, and then by at most
   the COMP emitted. The same argument for a single account gives the other two bounds.
 - `spec/CompRewards/Sanity.lean` proves `honest_rewards` (above).
-- Muse did not complete the task. Six runs of Muse Spark 1.3 on the Contributor tier, each
-  capped at $10 list and 14,400 s, ended UNRESOLVED: two in repair mode without a planner (A1),
-  two with Muse Wonder as planner (A2), and two in implement mode. The A2 runs proved the five
-  per-call requirements, and the implement runs proved three and four of them. No run proved
-  REQ-REWARDS-BOUNDED, REQ-ACCOUNT-BOUNDED or REQ-NO-BACKDATED-REWARDS. Total cost: $54.55 at
-  list prices, $5.58 charged. Details and Passports are in `results/compound-1/README.md`.
+- Muse Spark 1.3 in Muse Code with ProofForge verified the repair in 8 of 10 preregistered
+  runs of `results/frontier-4`, against 0 of 10 in Muse Code on its own (one-sided Fisher exact
+  p = 0.00036), each run capped at $10 list and 14,400 s. Every verified run proves all eight
+  requirements, including REQ-REWARDS-BOUNDED, REQ-ACCOUNT-BOUNDED and
+  REQ-NO-BACKDATED-REWARDS. The first verified repairs are the 2 of 10 of `results/frontier-3`.
+- Before those, six runs of Muse Spark 1.3 on the Contributor tier in the ProofForge harness,
+  each capped at $10 list and 14,400 s, ended UNRESOLVED: two in repair mode without a planner
+  (A1), two with Muse Wonder as planner (A2), and two in implement mode. The A2 runs proved the
+  five per-call requirements, and the implement runs proved three and four of them. None proved
+  the three sequence bounds. Total cost: $54.55 at list prices, $5.58 charged. Details and
+  Passports are in `results/compound-1/README.md`.
 
 ## What the port corresponds to
 
