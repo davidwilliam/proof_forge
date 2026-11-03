@@ -1,0 +1,1281 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "rw-compound-comp",
+ "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96",
+ "run_dir": "<proofforge>/results/frontier-4/rw-compound-comp/proofforge-full-8",
+ "arm": "proofforge-full",
+ "loop": "muse-code",
+ "model": "muse-spark-1.3-contributor",
+ "created": "2026-11-03T02:10:37-0500",
+ "reconstructed": false,
+ "final": {
+  "text": "import CompRewards.Spec\nimport ProofForgeFin.Accumulator.Market\n/-!\nFixed COMP distribution of Compound's Comptroller (Proposal 62, corrected by Proposal 64).\n\nThe deployed Proposal 62 code credited an account with no recorded index from 0 whenever the\nmarket index was strictly above `compInitialIndex`\n(`supplierIndex == 0 && supplyIndex > compInitialIndex`). When the upgrade initialized an index\nthat was still 0 to exactly `compInitialIndex`, such an account was credited `units` of COMP\nthat were never emitted. The fix uses the Proposal 64 condition (`>=`): an account with no\nrecorded index starts accruing from `compInitialIndex` once the market index has reached it,\nwhich is exactly `accrualStart` of the specification.\n\nEach call is written in the specification's closed form (`accrueSide`, `accrualStart`,\n`creditFor`, `grant`), so the effect requirements hold by case analysis on the preconditions.\n-/\nnamespace CompRewards\n\n/-- Next state of a supply hook, in the specification's closed form. -/\ndef supplyNext (s : St) (who : Account) : St :=\n  { s with\n    supplyState := accrueSide s.supplyState s.blockNumber (totalSupply s),\n    accts := s.accts.modify who fun a =>\n      { a with\n        supplierIndex := (accrueSide s.supplyState s.blockNumber (totalSupply s)).index,\n        accrued := a.accrued + creditFor a.supply\n          (accrualStart a.supplierIndex (accrueSide s.supplyState s.blockNumber (totalSupply s)).index)\n          (accrueSide s.supplyState s.blockNumber (totalSupply s)).index } }\n\n/-- Next state of a borrow hook, in the specification's closed form. -/\ndef borrowNext (s : St) (who : Account) : St :=\n  { s with\n    borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s),\n    accts := s.accts.modify who fun a =>\n      { a with\n        borrowerIndex := (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index,\n        accrued := a.accrued + creditFor a.borrow\n          (accrualStart a.borrowerIndex (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index)\n          (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index } }\n\n/-- Next state of a speed change, in the specification's closed form. -/\ndef speedsNext (s : St) (sup bor : Nat) : St :=\n  { s with\n    supplyState := if s.supplyState.speed = sup then s.supplyState\n      else { accrueSide s.supplyState s.blockNumber (totalSupply s) with speed := sup },\n    borrowState := if s.borrowState.speed = bor then s.borrowState\n      else { accrueSide s.borrowState s.blockNumber (totalBorrows s) with speed := bor } }\n\n/-- Preconditions of a supply hook (the two `sub_` underflow guards). -/\ndef supplyPre (s : St) (who : Account) : Prop :=\n  s.supplyState.block \u2264 s.blockNumber \u2227\n  accrualStart (s.acct who).supplierIndex\n      (accrueSide s.supplyState s.blockNumber (totalSupply s)).index \u2264\n    (accrueSide s.supplyState s.blockNumber (totalSupply s)).index\n\n/-- Preconditions of a borrow hook. -/\ndef borrowPre (s : St) (who : Account) : Prop :=\n  s.borrowState.block \u2264 s.blockNumber \u2227\n  accrualStart (s.acct who).borrowerIndex\n      (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index \u2264\n    (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index\n\ninstance supplyPreDec (s : St) (who : Account) : Decidable (supplyPre s who) := by\n  unfold supplyPre; infer_instance\n\ninstance borrowPreDec (s : St) (who : Account) : Decidable (borrowPre s who) := by\n  unfold borrowPre; infer_instance\n\n/-- Fixed Comptroller: each call in the specification's closed form. -/\ndef comptroller : Impl := fun s c =>\n  match c with\n  | .supplyHook who =>\n    if supplyPre s who then some (supplyNext s who) else none\n  | .borrowHook who =>\n    if borrowPre s who then some (borrowNext s who) else none\n  | .claim who =>\n    if borrowPre s who \u2227 supplyPre (borrowNext s who) who then\n      some (grant (supplyNext (borrowNext s who) who) who)\n    else none\n  | .setSpeeds a b =>\n    if (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n       (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber)\n    then some (speedsNext s a b) else none\n\ntheorem supplyHook_eq (s : St) (who : Account) :\n    comptroller s (.supplyHook who) =\n      if supplyPre s who then some (supplyNext s who) else none := rfl\n\ntheorem borrowHook_eq (s : St) (who : Account) :\n    comptroller s (.borrowHook who) =\n      if borrowPre s who then some (borrowNext s who) else none := rfl\n\ntheorem claim_eq (s : St) (who : Account) :\n    comptroller s (.claim who) =\n      if borrowPre s who \u2227 supplyPre (borrowNext s who) who then\n        some (grant (supplyNext (borrowNext s who) who) who)\n      else none := rfl\n\ntheorem setSpeeds_eq (s : St) (a b : Nat) :\n    comptroller s (.setSpeeds a b) =\n      if (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n         (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber)\n      then some (speedsNext s a b) else none := rfl\n\n/-- The index update of the specification is the library's `catchUp`. -/\ntheorem accrue_index (sd : Side) (now total : Nat) :\n    (accrueSide sd now total).index =\n      ProofForgeFin.Accumulator.catchUp doubleScale sd.index sd.block sd.speed now total := by\n  unfold accrueSide ProofForgeFin.Accumulator.catchUp\n  by_cases h : 0 < now - sd.block \u2227 0 < sd.speed \u2227 0 < total <;> simp [h]\n\n/-- The index update never lowers the index. -/\ntheorem accrue_index_le (sd : Side) (now total : Nat) :\n    sd.index \u2264 (accrueSide sd now total).index := by\n  rw [accrue_index]\n  exact ProofForgeFin.Accumulator.le_catchUp _ _ _ _ _ _\n\n/-- An account's accrual start never lies above the index once its recorded index does not lie\nabove the index the market had. -/\ntheorem accrualStart_le (recorded index oldIndex : Nat) (hrec : recorded \u2264 oldIndex)\n    (hidx : oldIndex \u2264 index) : accrualStart recorded index \u2264 index := by\n  unfold accrualStart\n  by_cases hr : recorded = 0\n  \u00b7 simp only [hr, ite_true]\n    split <;> omega\n  \u00b7 simp only [hr, ite_false]\n    omega\n\n/-- A borrow hook keeps every supply field: totals, sides, blocks and recorded supply indices. -/\ntheorem totalSupply_borrowNext (s : St) (who : Account) :\n    totalSupply (borrowNext s who) = totalSupply s := by\n  unfold borrowNext totalSupply\n  exact ProofForgeFin.Ledger.sum_map_modify_eq s.accts who _ _ noAcct (fun _ => rfl)\n\ntheorem borrowNext_supplyState (s : St) (who : Account) :\n    (borrowNext s who).supplyState = s.supplyState := rfl\n\ntheorem borrowNext_blockNumber (s : St) (who : Account) :\n    (borrowNext s who).blockNumber = s.blockNumber := rfl\n\ntheorem borrowNext_supplierIndex (s : St) (who : Account) :\n    ((borrowNext s who).acct who).supplierIndex = ((s.acct who)).supplierIndex :=\n  ProofForgeFin.Ledger.getD_modify_of_keeps s.accts who who noAcct\n    (fun a : Acct => a.supplierIndex) (fun _ => rfl)\n\n/-- A supply hook keeps every borrow field. -/\ntheorem totalBorrows_supplyNext (s : St) (who : Account) :\n    totalBorrows (supplyNext s who) = totalBorrows s := by\n  unfold supplyNext totalBorrows\n  exact ProofForgeFin.Ledger.sum_map_modify_eq s.accts who _ _ noAcct (fun _ => rfl)\n\n/-- A supply hook succeeds from the block bound and a recorded index at or below the market's. -/\ntheorem supplyPre_of (s : St) (who : Account) (hblock : s.supplyState.block \u2264 s.blockNumber)\n    (hrec : (s.acct who).supplierIndex \u2264 s.supplyState.index) : supplyPre s who := by\n  refine \u27e8hblock, ?_\u27e9\n  exact accrualStart_le _ _ _ hrec\n    (accrue_index_le s.supplyState s.blockNumber (totalSupply s))\n\n/-- A borrow hook succeeds from the block bound and a recorded index at or below the market's. -/\ntheorem borrowPre_of (s : St) (who : Account) (hblock : s.borrowState.block \u2264 s.blockNumber)\n    (hrec : (s.acct who).borrowerIndex \u2264 s.borrowState.index) : borrowPre s who := by\n  refine \u27e8hblock, ?_\u27e9\n  exact accrualStart_le _ _ _ hrec\n    (accrue_index_le s.borrowState s.blockNumber (totalBorrows s))\n\n/-- A recorded index read at any position lies at or below the market index in a consistent\nstate. -/\ntheorem rec_le_of_Consistent (s : St) (who : Account) (hc : Consistent s) :\n    (s.acct who).supplierIndex \u2264 s.supplyState.index \u2227\n    (s.acct who).borrowerIndex \u2264 s.borrowState.index :=\n  ProofForgeFin.Ledger.getD_of_forall s.accts who hc.2.2 \u27e8Nat.zero_le _, Nat.zero_le _\u27e9\n\ntheorem supplyPre_of_Consistent (s : St) (who : Account) (hc : Consistent s) :\n    supplyPre s who :=\n  supplyPre_of s who hc.1 (rec_le_of_Consistent s who hc).1\n\ntheorem borrowPre_of_Consistent (s : St) (who : Account) (hc : Consistent s) :\n    borrowPre s who :=\n  borrowPre_of s who hc.2.1 (rec_le_of_Consistent s who hc).2\n\n/-- The supply preconditions also hold after the borrow half of a claim. -/\ntheorem supplyPre_borrowNext (s : St) (who : Account) (hc : Consistent s) :\n    supplyPre (borrowNext s who) who := by\n  unfold supplyPre\n  rw [borrowNext_supplyState, borrowNext_blockNumber]\n  refine \u27e8hc.1, ?_\u27e9\n  rw [borrowNext_supplierIndex, totalSupply_borrowNext]\n  exact (supplyPre_of_Consistent s who hc).2\n\ntheorem req_calls_succeed       : CallsSucceed comptroller := by\n  intro s c hc\n  cases c with\n  | supplyHook who =>\n    rw [supplyHook_eq]\n    simp [supplyPre_of_Consistent s who hc]\n  | borrowHook who =>\n    rw [borrowHook_eq]\n    simp [borrowPre_of_Consistent s who hc]\n  | claim who =>\n    rw [claim_eq]\n    simp [borrowPre_of_Consistent s who hc, supplyPre_borrowNext s who hc]\n  | setSpeeds a b =>\n    have hpre : (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n        (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber) :=\n      \u27e8fun _ => hc.1, fun _ => hc.2.1\u27e9\n    rw [setSpeeds_eq, if_pos hpre, Option.isSome_some]\n\ntheorem req_supply_hook         : SupplyHookEffects comptroller := by\n  intro s who s' h\n  rw [supplyHook_eq] at h\n  by_cases hc : supplyPre s who\n  \u00b7 rw [if_pos hc] at h\n    injection h with h'\n    subst h'\n    exact \u27e8hc.1, hc.2, rfl\u27e9\n  \u00b7 rw [if_neg hc] at h\n    injection h\n\ntheorem req_borrow_hook         : BorrowHookEffects comptroller := by\n  intro s who s' h\n  rw [borrowHook_eq] at h\n  by_cases hc : borrowPre s who\n  \u00b7 rw [if_pos hc] at h\n    injection h with h'\n    subst h'\n    exact \u27e8hc.1, hc.2, rfl\u27e9\n  \u00b7 rw [if_neg hc] at h\n    injection h\n\ntheorem req_claim               : ClaimEffects comptroller := by\n  intro s who s' h\n  rw [claim_eq] at h\n  by_cases hc : borrowPre s who \u2227 supplyPre (borrowNext s who) who\n  \u00b7 rw [if_pos hc] at h\n    injection h with h'\n    subst h'\n    exact \u27e8borrowNext s who, supplyNext (borrowNext s who) who,\n      \u27e8hc.1.1, hc.1.2, rfl\u27e9, \u27e8hc.2.1, hc.2.2, rfl\u27e9, rfl\u27e9\n  \u00b7 rw [if_neg hc] at h\n    injection h\n\ntheorem req_set_speeds          : SetSpeedsEffects comptroller := by\n  intro s a b s' h\n  rw [setSpeeds_eq] at h\n  by_cases hc : (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n      (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber)\n  \u00b7 rw [if_pos hc] at h\n    injection h with h'\n    subst h'\n    exact \u27e8hc.1, hc.2, rfl\u27e9\n  \u00b7 rw [if_neg hc] at h\n    injection h\n\n/-! ## Reading the state as a two-sided reward market -/\n\n/-- The market reading: supply side 1, borrow side 2, at index scale `doubleScale`. -/\ndef M : ProofForgeFin.Accumulator.Market St Acct where\n  one := doubleScale\n  init := compInitialIndex\n  clock s := \u27e8s.blockNumber, s.supplyState.index, s.supplyState.block, s.supplyState.speed,\n    s.borrowState.index, s.borrowState.block, s.borrowState.speed\u27e9\n  accts s := s.accts\n  dflt := noAcct\n  units\u2081 a := a.supply\n  units\u2082 a := a.borrow\n  rec\u2081 a := a.supplierIndex\n  rec\u2082 a := a.borrowerIndex\n  credited a := a.accrued + a.wallet\n  dflt_units\u2081 := rfl\n  dflt_units\u2082 := rfl\n\n/-- The legacy clock before the upgrade. -/\ndef cL (L : Legacy) : ProofForgeFin.Accumulator.Clock :=\n  \u27e8L.blockNumber, L.supplyIndex, L.supplyBlock, L.compSpeed,\n    L.borrowIndex, L.borrowBlock, L.compSpeed\u27e9\n\ntheorem one_eq : M.one = doubleScale := rfl\ntheorem total\u2081_eq (s : St) : M.total\u2081 s = totalSupply s := rfl\ntheorem total\u2082_eq (s : St) : M.total\u2082 s = totalBorrows s := rfl\ntheorem creditSum_eq (s : St) : M.creditSum s = s.credited := rfl\ntheorem acct_eq (s : St) (w : Nat) : M.acct s w = s.acct w := rfl\ntheorem creditedTo_eq (s : St) (w : Nat) :\n    M.credited (M.acct s w) = s.creditedTo w := rfl\n\n/-- What an account is owed in the market reading is the legacy pending amount. -/\ntheorem owed_eq (L : Legacy) (a : Acct) :\n    M.owed L.supplyStart L.borrowStart (cL L) a = L.pendingScaled a := rfl\n\ntheorem un\u2081_eq (L : Legacy) : (cL L).un\u2081 = L.unindexedSupply := rfl\ntheorem un\u2082_eq (L : Legacy) : (cL L).un\u2082 = L.unindexedBorrow := rfl\n\ntheorem accrue_block (sd : Side) (now total : Nat) :\n    (accrueSide sd now total).block = now := by\n  unfold accrueSide; split <;> rfl\n\ntheorem accrue_speed (sd : Side) (now total : Nat) :\n    (accrueSide sd now total).speed = sd.speed := by\n  unfold accrueSide; split <;> rfl\n\ntheorem totalSupply_supplyNext (s : St) (who : Account) :\n    totalSupply (supplyNext s who) = totalSupply s := by\n  unfold supplyNext totalSupply\n  exact ProofForgeFin.Ledger.sum_map_modify_eq s.accts who _ _ noAcct (fun _ => rfl)\n\ntheorem totalBorrows_borrowNext (s : St) (who : Account) :\n    totalBorrows (borrowNext s who) = totalBorrows s := by\n  unfold borrowNext totalBorrows\n  exact ProofForgeFin.Ledger.sum_map_modify_eq s.accts who _ _ noAcct (fun _ => rfl)\n\n/-- Accruing twice at the same block accrues once: the second update moves nothing. -/\ntheorem accrue_accrue_index (sd : Side) (now total total' : Nat) :\n    (accrueSide (accrueSide sd now total) now total').index =\n      (accrueSide sd now total).index := by\n  generalize hy : accrueSide sd now total = Y\n  have hY : Y.block = now := by rw [\u2190 hy]; exact accrue_block _ _ _\n  unfold accrueSide\n  rw [hY]\n  simp\n\n/-- The market invariant gives consistency. -/\ntheorem Consistent_of_Inv {g\u2081 g\u2082 : Nat} {sp : Nat \u00d7 Nat} {s : St}\n    (hI : M.Inv g\u2081 g\u2082 sp s) : Consistent s := by\n  obtain \u27e8hl1, hl2, hrec, -, -, -, -\u27e9 := hI\n  exact \u27e8hl1, hl2, hrec\u27e9\n\n/-- A supply hook settles the account on side 1. -/\ntheorem settle\u2081 (s : St) (who : Account) : M.Settle\u2081 who s (supplyNext s who) :=\n  \u27e8by\n    have h1 : M.clock (supplyNext s who) =\n        ProofForgeFin.Accumulator.Clock.mk s.blockNumber\n          (accrueSide s.supplyState s.blockNumber (totalSupply s)).index\n          (accrueSide s.supplyState s.blockNumber (totalSupply s)).block\n          (accrueSide s.supplyState s.blockNumber (totalSupply s)).speed\n          s.borrowState.index s.borrowState.block s.borrowState.speed := rfl\n    have h2 : (M.clock s).catchUp\u2081 M.one (M.total\u2081 s) =\n        ProofForgeFin.Accumulator.Clock.mk s.blockNumber\n          (ProofForgeFin.Accumulator.catchUp M.one s.supplyState.index s.supplyState.block\n            s.supplyState.speed s.blockNumber (M.total\u2081 s))\n          s.blockNumber s.supplyState.speed\n          s.borrowState.index s.borrowState.block s.borrowState.speed := by\n      show (ProofForgeFin.Accumulator.Clock.mk s.blockNumber s.supplyState.index\n        s.supplyState.block s.supplyState.speed s.borrowState.index s.borrowState.block\n        s.borrowState.speed).catchUp\u2081 M.one (M.total\u2081 s) = _\n      rw [ProofForgeFin.Accumulator.Clock.catchUp\u2081_mk]\n    rw [h1, h2, accrue_index, accrue_block, accrue_speed, one_eq, total\u2081_eq],\n  (fun a =>\n    { a with\n      supplierIndex := (accrueSide s.supplyState s.blockNumber (totalSupply s)).index,\n      accrued := a.accrued + creditFor a.supply\n        (accrualStart a.supplierIndex (accrueSide s.supplyState s.blockNumber (totalSupply s)).index)\n        (accrueSide s.supplyState s.blockNumber (totalSupply s)).index }),\n  rfl,\n  fun a => \u27e8rfl, rfl, rfl, rfl, Nat.le_of_eq (Nat.add_right_comm _ _ _)\u27e9\u27e9\n\n/-- A borrow hook settles the account on side 2. -/\ntheorem settle\u2082 (s : St) (who : Account) : M.Settle\u2082 who s (borrowNext s who) :=\n  \u27e8by\n    have h1 : M.clock (borrowNext s who) =\n        ProofForgeFin.Accumulator.Clock.mk s.blockNumber\n          s.supplyState.index s.supplyState.block s.supplyState.speed\n          (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index\n          (accrueSide s.borrowState s.blockNumber (totalBorrows s)).block\n          (accrueSide s.borrowState s.blockNumber (totalBorrows s)).speed := rfl\n    have h2 : (M.clock s).catchUp\u2082 M.one (M.total\u2082 s) =\n        ProofForgeFin.Accumulator.Clock.mk s.blockNumber\n          s.supplyState.index s.supplyState.block s.supplyState.speed\n          (ProofForgeFin.Accumulator.catchUp M.one s.borrowState.index s.borrowState.block\n            s.borrowState.speed s.blockNumber (M.total\u2082 s))\n          s.blockNumber s.borrowState.speed := by\n      show (ProofForgeFin.Accumulator.Clock.mk s.blockNumber s.supplyState.index\n        s.supplyState.block s.supplyState.speed s.borrowState.index s.borrowState.block\n        s.borrowState.speed).catchUp\u2082 M.one (M.total\u2082 s) = _\n      rw [ProofForgeFin.Accumulator.Clock.catchUp\u2082_mk]\n    rw [h1, h2, accrue_index, accrue_block, accrue_speed, one_eq, total\u2082_eq],\n  (fun a =>\n    { a with\n      borrowerIndex := (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index,\n      accrued := a.accrued + creditFor a.borrow\n        (accrualStart a.borrowerIndex (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index)\n        (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index }),\n  rfl,\n  fun a => \u27e8rfl, rfl, rfl, rfl, Nat.le_of_eq (Nat.add_right_comm _ _ _)\u27e9\u27e9\n\n/-! ## Every operation is a market action -/\n\nopen ProofForgeFin.Accumulator\n\ntheorem supplyHook_some (g\u2081 g\u2082 : Nat) (sp : Nat \u00d7 Nat) (s : St) (who : Account)\n    (hI : M.Inv g\u2081 g\u2082 sp s) :\n    comptroller s (.supplyHook who) = some (supplyNext s who) := by\n  rw [supplyHook_eq, if_pos (supplyPre_of_Consistent s who (Consistent_of_Inv hI))]\n\ntheorem borrowHook_some (g\u2081 g\u2082 : Nat) (sp : Nat \u00d7 Nat) (s : St) (who : Account)\n    (hI : M.Inv g\u2081 g\u2082 sp s) :\n    comptroller s (.borrowHook who) = some (borrowNext s who) := by\n  rw [borrowHook_eq, if_pos (borrowPre_of_Consistent s who (Consistent_of_Inv hI))]\n\ntheorem rec_le_of_Inv {g\u2081 g\u2082 : Nat} {sp : Nat \u00d7 Nat} {s : St}\n    (hI : M.Inv g\u2081 g\u2082 sp s) (who : Account) :\n    (s.acct who).supplierIndex \u2264 s.supplyState.index \u2227\n    (s.acct who).borrowerIndex \u2264 s.borrowState.index :=\n  ProofForgeFin.Ledger.getD_of_forall s.accts who hI.recs \u27e8Nat.zero_le _, Nat.zero_le _\u27e9\n\n/-- The supply preconditions also hold after another account's supply settlement. -/\ntheorem supplyPre_supplyNext_of_ne (g\u2081 g\u2082 : Nat) (sp : Nat \u00d7 Nat) (s : St)\n    (src dst : Account) (hne : src \u2260 dst) (hI : M.Inv g\u2081 g\u2082 sp s) :\n    supplyPre (supplyNext s src) dst := by\n  have hT : totalSupply (supplyNext s src) = totalSupply s := totalSupply_supplyNext _ _\n  have hacct : ((supplyNext s src).acct dst).supplierIndex =\n      ((s.acct dst)).supplierIndex := by\n    show (((s.accts.modify src (fun a => { a with\n      supplierIndex := (accrueSide s.supplyState s.blockNumber (totalSupply s)).index,\n      accrued := a.accrued + creditFor a.supply\n        (accrualStart a.supplierIndex (accrueSide s.supplyState s.blockNumber (totalSupply s)).index)\n        (accrueSide s.supplyState s.blockNumber (totalSupply s)).index })).getD dst\n      noAcct)).supplierIndex = _\n    rw [ProofForgeFin.Ledger.getD_modify_ne _ _ _ hne]\n    rfl\n  have hidx : (accrueSide (supplyNext s src).supplyState (supplyNext s src).blockNumber\n      (totalSupply (supplyNext s src))).index =\n      (accrueSide s.supplyState s.blockNumber (totalSupply s)).index := by\n    have hY : (supplyNext s src).supplyState =\n        accrueSide s.supplyState s.blockNumber (totalSupply s) := rfl\n    have hN : (supplyNext s src).blockNumber = s.blockNumber := rfl\n    rw [hY, hN, hT]\n    exact accrue_accrue_index _ _ _ _\n  have hblock : (supplyNext s src).supplyState.block \u2264 (supplyNext s src).blockNumber := by\n    have hb : ((supplyNext s src).supplyState).block = s.blockNumber := accrue_block _ _ _\n    have hn : (supplyNext s src).blockNumber = s.blockNumber := rfl\n    rw [hb, hn]\n    exact Nat.le_refl _\n  unfold supplyPre\n  rw [hidx]\n  refine \u27e8hblock, ?_\u27e9\n  rw [hacct]\n  exact accrualStart_le _ _ _ (rec_le_of_Inv hI dst).1\n    (accrue_index_le s.supplyState s.blockNumber (totalSupply s))\n\ntheorem speedsNext_rate\u2081 (s : St) (a b : Nat) :\n    (M.clock (speedsNext s a b)).rate\u2081 = a := by\n  show (speedsNext s a b).supplyState.speed = a\n  unfold speedsNext\n  by_cases hsup : s.supplyState.speed = a <;> simp [hsup]\n\ntheorem speedsNext_rate\u2082 (s : St) (a b : Nat) :\n    (M.clock (speedsNext s a b)).rate\u2082 = b := by\n  show (speedsNext s a b).borrowState.speed = b\n  unfold speedsNext\n  by_cases hbor : s.borrowState.speed = b <;> simp [hbor]\n\n/-- A speed change retunes the market. -/\ntheorem retune_speeds (s : St) (a b : Nat) : M.Retune s (speedsNext s a b) := by\n  refine \u27e8rfl, rfl, ?_, ?_\u27e9\n  \u00b7 by_cases hsup : s.supplyState.speed = a\n    \u00b7 have e : (speedsNext s a b).supplyState = s.supplyState := by\n        unfold speedsNext; simp [hsup]\n      exact Or.inl \u27e8by show (speedsNext s a b).supplyState.index = _; rw [e]; rfl,\n        by show (speedsNext s a b).supplyState.block = _; rw [e]; rfl,\n        by show (speedsNext s a b).supplyState.speed = _; rw [e]; rfl\u27e9\n    \u00b7 have e : (speedsNext s a b).supplyState =\n          { accrueSide s.supplyState s.blockNumber (totalSupply s) with speed := a } := by\n        unfold speedsNext; simp [hsup]\n      refine Or.inr \u27e8?_, ?_\u27e9\n      \u00b7 show (speedsNext s a b).supplyState.index = _\n        rw [e]\n        show (accrueSide s.supplyState s.blockNumber (totalSupply s)).index = _\n        rw [accrue_index, one_eq, total\u2081_eq]\n        rfl\n      \u00b7 show (speedsNext s a b).supplyState.block = _\n        rw [e]\n        show (accrueSide s.supplyState s.blockNumber (totalSupply s)).block = _\n        rw [accrue_block]\n        rfl\n  \u00b7 by_cases hbor : s.borrowState.speed = b\n    \u00b7 have e : (speedsNext s a b).borrowState = s.borrowState := by\n        unfold speedsNext; simp [hbor]\n      exact Or.inl \u27e8by show (speedsNext s a b).borrowState.index = _; rw [e]; rfl,\n        by show (speedsNext s a b).borrowState.block = _; rw [e]; rfl,\n        by show (speedsNext s a b).borrowState.speed = _; rw [e]; rfl\u27e9\n    \u00b7 have e : (speedsNext s a b).borrowState =\n          { accrueSide s.borrowState s.blockNumber (totalBorrows s) with speed := b } := by\n        unfold speedsNext; simp [hbor]\n      refine Or.inr \u27e8?_, ?_\u27e9\n      \u00b7 show (speedsNext s a b).borrowState.index = _\n        rw [e]\n        show (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index = _\n        rw [accrue_index, one_eq, total\u2082_eq]\n        rfl\n      \u00b7 show (speedsNext s a b).borrowState.block = _\n        rw [e]\n        show (accrueSide s.borrowState s.blockNumber (totalBorrows s)).block = _\n        rw [accrue_block]\n        rfl\n\n/-- A payment is an adjustment: it moves accrued COMP to the wallet, keeping every total. -/\ntheorem grant_adjust (s : St) (who : Account)\n    (hg : 0 < (s.acct who).accrued \u2227 (s.acct who).accrued \u2264 s.reserve) :\n    M.Adjust who s (grant s who) := by\n  unfold grant\n  rw [if_pos hg]\n  refine \u27e8rfl, (fun a => { a with accrued := 0, wallet := a.wallet + a.accrued }), rfl,\n    ?_, .inl (fun _ => rfl), .inl (fun _ => rfl)\u27e9\n  intro a\n  exact \u27e8by show (0 : Nat) + (a.wallet + a.accrued) \u2264 a.accrued + a.wallet; omega,\n    rfl, rfl\u27e9\n\n/-- A payment that pays nothing is a silent step. -/\ntheorem grant_same (s : St) (who : Account)\n    (hg : \u00ac (0 < (s.acct who).accrued \u2227 (s.acct who).accrued \u2264 s.reserve)) :\n    M.Step s (grant s who) := by\n  have hgrant : grant s who = s := by unfold grant; rw [if_neg hg]\n  rw [hgrant]\n  exact .same rfl rfl\n\ntheorem exec_act (g\u2081 g\u2082 : Nat) (sp : Nat \u00d7 Nat) (s : St) (op : Op)\n    (hI : M.Inv g\u2081 g\u2082 sp s) :\n    M.Act sp s (nextSpeeds sp op) (emittedBy sp op) (exec comptroller s op) := by\n  cases op with\n  | mint who x =>\n    by_cases hwho : who < s.accts.length\n    \u00b7 have hhook := supplyHook_some g\u2081 g\u2082 sp s who hI\n      have hexec : exec comptroller s (.mint who x) =\n          (supplyNext s who).withAcct who fun a => { a with supply := a.supply + x } := by\n        simp only [exec]\n        rw [if_pos hwho, hhook]\n      rw [hexec]\n      exact .moves (Market.Settle\u2081.then_adjust (settle\u2081 s who) rfl rfl\n        (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9) (fun _ => rfl))\n    \u00b7 have hexec : exec comptroller s (.mint who x) = s := by\n        simp only [exec]\n        rw [if_neg hwho]\n      rw [hexec]\n      exact .moves (Market.Reach.refl s)\n  | redeem who x =>\n    by_cases hwho : who < s.accts.length\n    \u00b7 have hhook := supplyHook_some g\u2081 g\u2082 sp s who hI\n      by_cases hbal : x \u2264 ((supplyNext s who).acct who).supply\n      \u00b7 have hexec : exec comptroller s (.redeem who x) =\n            (supplyNext s who).withAcct who fun a => { a with supply := a.supply - x } := by\n          simp only [exec]\n          rw [if_pos hwho, hhook]\n          dsimp only\n          rw [if_pos hbal]\n        rw [hexec]\n        exact .moves (Market.Settle\u2081.then_adjust (settle\u2081 s who) rfl rfl\n          (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9) (fun _ => rfl))\n      \u00b7 have hexec : exec comptroller s (.redeem who x) = s := by\n          simp only [exec]\n          rw [if_pos hwho, hhook]\n          dsimp only\n          rw [if_neg hbal]\n        rw [hexec]\n        exact .moves (Market.Reach.refl s)\n    \u00b7 have hexec : exec comptroller s (.redeem who x) = s := by\n        simp only [exec]\n        rw [if_neg hwho]\n      rw [hexec]\n      exact .moves (Market.Reach.refl s)\n  | transfer src dst x =>\n    by_cases h : src < s.accts.length \u2227 dst < s.accts.length \u2227 src \u2260 dst\n    \u00b7 have hne : src \u2260 dst := h.2.2\n      have h1 : comptroller s (.supplyHook src) = some (supplyNext s src) :=\n        supplyHook_some g\u2081 g\u2082 sp s src hI\n      have h2 : comptroller (supplyNext s src) (.supplyHook dst) =\n          some (supplyNext (supplyNext s src) dst) := by\n        rw [supplyHook_eq, if_pos (supplyPre_supplyNext_of_ne g\u2081 g\u2082 sp s src dst hne hI)]\n      by_cases hbal : x \u2264 ((supplyNext (supplyNext s src) dst).acct src).supply\n      \u00b7 have hexec : exec comptroller s (.transfer src dst x) =\n            ((supplyNext (supplyNext s src) dst).withAcct src\n              fun a => { a with supply := a.supply - x }).withAcct dst\n              fun a => { a with supply := a.supply + x } := by\n          simp only [exec]\n          rw [if_pos h, h1]\n          dsimp only\n          rw [h2]\n          dsimp only\n          rw [if_pos hbal]\n        rw [hexec]\n        exact .moves (Market.Settle\u2081.transfer (settle\u2081 s src)\n          (settle\u2081 (supplyNext s src) dst) rfl rfl\n          (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9) (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9)\n          (fun _ => rfl) (fun _ => rfl))\n      \u00b7 have hexec : exec comptroller s (.transfer src dst x) = s := by\n          simp only [exec]\n          rw [if_pos h, h1]\n          dsimp only\n          rw [h2]\n          dsimp only\n          rw [if_neg hbal]\n        rw [hexec]\n        exact .moves (Market.Reach.refl s)\n    \u00b7 have hexec : exec comptroller s (.transfer src dst x) = s := by\n        simp only [exec]\n        rw [if_neg h]\n      rw [hexec]\n      exact .moves (Market.Reach.refl s)\n  | borrow who x =>\n    by_cases hwho : who < s.accts.length\n    \u00b7 have hhook := borrowHook_some g\u2081 g\u2082 sp s who hI\n      have hexec : exec comptroller s (.borrow who x) =\n          (borrowNext s who).withAcct who fun a => { a with borrow := a.borrow + x } := by\n        simp only [exec]\n        rw [if_pos hwho, hhook]\n      rw [hexec]\n      exact .moves (Market.Settle\u2082.then_adjust (settle\u2082 s who) rfl rfl\n        (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9) (fun _ => rfl))\n    \u00b7 have hexec : exec comptroller s (.borrow who x) = s := by\n        simp only [exec]\n        rw [if_neg hwho]\n      rw [hexec]\n      exact .moves (Market.Reach.refl s)\n  | repay who x =>\n    by_cases hwho : who < s.accts.length\n    \u00b7 have hhook := borrowHook_some g\u2081 g\u2082 sp s who hI\n      by_cases hbal : x \u2264 ((borrowNext s who).acct who).borrow\n      \u00b7 have hexec : exec comptroller s (.repay who x) =\n            (borrowNext s who).withAcct who fun a => { a with borrow := a.borrow - x } := by\n          simp only [exec]\n          rw [if_pos hwho, hhook]\n          dsimp only\n          rw [if_pos hbal]\n        rw [hexec]\n        exact .moves (Market.Settle\u2082.then_adjust (settle\u2082 s who) rfl rfl\n          (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9) (fun _ => rfl))\n      \u00b7 have hexec : exec comptroller s (.repay who x) = s := by\n          simp only [exec]\n          rw [if_pos hwho, hhook]\n          dsimp only\n          rw [if_neg hbal]\n        rw [hexec]\n        exact .moves (Market.Reach.refl s)\n    \u00b7 have hexec : exec comptroller s (.repay who x) = s := by\n        simp only [exec]\n        rw [if_neg hwho]\n      rw [hexec]\n      exact .moves (Market.Reach.refl s)\n  | claim who =>\n    have hI' := Consistent_of_Inv hI\n    have hb : borrowPre s who := borrowPre_of_Consistent s who hI'\n    have hs : supplyPre (borrowNext s who) who := supplyPre_borrowNext s who hI'\n    have hclaim : comptroller s (.claim who) =\n        some (grant (supplyNext (borrowNext s who) who) who) := by\n      rw [claim_eq, if_pos \u27e8hb, hs\u27e9]\n    have hexec : exec comptroller s (.claim who) =\n        grant (supplyNext (borrowNext s who) who) who := by\n      simp only [exec]\n      rw [hclaim]\n      rfl\n    have h\u2082 : M.Settle\u2082 who s (borrowNext s who) := settle\u2082 s who\n    have h\u2081 : M.Settle\u2081 who (borrowNext s who) (supplyNext (borrowNext s who) who) :=\n      settle\u2081 (borrowNext s who) who\n    by_cases hg : 0 < ((supplyNext (borrowNext s who) who).acct who).accrued \u2227\n        ((supplyNext (borrowNext s who) who).acct who).accrued \u2264\n          (supplyNext (borrowNext s who) who).reserve\n    \u00b7 rw [hexec]\n      exact .moves (((Market.Reach.single (.settle\u2082 h\u2082)).tail (.settle\u2081 h\u2081)).tail\n        (.adjust (grant_adjust _ _ hg)))\n    \u00b7 rw [hexec]\n      exact .moves (((Market.Reach.single (.settle\u2082 h\u2082)).tail (.settle\u2081 h\u2081)).tail\n        (grant_same _ _ hg))\n  | setSpeeds a b =>\n    have hcond : (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n        (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber) :=\n      \u27e8fun _ => hI.1, fun _ => hI.2\u27e9\n    have hset : comptroller s (.setSpeeds a b) = some (speedsNext s a b) := by\n      rw [setSpeeds_eq, if_pos hcond]\n    have hexec : exec comptroller s (.setSpeeds a b) = speedsNext s a b := by\n      simp only [exec]\n      rw [hset]\n      rfl\n    rw [hexec]\n    exact .retune (retune_speeds s a b) (speedsNext_rate\u2081 s a b) (speedsNext_rate\u2082 s a b)\n  | advance k =>\n    have hexec : exec comptroller s (.advance k) = { s with blockNumber := s.blockNumber + k } := by\n      simp only [exec]\n    rw [hexec]\n    exact .advance k \u27e8rfl, rfl\u27e9\n  | drip x =>\n    have hexec : exec comptroller s (.drip x) = { s with reserve := s.reserve + x } := by\n      simp only [exec]\n    rw [hexec]\n    exact .moves (Market.Reach.single (.same rfl rfl))\n\n/-! ## The upgrade and the bounds over runs -/\n\ntheorem clock_upgrade (L : Legacy) : M.clock (upgrade L) = (cL L).reinit M.init := by\n  show ProofForgeFin.Accumulator.Clock.mk _ _ _ _ _ _ _ = _\n  simp only [M, cL, upgrade, initSide, ProofForgeFin.Accumulator.Clock.reinit]\n  by_cases h1 : L.supplyIndex = 0 <;> by_cases h2 : L.borrowIndex = 0 <;>\n    simp [h1, h2]\n\ntheorem owed_sum_eq (L : Legacy) :\n    ((M.accts (upgrade L)).map (M.owed L.supplyStart L.borrowStart (cL L))).sum =\n      (L.accts.map L.pendingScaled).sum := by\n  have hmod : M.accts (upgrade L) = L.accts := rfl\n  rw [hmod]\n  exact ProofForgeFin.Ledger.sum_map_congr L.accts (fun a _ => owed_eq L a)\n\ntheorem inv_start_hr (L : Legacy) (hL : L.WellFormed) :\n    \u2200 a \u2208 M.accts (upgrade L),\n      M.rec\u2081 a \u2264 (cL L).index\u2081 \u2227 M.rec\u2082 a \u2264 (cL L).index\u2082 :=\n  fun a ha => hL.2.2.2.2.2.2 a ha\n\ntheorem inv_start (L : Legacy) (hL : L.WellFormed) :\n    M.Inv (reinitStart M.init (cL L).index\u2081 L.supplyStart)\n      (reinitStart M.init (cL L).index\u2082 L.borrowStart)\n      ((cL L).rate\u2081, (cL L).rate\u2082) (upgrade L) :=\n  M.inv_reinit (clock_upgrade L) hL.1 hL.2.1 hL.2.2.1 hL.2.2.2.1 hL.2.2.2.2.1\n    hL.2.2.2.2.2.1 (inv_start_hr L hL)\n\ntheorem inv_start_hr_acct (L : Legacy) (hL : L.WellFormed) (who : Account) :\n    M.rec\u2081 (M.acct (upgrade L) who) \u2264 (cL L).index\u2081 \u2227\n    M.rec\u2082 (M.acct (upgrade L) who) \u2264 (cL L).index\u2082 :=\n  ProofForgeFin.Ledger.getD_of_forall (M.accts (upgrade L)) who\n    (inv_start_hr L hL) \u27e8Nat.zero_le _, Nat.zero_le _\u27e9\n\ntheorem acct_upgrade (L : Legacy) (who : Account) :\n    M.acct (upgrade L) who = L.accts.getD who noAcct := rfl\n\ntheorem req_rewards_bounded     : RewardsBounded comptroller := by\n  intro L ops hL\n  have hI := inv_start L hL\n  have hs := M.pot_reinit_le L.supplyStart L.borrowStart (clock_upgrade L)\n    (inv_start_hr L hL)\n  have hone : 0 < M.one := by decide\n  have h := M.rewards_bounded (run comptroller) emitted speedsAfter\n    (exec_act _ _) hone hI hs ops\n  rw [creditSum_eq, owed_sum_eq, un\u2081_eq, un\u2082_eq, one_eq] at h\n  exact h\n\ntheorem req_account_bounded     : AccountBounded comptroller := by\n  intro L ops who hL\n  have hI := inv_start L hL\n  have hs := M.potOf_reinit_le L.supplyStart L.borrowStart who (clock_upgrade L)\n    (inv_start_hr_acct L hL who)\n  have hone : 0 < M.one := by decide\n  have h := M.account_rewards_bounded (run comptroller) emitted speedsAfter\n    (exec_act _ _) hone hI who hs ops\n  rw [creditedTo_eq, creditedTo_eq, owed_eq, acct_upgrade, un\u2081_eq, un\u2082_eq, one_eq] at h\n  exact h\n\ntheorem req_no_backdated        : NoBackdatedRewards comptroller := by\n  intro L history ops who hL hpos\n  have hI := inv_start L hL\n  have hone : 0 < M.one := by decide\n  have hu\u2081 : M.units\u2081 (M.acct (run comptroller (upgrade L) history) who) = 0 := hpos.1\n  have hu\u2082 : M.units\u2082 (M.acct (run comptroller (upgrade L) history) who) = 0 := hpos.2\n  have h := M.rewards_after_no_position_bounded (run comptroller) emitted speedsAfter\n    (exec_act _ _) hone hI history ops who hu\u2081 hu\u2082\n  rw [creditedTo_eq, creditedTo_eq] at h\n  exact h\n\nend CompRewards\n",
+  "sha256": "bbfa170dcb626bfd860ce309210d6cec96002eddc80d510a0c383177b01c1b16",
+  "proved_required": [
+   "req_account_bounded",
+   "req_borrow_hook",
+   "req_calls_succeed",
+   "req_claim",
+   "req_no_backdated",
+   "req_rewards_bounded",
+   "req_set_speeds",
+   "req_supply_hook"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_account_bounded",
+   "req_borrow_hook",
+   "req_calls_succeed",
+   "req_claim",
+   "req_no_backdated",
+   "req_rewards_bounded",
+   "req_set_speeds",
+   "req_supply_hook"
+  ],
+  "text": "import CompRewards.Spec\nimport ProofForgeFin.Accumulator.Market\n/-!\nFixed COMP distribution of Compound's Comptroller (Proposal 62, corrected by Proposal 64).\n\nThe deployed Proposal 62 code credited an account with no recorded index from 0 whenever the\nmarket index was strictly above `compInitialIndex`\n(`supplierIndex == 0 && supplyIndex > compInitialIndex`). When the upgrade initialized an index\nthat was still 0 to exactly `compInitialIndex`, such an account was credited `units` of COMP\nthat were never emitted. The fix uses the Proposal 64 condition (`>=`): an account with no\nrecorded index starts accruing from `compInitialIndex` once the market index has reached it,\nwhich is exactly `accrualStart` of the specification.\n\nEach call is written in the specification's closed form (`accrueSide`, `accrualStart`,\n`creditFor`, `grant`), so the effect requirements hold by case analysis on the preconditions.\n-/\nnamespace CompRewards\n\n/-- Next state of a supply hook, in the specification's closed form. -/\ndef supplyNext (s : St) (who : Account) : St :=\n  { s with\n    supplyState := accrueSide s.supplyState s.blockNumber (totalSupply s),\n    accts := s.accts.modify who fun a =>\n      { a with\n        supplierIndex := (accrueSide s.supplyState s.blockNumber (totalSupply s)).index,\n        accrued := a.accrued + creditFor a.supply\n          (accrualStart a.supplierIndex (accrueSide s.supplyState s.blockNumber (totalSupply s)).index)\n          (accrueSide s.supplyState s.blockNumber (totalSupply s)).index } }\n\n/-- Next state of a borrow hook, in the specification's closed form. -/\ndef borrowNext (s : St) (who : Account) : St :=\n  { s with\n    borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s),\n    accts := s.accts.modify who fun a =>\n      { a with\n        borrowerIndex := (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index,\n        accrued := a.accrued + creditFor a.borrow\n          (accrualStart a.borrowerIndex (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index)\n          (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index } }\n\n/-- Next state of a speed change, in the specification's closed form. -/\ndef speedsNext (s : St) (sup bor : Nat) : St :=\n  { s with\n    supplyState := if s.supplyState.speed = sup then s.supplyState\n      else { accrueSide s.supplyState s.blockNumber (totalSupply s) with speed := sup },\n    borrowState := if s.borrowState.speed = bor then s.borrowState\n      else { accrueSide s.borrowState s.blockNumber (totalBorrows s) with speed := bor } }\n\n/-- Preconditions of a supply hook (the two `sub_` underflow guards). -/\ndef supplyPre (s : St) (who : Account) : Prop :=\n  s.supplyState.block \u2264 s.blockNumber \u2227\n  accrualStart (s.acct who).supplierIndex\n      (accrueSide s.supplyState s.blockNumber (totalSupply s)).index \u2264\n    (accrueSide s.supplyState s.blockNumber (totalSupply s)).index\n\n/-- Preconditions of a borrow hook. -/\ndef borrowPre (s : St) (who : Account) : Prop :=\n  s.borrowState.block \u2264 s.blockNumber \u2227\n  accrualStart (s.acct who).borrowerIndex\n      (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index \u2264\n    (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index\n\ninstance supplyPreDec (s : St) (who : Account) : Decidable (supplyPre s who) := by\n  unfold supplyPre; infer_instance\n\ninstance borrowPreDec (s : St) (who : Account) : Decidable (borrowPre s who) := by\n  unfold borrowPre; infer_instance\n\n/-- Fixed Comptroller: each call in the specification's closed form. -/\ndef comptroller : Impl := fun s c =>\n  match c with\n  | .supplyHook who =>\n    if supplyPre s who then some (supplyNext s who) else none\n  | .borrowHook who =>\n    if borrowPre s who then some (borrowNext s who) else none\n  | .claim who =>\n    if borrowPre s who \u2227 supplyPre (borrowNext s who) who then\n      some (grant (supplyNext (borrowNext s who) who) who)\n    else none\n  | .setSpeeds a b =>\n    if (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n       (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber)\n    then some (speedsNext s a b) else none\n\ntheorem supplyHook_eq (s : St) (who : Account) :\n    comptroller s (.supplyHook who) =\n      if supplyPre s who then some (supplyNext s who) else none := rfl\n\ntheorem borrowHook_eq (s : St) (who : Account) :\n    comptroller s (.borrowHook who) =\n      if borrowPre s who then some (borrowNext s who) else none := rfl\n\ntheorem claim_eq (s : St) (who : Account) :\n    comptroller s (.claim who) =\n      if borrowPre s who \u2227 supplyPre (borrowNext s who) who then\n        some (grant (supplyNext (borrowNext s who) who) who)\n      else none := rfl\n\ntheorem setSpeeds_eq (s : St) (a b : Nat) :\n    comptroller s (.setSpeeds a b) =\n      if (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n         (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber)\n      then some (speedsNext s a b) else none := rfl\n\n/-- The index update of the specification is the library's `catchUp`. -/\ntheorem accrue_index (sd : Side) (now total : Nat) :\n    (accrueSide sd now total).index =\n      ProofForgeFin.Accumulator.catchUp doubleScale sd.index sd.block sd.speed now total := by\n  unfold accrueSide ProofForgeFin.Accumulator.catchUp\n  by_cases h : 0 < now - sd.block \u2227 0 < sd.speed \u2227 0 < total <;> simp [h]\n\n/-- The index update never lowers the index. -/\ntheorem accrue_index_le (sd : Side) (now total : Nat) :\n    sd.index \u2264 (accrueSide sd now total).index := by\n  rw [accrue_index]\n  exact ProofForgeFin.Accumulator.le_catchUp _ _ _ _ _ _\n\n/-- An account's accrual start never lies above the index once its recorded index does not lie\nabove the index the market had. -/\ntheorem accrualStart_le (recorded index oldIndex : Nat) (hrec : recorded \u2264 oldIndex)\n    (hidx : oldIndex \u2264 index) : accrualStart recorded index \u2264 index := by\n  unfold accrualStart\n  by_cases hr : recorded = 0\n  \u00b7 simp only [hr, ite_true]\n    split <;> omega\n  \u00b7 simp only [hr, ite_false]\n    omega\n\n/-- A borrow hook keeps every supply field: totals, sides, blocks and recorded supply indices. -/\ntheorem totalSupply_borrowNext (s : St) (who : Account) :\n    totalSupply (borrowNext s who) = totalSupply s := by\n  unfold borrowNext totalSupply\n  exact ProofForgeFin.Ledger.sum_map_modify_eq s.accts who _ _ noAcct (fun _ => rfl)\n\ntheorem borrowNext_supplyState (s : St) (who : Account) :\n    (borrowNext s who).supplyState = s.supplyState := rfl\n\ntheorem borrowNext_blockNumber (s : St) (who : Account) :\n    (borrowNext s who).blockNumber = s.blockNumber := rfl\n\ntheorem borrowNext_supplierIndex (s : St) (who : Account) :\n    ((borrowNext s who).acct who).supplierIndex = ((s.acct who)).supplierIndex :=\n  ProofForgeFin.Ledger.getD_modify_of_keeps s.accts who who noAcct\n    (fun a : Acct => a.supplierIndex) (fun _ => rfl)\n\n/-- A supply hook keeps every borrow field. -/\ntheorem totalBorrows_supplyNext (s : St) (who : Account) :\n    totalBorrows (supplyNext s who) = totalBorrows s := by\n  unfold supplyNext totalBorrows\n  exact ProofForgeFin.Ledger.sum_map_modify_eq s.accts who _ _ noAcct (fun _ => rfl)\n\n/-- A supply hook succeeds from the block bound and a recorded index at or below the market's. -/\ntheorem supplyPre_of (s : St) (who : Account) (hblock : s.supplyState.block \u2264 s.blockNumber)\n    (hrec : (s.acct who).supplierIndex \u2264 s.supplyState.index) : supplyPre s who := by\n  refine \u27e8hblock, ?_\u27e9\n  exact accrualStart_le _ _ _ hrec\n    (accrue_index_le s.supplyState s.blockNumber (totalSupply s))\n\n/-- A borrow hook succeeds from the block bound and a recorded index at or below the market's. -/\ntheorem borrowPre_of (s : St) (who : Account) (hblock : s.borrowState.block \u2264 s.blockNumber)\n    (hrec : (s.acct who).borrowerIndex \u2264 s.borrowState.index) : borrowPre s who := by\n  refine \u27e8hblock, ?_\u27e9\n  exact accrualStart_le _ _ _ hrec\n    (accrue_index_le s.borrowState s.blockNumber (totalBorrows s))\n\n/-- A recorded index read at any position lies at or below the market index in a consistent\nstate. -/\ntheorem rec_le_of_Consistent (s : St) (who : Account) (hc : Consistent s) :\n    (s.acct who).supplierIndex \u2264 s.supplyState.index \u2227\n    (s.acct who).borrowerIndex \u2264 s.borrowState.index :=\n  ProofForgeFin.Ledger.getD_of_forall s.accts who hc.2.2 \u27e8Nat.zero_le _, Nat.zero_le _\u27e9\n\ntheorem supplyPre_of_Consistent (s : St) (who : Account) (hc : Consistent s) :\n    supplyPre s who :=\n  supplyPre_of s who hc.1 (rec_le_of_Consistent s who hc).1\n\ntheorem borrowPre_of_Consistent (s : St) (who : Account) (hc : Consistent s) :\n    borrowPre s who :=\n  borrowPre_of s who hc.2.1 (rec_le_of_Consistent s who hc).2\n\n/-- The supply preconditions also hold after the borrow half of a claim. -/\ntheorem supplyPre_borrowNext (s : St) (who : Account) (hc : Consistent s) :\n    supplyPre (borrowNext s who) who := by\n  unfold supplyPre\n  rw [borrowNext_supplyState, borrowNext_blockNumber]\n  refine \u27e8hc.1, ?_\u27e9\n  rw [borrowNext_supplierIndex, totalSupply_borrowNext]\n  exact (supplyPre_of_Consistent s who hc).2\n\ntheorem req_calls_succeed       : CallsSucceed comptroller := by\n  intro s c hc\n  cases c with\n  | supplyHook who =>\n    rw [supplyHook_eq]\n    simp [supplyPre_of_Consistent s who hc]\n  | borrowHook who =>\n    rw [borrowHook_eq]\n    simp [borrowPre_of_Consistent s who hc]\n  | claim who =>\n    rw [claim_eq]\n    simp [borrowPre_of_Consistent s who hc, supplyPre_borrowNext s who hc]\n  | setSpeeds a b =>\n    have hpre : (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n        (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber) :=\n      \u27e8fun _ => hc.1, fun _ => hc.2.1\u27e9\n    rw [setSpeeds_eq, if_pos hpre, Option.isSome_some]\n\ntheorem req_supply_hook         : SupplyHookEffects comptroller := by\n  intro s who s' h\n  rw [supplyHook_eq] at h\n  by_cases hc : supplyPre s who\n  \u00b7 rw [if_pos hc] at h\n    injection h with h'\n    subst h'\n    exact \u27e8hc.1, hc.2, rfl\u27e9\n  \u00b7 rw [if_neg hc] at h\n    injection h\n\ntheorem req_borrow_hook         : BorrowHookEffects comptroller := by\n  intro s who s' h\n  rw [borrowHook_eq] at h\n  by_cases hc : borrowPre s who\n  \u00b7 rw [if_pos hc] at h\n    injection h with h'\n    subst h'\n    exact \u27e8hc.1, hc.2, rfl\u27e9\n  \u00b7 rw [if_neg hc] at h\n    injection h\n\ntheorem req_claim               : ClaimEffects comptroller := by\n  intro s who s' h\n  rw [claim_eq] at h\n  by_cases hc : borrowPre s who \u2227 supplyPre (borrowNext s who) who\n  \u00b7 rw [if_pos hc] at h\n    injection h with h'\n    subst h'\n    exact \u27e8borrowNext s who, supplyNext (borrowNext s who) who,\n      \u27e8hc.1.1, hc.1.2, rfl\u27e9, \u27e8hc.2.1, hc.2.2, rfl\u27e9, rfl\u27e9\n  \u00b7 rw [if_neg hc] at h\n    injection h\n\ntheorem req_set_speeds          : SetSpeedsEffects comptroller := by\n  intro s a b s' h\n  rw [setSpeeds_eq] at h\n  by_cases hc : (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n      (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber)\n  \u00b7 rw [if_pos hc] at h\n    injection h with h'\n    subst h'\n    exact \u27e8hc.1, hc.2, rfl\u27e9\n  \u00b7 rw [if_neg hc] at h\n    injection h\n\n/-! ## Reading the state as a two-sided reward market -/\n\n/-- The market reading: supply side 1, borrow side 2, at index scale `doubleScale`. -/\ndef M : ProofForgeFin.Accumulator.Market St Acct where\n  one := doubleScale\n  init := compInitialIndex\n  clock s := \u27e8s.blockNumber, s.supplyState.index, s.supplyState.block, s.supplyState.speed,\n    s.borrowState.index, s.borrowState.block, s.borrowState.speed\u27e9\n  accts s := s.accts\n  dflt := noAcct\n  units\u2081 a := a.supply\n  units\u2082 a := a.borrow\n  rec\u2081 a := a.supplierIndex\n  rec\u2082 a := a.borrowerIndex\n  credited a := a.accrued + a.wallet\n  dflt_units\u2081 := rfl\n  dflt_units\u2082 := rfl\n\n/-- The legacy clock before the upgrade. -/\ndef cL (L : Legacy) : ProofForgeFin.Accumulator.Clock :=\n  \u27e8L.blockNumber, L.supplyIndex, L.supplyBlock, L.compSpeed,\n    L.borrowIndex, L.borrowBlock, L.compSpeed\u27e9\n\ntheorem one_eq : M.one = doubleScale := rfl\ntheorem total\u2081_eq (s : St) : M.total\u2081 s = totalSupply s := rfl\ntheorem total\u2082_eq (s : St) : M.total\u2082 s = totalBorrows s := rfl\ntheorem creditSum_eq (s : St) : M.creditSum s = s.credited := rfl\ntheorem acct_eq (s : St) (w : Nat) : M.acct s w = s.acct w := rfl\ntheorem creditedTo_eq (s : St) (w : Nat) :\n    M.credited (M.acct s w) = s.creditedTo w := rfl\n\n/-- What an account is owed in the market reading is the legacy pending amount. -/\ntheorem owed_eq (L : Legacy) (a : Acct) :\n    M.owed L.supplyStart L.borrowStart (cL L) a = L.pendingScaled a := rfl\n\ntheorem un\u2081_eq (L : Legacy) : (cL L).un\u2081 = L.unindexedSupply := rfl\ntheorem un\u2082_eq (L : Legacy) : (cL L).un\u2082 = L.unindexedBorrow := rfl\n\ntheorem accrue_block (sd : Side) (now total : Nat) :\n    (accrueSide sd now total).block = now := by\n  unfold accrueSide; split <;> rfl\n\ntheorem accrue_speed (sd : Side) (now total : Nat) :\n    (accrueSide sd now total).speed = sd.speed := by\n  unfold accrueSide; split <;> rfl\n\ntheorem totalSupply_supplyNext (s : St) (who : Account) :\n    totalSupply (supplyNext s who) = totalSupply s := by\n  unfold supplyNext totalSupply\n  exact ProofForgeFin.Ledger.sum_map_modify_eq s.accts who _ _ noAcct (fun _ => rfl)\n\ntheorem totalBorrows_borrowNext (s : St) (who : Account) :\n    totalBorrows (borrowNext s who) = totalBorrows s := by\n  unfold borrowNext totalBorrows\n  exact ProofForgeFin.Ledger.sum_map_modify_eq s.accts who _ _ noAcct (fun _ => rfl)\n\n/-- Accruing twice at the same block accrues once: the second update moves nothing. -/\ntheorem accrue_accrue_index (sd : Side) (now total total' : Nat) :\n    (accrueSide (accrueSide sd now total) now total').index =\n      (accrueSide sd now total).index := by\n  generalize hy : accrueSide sd now total = Y\n  have hY : Y.block = now := by rw [\u2190 hy]; exact accrue_block _ _ _\n  unfold accrueSide\n  rw [hY]\n  simp\n\n/-- The market invariant gives consistency. -/\ntheorem Consistent_of_Inv {g\u2081 g\u2082 : Nat} {sp : Nat \u00d7 Nat} {s : St}\n    (hI : M.Inv g\u2081 g\u2082 sp s) : Consistent s := by\n  obtain \u27e8hl1, hl2, hrec, -, -, -, -\u27e9 := hI\n  exact \u27e8hl1, hl2, hrec\u27e9\n\n/-- A supply hook settles the account on side 1. -/\ntheorem settle\u2081 (s : St) (who : Account) : M.Settle\u2081 who s (supplyNext s who) :=\n  \u27e8by\n    have h1 : M.clock (supplyNext s who) =\n        ProofForgeFin.Accumulator.Clock.mk s.blockNumber\n          (accrueSide s.supplyState s.blockNumber (totalSupply s)).index\n          (accrueSide s.supplyState s.blockNumber (totalSupply s)).block\n          (accrueSide s.supplyState s.blockNumber (totalSupply s)).speed\n          s.borrowState.index s.borrowState.block s.borrowState.speed := rfl\n    have h2 : (M.clock s).catchUp\u2081 M.one (M.total\u2081 s) =\n        ProofForgeFin.Accumulator.Clock.mk s.blockNumber\n          (ProofForgeFin.Accumulator.catchUp M.one s.supplyState.index s.supplyState.block\n            s.supplyState.speed s.blockNumber (M.total\u2081 s))\n          s.blockNumber s.supplyState.speed\n          s.borrowState.index s.borrowState.block s.borrowState.speed := by\n      show (ProofForgeFin.Accumulator.Clock.mk s.blockNumber s.supplyState.index\n        s.supplyState.block s.supplyState.speed s.borrowState.index s.borrowState.block\n        s.borrowState.speed).catchUp\u2081 M.one (M.total\u2081 s) = _\n      rw [ProofForgeFin.Accumulator.Clock.catchUp\u2081_mk]\n    rw [h1, h2, accrue_index, accrue_block, accrue_speed, one_eq, total\u2081_eq],\n  (fun a =>\n    { a with\n      supplierIndex := (accrueSide s.supplyState s.blockNumber (totalSupply s)).index,\n      accrued := a.accrued + creditFor a.supply\n        (accrualStart a.supplierIndex (accrueSide s.supplyState s.blockNumber (totalSupply s)).index)\n        (accrueSide s.supplyState s.blockNumber (totalSupply s)).index }),\n  rfl,\n  fun a => \u27e8rfl, rfl, rfl, rfl, Nat.le_of_eq (Nat.add_right_comm _ _ _)\u27e9\u27e9\n\n/-- A borrow hook settles the account on side 2. -/\ntheorem settle\u2082 (s : St) (who : Account) : M.Settle\u2082 who s (borrowNext s who) :=\n  \u27e8by\n    have h1 : M.clock (borrowNext s who) =\n        ProofForgeFin.Accumulator.Clock.mk s.blockNumber\n          s.supplyState.index s.supplyState.block s.supplyState.speed\n          (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index\n          (accrueSide s.borrowState s.blockNumber (totalBorrows s)).block\n          (accrueSide s.borrowState s.blockNumber (totalBorrows s)).speed := rfl\n    have h2 : (M.clock s).catchUp\u2082 M.one (M.total\u2082 s) =\n        ProofForgeFin.Accumulator.Clock.mk s.blockNumber\n          s.supplyState.index s.supplyState.block s.supplyState.speed\n          (ProofForgeFin.Accumulator.catchUp M.one s.borrowState.index s.borrowState.block\n            s.borrowState.speed s.blockNumber (M.total\u2082 s))\n          s.blockNumber s.borrowState.speed := by\n      show (ProofForgeFin.Accumulator.Clock.mk s.blockNumber s.supplyState.index\n        s.supplyState.block s.supplyState.speed s.borrowState.index s.borrowState.block\n        s.borrowState.speed).catchUp\u2082 M.one (M.total\u2082 s) = _\n      rw [ProofForgeFin.Accumulator.Clock.catchUp\u2082_mk]\n    rw [h1, h2, accrue_index, accrue_block, accrue_speed, one_eq, total\u2082_eq],\n  (fun a =>\n    { a with\n      borrowerIndex := (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index,\n      accrued := a.accrued + creditFor a.borrow\n        (accrualStart a.borrowerIndex (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index)\n        (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index }),\n  rfl,\n  fun a => \u27e8rfl, rfl, rfl, rfl, Nat.le_of_eq (Nat.add_right_comm _ _ _)\u27e9\u27e9\n\n/-! ## Every operation is a market action -/\n\nopen ProofForgeFin.Accumulator\n\ntheorem supplyHook_some (g\u2081 g\u2082 : Nat) (sp : Nat \u00d7 Nat) (s : St) (who : Account)\n    (hI : M.Inv g\u2081 g\u2082 sp s) :\n    comptroller s (.supplyHook who) = some (supplyNext s who) := by\n  rw [supplyHook_eq, if_pos (supplyPre_of_Consistent s who (Consistent_of_Inv hI))]\n\ntheorem borrowHook_some (g\u2081 g\u2082 : Nat) (sp : Nat \u00d7 Nat) (s : St) (who : Account)\n    (hI : M.Inv g\u2081 g\u2082 sp s) :\n    comptroller s (.borrowHook who) = some (borrowNext s who) := by\n  rw [borrowHook_eq, if_pos (borrowPre_of_Consistent s who (Consistent_of_Inv hI))]\n\ntheorem rec_le_of_Inv {g\u2081 g\u2082 : Nat} {sp : Nat \u00d7 Nat} {s : St}\n    (hI : M.Inv g\u2081 g\u2082 sp s) (who : Account) :\n    (s.acct who).supplierIndex \u2264 s.supplyState.index \u2227\n    (s.acct who).borrowerIndex \u2264 s.borrowState.index :=\n  ProofForgeFin.Ledger.getD_of_forall s.accts who hI.recs \u27e8Nat.zero_le _, Nat.zero_le _\u27e9\n\n/-- The supply preconditions also hold after another account's supply settlement. -/\ntheorem supplyPre_supplyNext_of_ne (g\u2081 g\u2082 : Nat) (sp : Nat \u00d7 Nat) (s : St)\n    (src dst : Account) (hne : src \u2260 dst) (hI : M.Inv g\u2081 g\u2082 sp s) :\n    supplyPre (supplyNext s src) dst := by\n  have hT : totalSupply (supplyNext s src) = totalSupply s := totalSupply_supplyNext _ _\n  have hacct : ((supplyNext s src).acct dst).supplierIndex =\n      ((s.acct dst)).supplierIndex := by\n    show (((s.accts.modify src (fun a => { a with\n      supplierIndex := (accrueSide s.supplyState s.blockNumber (totalSupply s)).index,\n      accrued := a.accrued + creditFor a.supply\n        (accrualStart a.supplierIndex (accrueSide s.supplyState s.blockNumber (totalSupply s)).index)\n        (accrueSide s.supplyState s.blockNumber (totalSupply s)).index })).getD dst\n      noAcct)).supplierIndex = _\n    rw [ProofForgeFin.Ledger.getD_modify_ne _ _ _ hne]\n    rfl\n  have hidx : (accrueSide (supplyNext s src).supplyState (supplyNext s src).blockNumber\n      (totalSupply (supplyNext s src))).index =\n      (accrueSide s.supplyState s.blockNumber (totalSupply s)).index := by\n    have hY : (supplyNext s src).supplyState =\n        accrueSide s.supplyState s.blockNumber (totalSupply s) := rfl\n    have hN : (supplyNext s src).blockNumber = s.blockNumber := rfl\n    rw [hY, hN, hT]\n    exact accrue_accrue_index _ _ _ _\n  have hblock : (supplyNext s src).supplyState.block \u2264 (supplyNext s src).blockNumber := by\n    have hb : ((supplyNext s src).supplyState).block = s.blockNumber := accrue_block _ _ _\n    have hn : (supplyNext s src).blockNumber = s.blockNumber := rfl\n    rw [hb, hn]\n    exact Nat.le_refl _\n  unfold supplyPre\n  rw [hidx]\n  refine \u27e8hblock, ?_\u27e9\n  rw [hacct]\n  exact accrualStart_le _ _ _ (rec_le_of_Inv hI dst).1\n    (accrue_index_le s.supplyState s.blockNumber (totalSupply s))\n\ntheorem speedsNext_rate\u2081 (s : St) (a b : Nat) :\n    (M.clock (speedsNext s a b)).rate\u2081 = a := by\n  show (speedsNext s a b).supplyState.speed = a\n  unfold speedsNext\n  by_cases hsup : s.supplyState.speed = a <;> simp [hsup]\n\ntheorem speedsNext_rate\u2082 (s : St) (a b : Nat) :\n    (M.clock (speedsNext s a b)).rate\u2082 = b := by\n  show (speedsNext s a b).borrowState.speed = b\n  unfold speedsNext\n  by_cases hbor : s.borrowState.speed = b <;> simp [hbor]\n\n/-- A speed change retunes the market. -/\ntheorem retune_speeds (s : St) (a b : Nat) : M.Retune s (speedsNext s a b) := by\n  refine \u27e8rfl, rfl, ?_, ?_\u27e9\n  \u00b7 by_cases hsup : s.supplyState.speed = a\n    \u00b7 have e : (speedsNext s a b).supplyState = s.supplyState := by\n        unfold speedsNext; simp [hsup]\n      exact Or.inl \u27e8by show (speedsNext s a b).supplyState.index = _; rw [e]; rfl,\n        by show (speedsNext s a b).supplyState.block = _; rw [e]; rfl,\n        by show (speedsNext s a b).supplyState.speed = _; rw [e]; rfl\u27e9\n    \u00b7 have e : (speedsNext s a b).supplyState =\n          { accrueSide s.supplyState s.blockNumber (totalSupply s) with speed := a } := by\n        unfold speedsNext; simp [hsup]\n      refine Or.inr \u27e8?_, ?_\u27e9\n      \u00b7 show (speedsNext s a b).supplyState.index = _\n        rw [e]\n        show (accrueSide s.supplyState s.blockNumber (totalSupply s)).index = _\n        rw [accrue_index, one_eq, total\u2081_eq]\n        rfl\n      \u00b7 show (speedsNext s a b).supplyState.block = _\n        rw [e]\n        show (accrueSide s.supplyState s.blockNumber (totalSupply s)).block = _\n        rw [accrue_block]\n        rfl\n  \u00b7 by_cases hbor : s.borrowState.speed = b\n    \u00b7 have e : (speedsNext s a b).borrowState = s.borrowState := by\n        unfold speedsNext; simp [hbor]\n      exact Or.inl \u27e8by show (speedsNext s a b).borrowState.index = _; rw [e]; rfl,\n        by show (speedsNext s a b).borrowState.block = _; rw [e]; rfl,\n        by show (speedsNext s a b).borrowState.speed = _; rw [e]; rfl\u27e9\n    \u00b7 have e : (speedsNext s a b).borrowState =\n          { accrueSide s.borrowState s.blockNumber (totalBorrows s) with speed := b } := by\n        unfold speedsNext; simp [hbor]\n      refine Or.inr \u27e8?_, ?_\u27e9\n      \u00b7 show (speedsNext s a b).borrowState.index = _\n        rw [e]\n        show (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index = _\n        rw [accrue_index, one_eq, total\u2082_eq]\n        rfl\n      \u00b7 show (speedsNext s a b).borrowState.block = _\n        rw [e]\n        show (accrueSide s.borrowState s.blockNumber (totalBorrows s)).block = _\n        rw [accrue_block]\n        rfl\n\n/-- A payment is an adjustment: it moves accrued COMP to the wallet, keeping every total. -/\ntheorem grant_adjust (s : St) (who : Account)\n    (hg : 0 < (s.acct who).accrued \u2227 (s.acct who).accrued \u2264 s.reserve) :\n    M.Adjust who s (grant s who) := by\n  unfold grant\n  rw [if_pos hg]\n  refine \u27e8rfl, (fun a => { a with accrued := 0, wallet := a.wallet + a.accrued }), rfl,\n    ?_, .inl (fun _ => rfl), .inl (fun _ => rfl)\u27e9\n  intro a\n  exact \u27e8by show (0 : Nat) + (a.wallet + a.accrued) \u2264 a.accrued + a.wallet; omega,\n    rfl, rfl\u27e9\n\n/-- A payment that pays nothing is a silent step. -/\ntheorem grant_same (s : St) (who : Account)\n    (hg : \u00ac (0 < (s.acct who).accrued \u2227 (s.acct who).accrued \u2264 s.reserve)) :\n    M.Step s (grant s who) := by\n  have hgrant : grant s who = s := by unfold grant; rw [if_neg hg]\n  rw [hgrant]\n  exact .same rfl rfl\n\ntheorem exec_act (g\u2081 g\u2082 : Nat) (sp : Nat \u00d7 Nat) (s : St) (op : Op)\n    (hI : M.Inv g\u2081 g\u2082 sp s) :\n    M.Act sp s (nextSpeeds sp op) (emittedBy sp op) (exec comptroller s op) := by\n  cases op with\n  | mint who x =>\n    by_cases hwho : who < s.accts.length\n    \u00b7 have hhook := supplyHook_some g\u2081 g\u2082 sp s who hI\n      have hexec : exec comptroller s (.mint who x) =\n          (supplyNext s who).withAcct who fun a => { a with supply := a.supply + x } := by\n        simp only [exec]\n        rw [if_pos hwho, hhook]\n      rw [hexec]\n      exact .moves (Market.Settle\u2081.then_adjust (settle\u2081 s who) rfl rfl\n        (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9) (fun _ => rfl))\n    \u00b7 have hexec : exec comptroller s (.mint who x) = s := by\n        simp only [exec]\n        rw [if_neg hwho]\n      rw [hexec]\n      exact .moves (Market.Reach.refl s)\n  | redeem who x =>\n    by_cases hwho : who < s.accts.length\n    \u00b7 have hhook := supplyHook_some g\u2081 g\u2082 sp s who hI\n      by_cases hbal : x \u2264 ((supplyNext s who).acct who).supply\n      \u00b7 have hexec : exec comptroller s (.redeem who x) =\n            (supplyNext s who).withAcct who fun a => { a with supply := a.supply - x } := by\n          simp only [exec]\n          rw [if_pos hwho, hhook]\n          dsimp only\n          rw [if_pos hbal]\n        rw [hexec]\n        exact .moves (Market.Settle\u2081.then_adjust (settle\u2081 s who) rfl rfl\n          (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9) (fun _ => rfl))\n      \u00b7 have hexec : exec comptroller s (.redeem who x) = s := by\n          simp only [exec]\n          rw [if_pos hwho, hhook]\n          dsimp only\n          rw [if_neg hbal]\n        rw [hexec]\n        exact .moves (Market.Reach.refl s)\n    \u00b7 have hexec : exec comptroller s (.redeem who x) = s := by\n        simp only [exec]\n        rw [if_neg hwho]\n      rw [hexec]\n      exact .moves (Market.Reach.refl s)\n  | transfer src dst x =>\n    by_cases h : src < s.accts.length \u2227 dst < s.accts.length \u2227 src \u2260 dst\n    \u00b7 have hne : src \u2260 dst := h.2.2\n      have h1 : comptroller s (.supplyHook src) = some (supplyNext s src) :=\n        supplyHook_some g\u2081 g\u2082 sp s src hI\n      have h2 : comptroller (supplyNext s src) (.supplyHook dst) =\n          some (supplyNext (supplyNext s src) dst) := by\n        rw [supplyHook_eq, if_pos (supplyPre_supplyNext_of_ne g\u2081 g\u2082 sp s src dst hne hI)]\n      by_cases hbal : x \u2264 ((supplyNext (supplyNext s src) dst).acct src).supply\n      \u00b7 have hexec : exec comptroller s (.transfer src dst x) =\n            ((supplyNext (supplyNext s src) dst).withAcct src\n              fun a => { a with supply := a.supply - x }).withAcct dst\n              fun a => { a with supply := a.supply + x } := by\n          simp only [exec]\n          rw [if_pos h, h1]\n          dsimp only\n          rw [h2]\n          dsimp only\n          rw [if_pos hbal]\n        rw [hexec]\n        exact .moves (Market.Settle\u2081.transfer (settle\u2081 s src)\n          (settle\u2081 (supplyNext s src) dst) rfl rfl\n          (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9) (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9)\n          (fun _ => rfl) (fun _ => rfl))\n      \u00b7 have hexec : exec comptroller s (.transfer src dst x) = s := by\n          simp only [exec]\n          rw [if_pos h, h1]\n          dsimp only\n          rw [h2]\n          dsimp only\n          rw [if_neg hbal]\n        rw [hexec]\n        exact .moves (Market.Reach.refl s)\n    \u00b7 have hexec : exec comptroller s (.transfer src dst x) = s := by\n        simp only [exec]\n        rw [if_neg h]\n      rw [hexec]\n      exact .moves (Market.Reach.refl s)\n  | borrow who x =>\n    by_cases hwho : who < s.accts.length\n    \u00b7 have hhook := borrowHook_some g\u2081 g\u2082 sp s who hI\n      have hexec : exec comptroller s (.borrow who x) =\n          (borrowNext s who).withAcct who fun a => { a with borrow := a.borrow + x } := by\n        simp only [exec]\n        rw [if_pos hwho, hhook]\n      rw [hexec]\n      exact .moves (Market.Settle\u2082.then_adjust (settle\u2082 s who) rfl rfl\n        (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9) (fun _ => rfl))\n    \u00b7 have hexec : exec comptroller s (.borrow who x) = s := by\n        simp only [exec]\n        rw [if_neg hwho]\n      rw [hexec]\n      exact .moves (Market.Reach.refl s)\n  | repay who x =>\n    by_cases hwho : who < s.accts.length\n    \u00b7 have hhook := borrowHook_some g\u2081 g\u2082 sp s who hI\n      by_cases hbal : x \u2264 ((borrowNext s who).acct who).borrow\n      \u00b7 have hexec : exec comptroller s (.repay who x) =\n            (borrowNext s who).withAcct who fun a => { a with borrow := a.borrow - x } := by\n          simp only [exec]\n          rw [if_pos hwho, hhook]\n          dsimp only\n          rw [if_pos hbal]\n        rw [hexec]\n        exact .moves (Market.Settle\u2082.then_adjust (settle\u2082 s who) rfl rfl\n          (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9) (fun _ => rfl))\n      \u00b7 have hexec : exec comptroller s (.repay who x) = s := by\n          simp only [exec]\n          rw [if_pos hwho, hhook]\n          dsimp only\n          rw [if_neg hbal]\n        rw [hexec]\n        exact .moves (Market.Reach.refl s)\n    \u00b7 have hexec : exec comptroller s (.repay who x) = s := by\n        simp only [exec]\n        rw [if_neg hwho]\n      rw [hexec]\n      exact .moves (Market.Reach.refl s)\n  | claim who =>\n    have hI' := Consistent_of_Inv hI\n    have hb : borrowPre s who := borrowPre_of_Consistent s who hI'\n    have hs : supplyPre (borrowNext s who) who := supplyPre_borrowNext s who hI'\n    have hclaim : comptroller s (.claim who) =\n        some (grant (supplyNext (borrowNext s who) who) who) := by\n      rw [claim_eq, if_pos \u27e8hb, hs\u27e9]\n    have hexec : exec comptroller s (.claim who) =\n        grant (supplyNext (borrowNext s who) who) who := by\n      simp only [exec]\n      rw [hclaim]\n      rfl\n    have h\u2082 : M.Settle\u2082 who s (borrowNext s who) := settle\u2082 s who\n    have h\u2081 : M.Settle\u2081 who (borrowNext s who) (supplyNext (borrowNext s who) who) :=\n      settle\u2081 (borrowNext s who) who\n    by_cases hg : 0 < ((supplyNext (borrowNext s who) who).acct who).accrued \u2227\n        ((supplyNext (borrowNext s who) who).acct who).accrued \u2264\n          (supplyNext (borrowNext s who) who).reserve\n    \u00b7 rw [hexec]\n      exact .moves (((Market.Reach.single (.settle\u2082 h\u2082)).tail (.settle\u2081 h\u2081)).tail\n        (.adjust (grant_adjust _ _ hg)))\n    \u00b7 rw [hexec]\n      exact .moves (((Market.Reach.single (.settle\u2082 h\u2082)).tail (.settle\u2081 h\u2081)).tail\n        (grant_same _ _ hg))\n  | setSpeeds a b =>\n    have hcond : (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n        (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber) :=\n      \u27e8fun _ => hI.1, fun _ => hI.2\u27e9\n    have hset : comptroller s (.setSpeeds a b) = some (speedsNext s a b) := by\n      rw [setSpeeds_eq, if_pos hcond]\n    have hexec : exec comptroller s (.setSpeeds a b) = speedsNext s a b := by\n      simp only [exec]\n      rw [hset]\n      rfl\n    rw [hexec]\n    exact .retune (retune_speeds s a b) (speedsNext_rate\u2081 s a b) (speedsNext_rate\u2082 s a b)\n  | advance k =>\n    have hexec : exec comptroller s (.advance k) = { s with blockNumber := s.blockNumber + k } := by\n      simp only [exec]\n    rw [hexec]\n    exact .advance k \u27e8rfl, rfl\u27e9\n  | drip x =>\n    have hexec : exec comptroller s (.drip x) = { s with reserve := s.reserve + x } := by\n      simp only [exec]\n    rw [hexec]\n    exact .moves (Market.Reach.single (.same rfl rfl))\n\n/-! ## The upgrade and the bounds over runs -/\n\ntheorem clock_upgrade (L : Legacy) : M.clock (upgrade L) = (cL L).reinit M.init := by\n  show ProofForgeFin.Accumulator.Clock.mk _ _ _ _ _ _ _ = _\n  simp only [M, cL, upgrade, initSide, ProofForgeFin.Accumulator.Clock.reinit]\n  by_cases h1 : L.supplyIndex = 0 <;> by_cases h2 : L.borrowIndex = 0 <;>\n    simp [h1, h2]\n\ntheorem owed_sum_eq (L : Legacy) :\n    ((M.accts (upgrade L)).map (M.owed L.supplyStart L.borrowStart (cL L))).sum =\n      (L.accts.map L.pendingScaled).sum := by\n  have hmod : M.accts (upgrade L) = L.accts := rfl\n  rw [hmod]\n  exact ProofForgeFin.Ledger.sum_map_congr L.accts (fun a _ => owed_eq L a)\n\ntheorem inv_start_hr (L : Legacy) (hL : L.WellFormed) :\n    \u2200 a \u2208 M.accts (upgrade L),\n      M.rec\u2081 a \u2264 (cL L).index\u2081 \u2227 M.rec\u2082 a \u2264 (cL L).index\u2082 :=\n  fun a ha => hL.2.2.2.2.2.2 a ha\n\ntheorem inv_start (L : Legacy) (hL : L.WellFormed) :\n    M.Inv (reinitStart M.init (cL L).index\u2081 L.supplyStart)\n      (reinitStart M.init (cL L).index\u2082 L.borrowStart)\n      ((cL L).rate\u2081, (cL L).rate\u2082) (upgrade L) :=\n  M.inv_reinit (clock_upgrade L) hL.1 hL.2.1 hL.2.2.1 hL.2.2.2.1 hL.2.2.2.2.1\n    hL.2.2.2.2.2.1 (inv_start_hr L hL)\n\ntheorem inv_start_hr_acct (L : Legacy) (hL : L.WellFormed) (who : Account) :\n    M.rec\u2081 (M.acct (upgrade L) who) \u2264 (cL L).index\u2081 \u2227\n    M.rec\u2082 (M.acct (upgrade L) who) \u2264 (cL L).index\u2082 :=\n  ProofForgeFin.Ledger.getD_of_forall (M.accts (upgrade L)) who\n    (inv_start_hr L hL) \u27e8Nat.zero_le _, Nat.zero_le _\u27e9\n\ntheorem acct_upgrade (L : Legacy) (who : Account) :\n    M.acct (upgrade L) who = L.accts.getD who noAcct := rfl\n\ntheorem req_rewards_bounded     : RewardsBounded comptroller := by\n  intro L ops hL\n  have hI := inv_start L hL\n  have hs := M.pot_reinit_le L.supplyStart L.borrowStart (clock_upgrade L)\n    (inv_start_hr L hL)\n  have hone : 0 < M.one := by decide\n  have h := M.rewards_bounded (run comptroller) emitted speedsAfter\n    (exec_act _ _) hone hI hs ops\n  rw [creditSum_eq, owed_sum_eq, un\u2081_eq, un\u2082_eq, one_eq] at h\n  exact h\n\ntheorem req_account_bounded     : AccountBounded comptroller := by\n  intro L ops who hL\n  have hI := inv_start L hL\n  have hs := M.potOf_reinit_le L.supplyStart L.borrowStart who (clock_upgrade L)\n    (inv_start_hr_acct L hL who)\n  have hone : 0 < M.one := by decide\n  have h := M.account_rewards_bounded (run comptroller) emitted speedsAfter\n    (exec_act _ _) hone hI who hs ops\n  rw [creditedTo_eq, creditedTo_eq, owed_eq, acct_upgrade, un\u2081_eq, un\u2082_eq, one_eq] at h\n  exact h\n\ntheorem req_no_backdated        : NoBackdatedRewards comptroller := by\n  intro L history ops who hL hpos\n  have hI := inv_start L hL\n  have hone : 0 < M.one := by decide\n  have hu\u2081 : M.units\u2081 (M.acct (run comptroller (upgrade L) history) who) = 0 := hpos.1\n  have hu\u2082 : M.units\u2082 (M.acct (run comptroller (upgrade L) history) who) = 0 := hpos.2\n  have h := M.rewards_after_no_position_bounded (run comptroller) emitted speedsAfter\n    (exec_act _ _) hone hI history ops who hu\u2081 hu\u2082\n  rw [creditedTo_eq, creditedTo_eq] at h\n  exact h\n\nend CompRewards\n"
+ },
+ "proved": [
+  {
+   "name": "req_set_speeds",
+   "kind": "theorem",
+   "text": "theorem req_set_speeds          : SetSpeedsEffects comptroller := by\n  intro s a b s' h\n  rw [setSpeeds_eq] at h\n  by_cases hc : (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n      (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber)\n  \u00b7 rw [if_pos hc] at h\n    injection h with h'\n    subst h'\n    exact \u27e8hc.1, hc.2, rfl\u27e9\n  \u00b7 rw [if_neg hc] at h\n    injection h\n\n/-! ## Reading the state as a two-sided reward market -/",
+   "deps": [
+    "borrowNext",
+    "borrowPre",
+    "comptroller",
+    "setSpeeds_eq",
+    "speedsNext",
+    "supplyNext",
+    "supplyPre"
+   ],
+   "statement": "theorem req_set_speeds          : SetSpeedsEffects comptroller",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "req_claim",
+   "kind": "theorem",
+   "text": "theorem req_claim               : ClaimEffects comptroller := by\n  intro s who s' h\n  rw [claim_eq] at h\n  by_cases hc : borrowPre s who \u2227 supplyPre (borrowNext s who) who\n  \u00b7 rw [if_pos hc] at h\n    injection h with h'\n    subst h'\n    exact \u27e8borrowNext s who, supplyNext (borrowNext s who) who,\n      \u27e8hc.1.1, hc.1.2, rfl\u27e9, \u27e8hc.2.1, hc.2.2, rfl\u27e9, rfl\u27e9\n  \u00b7 rw [if_neg hc] at h\n    injection h",
+   "deps": [
+    "borrowNext",
+    "borrowPre",
+    "claim_eq",
+    "comptroller",
+    "speedsNext",
+    "supplyNext",
+    "supplyPre"
+   ],
+   "statement": "theorem req_claim               : ClaimEffects comptroller",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "req_borrow_hook",
+   "kind": "theorem",
+   "text": "theorem req_borrow_hook         : BorrowHookEffects comptroller := by\n  intro s who s' h\n  rw [borrowHook_eq] at h\n  by_cases hc : borrowPre s who\n  \u00b7 rw [if_pos hc] at h\n    injection h with h'\n    subst h'\n    exact \u27e8hc.1, hc.2, rfl\u27e9\n  \u00b7 rw [if_neg hc] at h\n    injection h",
+   "deps": [
+    "borrowHook_eq",
+    "borrowNext",
+    "borrowPre",
+    "comptroller",
+    "speedsNext",
+    "supplyNext",
+    "supplyPre"
+   ],
+   "statement": "theorem req_borrow_hook         : BorrowHookEffects comptroller",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "req_supply_hook",
+   "kind": "theorem",
+   "text": "theorem req_supply_hook         : SupplyHookEffects comptroller := by\n  intro s who s' h\n  rw [supplyHook_eq] at h\n  by_cases hc : supplyPre s who\n  \u00b7 rw [if_pos hc] at h\n    injection h with h'\n    subst h'\n    exact \u27e8hc.1, hc.2, rfl\u27e9\n  \u00b7 rw [if_neg hc] at h\n    injection h",
+   "deps": [
+    "borrowNext",
+    "borrowPre",
+    "comptroller",
+    "speedsNext",
+    "supplyHook_eq",
+    "supplyNext",
+    "supplyPre"
+   ],
+   "statement": "theorem req_supply_hook         : SupplyHookEffects comptroller",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "req_calls_succeed",
+   "kind": "theorem",
+   "text": "theorem req_calls_succeed       : CallsSucceed comptroller := by\n  intro s c hc\n  cases c with\n  | supplyHook who =>\n    rw [supplyHook_eq]\n    simp [supplyPre_of_Consistent s who hc]\n  | borrowHook who =>\n    rw [borrowHook_eq]\n    simp [borrowPre_of_Consistent s who hc]\n  | claim who =>\n    rw [claim_eq]\n    simp [borrowPre_of_Consistent s who hc, supplyPre_borrowNext s who hc]\n  | setSpeeds a b =>\n    have hpre : (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n        (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber) :=\n      \u27e8fun _ => hc.1, fun _ => hc.2.1\u27e9\n    rw [setSpeeds_eq, if_pos hpre, Option.isSome_some]",
+   "deps": [
+    "accrualStart_le",
+    "accrue_index",
+    "accrue_index_le",
+    "borrowHook_eq",
+    "borrowNext",
+    "borrowNext_blockNumber",
+    "borrowNext_supplierIndex",
+    "borrowNext_supplyState",
+    "borrowPre",
+    "borrowPre_of",
+    "borrowPre_of_Consistent",
+    "claim_eq",
+    "comptroller",
+    "rec_le_of_Consistent",
+    "setSpeeds_eq",
+    "speedsNext",
+    "supplyHook_eq",
+    "supplyNext",
+    "supplyPre",
+    "supplyPre_borrowNext",
+    "supplyPre_of",
+    "supplyPre_of_Consistent",
+    "totalSupply_borrowNext"
+   ],
+   "statement": "theorem req_calls_succeed       : CallsSucceed comptroller",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "supplyPre_borrowNext",
+   "kind": "theorem",
+   "text": "theorem supplyPre_borrowNext (s : St) (who : Account) (hc : Consistent s) :\n    supplyPre (borrowNext s who) who := by\n  unfold supplyPre\n  rw [borrowNext_supplyState, borrowNext_blockNumber]\n  refine \u27e8hc.1, ?_\u27e9\n  rw [borrowNext_supplierIndex, totalSupply_borrowNext]\n  exact (supplyPre_of_Consistent s who hc).2",
+   "deps": [
+    "accrualStart_le",
+    "accrue_index",
+    "accrue_index_le",
+    "borrowNext",
+    "borrowNext_blockNumber",
+    "borrowNext_supplierIndex",
+    "borrowNext_supplyState",
+    "rec_le_of_Consistent",
+    "supplyPre",
+    "supplyPre_of",
+    "supplyPre_of_Consistent",
+    "totalSupply_borrowNext"
+   ],
+   "statement": "theorem supplyPre_borrowNext (s : St) (who : Account) (hc : Consistent s) :\n    supplyPre (borrowNext s who) who",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "borrowPre_of_Consistent",
+   "kind": "theorem",
+   "text": "theorem borrowPre_of_Consistent (s : St) (who : Account) (hc : Consistent s) :\n    borrowPre s who :=\n  borrowPre_of s who hc.2.1 (rec_le_of_Consistent s who hc).2",
+   "deps": [
+    "accrualStart_le",
+    "accrue_index",
+    "accrue_index_le",
+    "borrowPre",
+    "borrowPre_of",
+    "rec_le_of_Consistent"
+   ],
+   "statement": "theorem borrowPre_of_Consistent (s : St) (who : Account) (hc : Consistent s) :\n    borrowPre s who",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "supplyPre_of_Consistent",
+   "kind": "theorem",
+   "text": "theorem supplyPre_of_Consistent (s : St) (who : Account) (hc : Consistent s) :\n    supplyPre s who :=\n  supplyPre_of s who hc.1 (rec_le_of_Consistent s who hc).1",
+   "deps": [
+    "accrualStart_le",
+    "accrue_index",
+    "accrue_index_le",
+    "rec_le_of_Consistent",
+    "supplyPre",
+    "supplyPre_of"
+   ],
+   "statement": "theorem supplyPre_of_Consistent (s : St) (who : Account) (hc : Consistent s) :\n    supplyPre s who",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "rec_le_of_Consistent",
+   "kind": "theorem",
+   "text": "theorem rec_le_of_Consistent (s : St) (who : Account) (hc : Consistent s) :\n    (s.acct who).supplierIndex \u2264 s.supplyState.index \u2227\n    (s.acct who).borrowerIndex \u2264 s.borrowState.index :=\n  ProofForgeFin.Ledger.getD_of_forall s.accts who hc.2.2 \u27e8Nat.zero_le _, Nat.zero_le _\u27e9",
+   "deps": [],
+   "statement": "theorem rec_le_of_Consistent (s : St) (who : Account) (hc : Consistent s) :\n    (s.acct who).supplierIndex \u2264 s.supplyState.index \u2227\n    (s.acct who).borrowerIndex \u2264 s.borrowState.index",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "borrowPre_of",
+   "kind": "theorem",
+   "text": "theorem borrowPre_of (s : St) (who : Account) (hblock : s.borrowState.block \u2264 s.blockNumber)\n    (hrec : (s.acct who).borrowerIndex \u2264 s.borrowState.index) : borrowPre s who := by\n  refine \u27e8hblock, ?_\u27e9\n  exact accrualStart_le _ _ _ hrec\n    (accrue_index_le s.borrowState s.blockNumber (totalBorrows s))",
+   "deps": [
+    "accrualStart_le",
+    "accrue_index",
+    "accrue_index_le",
+    "borrowPre"
+   ],
+   "statement": "theorem borrowPre_of (s : St) (who : Account) (hblock : s.borrowState.block \u2264 s.blockNumber)\n    (hrec : (s.acct who).borrowerIndex \u2264 s.borrowState.index) : borrowPre s who",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "supplyPre_of",
+   "kind": "theorem",
+   "text": "theorem supplyPre_of (s : St) (who : Account) (hblock : s.supplyState.block \u2264 s.blockNumber)\n    (hrec : (s.acct who).supplierIndex \u2264 s.supplyState.index) : supplyPre s who := by\n  refine \u27e8hblock, ?_\u27e9\n  exact accrualStart_le _ _ _ hrec\n    (accrue_index_le s.supplyState s.blockNumber (totalSupply s))",
+   "deps": [
+    "accrualStart_le",
+    "accrue_index",
+    "accrue_index_le",
+    "supplyPre"
+   ],
+   "statement": "theorem supplyPre_of (s : St) (who : Account) (hblock : s.supplyState.block \u2264 s.blockNumber)\n    (hrec : (s.acct who).supplierIndex \u2264 s.supplyState.index) : supplyPre s who",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "totalBorrows_supplyNext",
+   "kind": "theorem",
+   "text": "theorem totalBorrows_supplyNext (s : St) (who : Account) :\n    totalBorrows (supplyNext s who) = totalBorrows s := by\n  unfold supplyNext totalBorrows\n  exact ProofForgeFin.Ledger.sum_map_modify_eq s.accts who _ _ noAcct (fun _ => rfl)",
+   "deps": [
+    "supplyNext"
+   ],
+   "statement": "theorem totalBorrows_supplyNext (s : St) (who : Account) :\n    totalBorrows (supplyNext s who) = totalBorrows s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "borrowNext_supplierIndex",
+   "kind": "theorem",
+   "text": "theorem borrowNext_supplierIndex (s : St) (who : Account) :\n    ((borrowNext s who).acct who).supplierIndex = ((s.acct who)).supplierIndex :=\n  ProofForgeFin.Ledger.getD_modify_of_keeps s.accts who who noAcct\n    (fun a : Acct => a.supplierIndex) (fun _ => rfl)",
+   "deps": [
+    "borrowNext"
+   ],
+   "statement": "theorem borrowNext_supplierIndex (s : St) (who : Account) :\n    ((borrowNext s who).acct who).supplierIndex = ((s.acct who)).supplierIndex",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "borrowNext_blockNumber",
+   "kind": "theorem",
+   "text": "theorem borrowNext_blockNumber (s : St) (who : Account) :\n    (borrowNext s who).blockNumber = s.blockNumber := rfl",
+   "deps": [
+    "borrowNext"
+   ],
+   "statement": "theorem borrowNext_blockNumber (s : St) (who : Account) :\n    (borrowNext s who).blockNumber = s.blockNumber",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "borrowNext_supplyState",
+   "kind": "theorem",
+   "text": "theorem borrowNext_supplyState (s : St) (who : Account) :\n    (borrowNext s who).supplyState = s.supplyState := rfl",
+   "deps": [
+    "borrowNext"
+   ],
+   "statement": "theorem borrowNext_supplyState (s : St) (who : Account) :\n    (borrowNext s who).supplyState = s.supplyState",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "totalSupply_borrowNext",
+   "kind": "theorem",
+   "text": "theorem totalSupply_borrowNext (s : St) (who : Account) :\n    totalSupply (borrowNext s who) = totalSupply s := by\n  unfold borrowNext totalSupply\n  exact ProofForgeFin.Ledger.sum_map_modify_eq s.accts who _ _ noAcct (fun _ => rfl)",
+   "deps": [
+    "borrowNext"
+   ],
+   "statement": "theorem totalSupply_borrowNext (s : St) (who : Account) :\n    totalSupply (borrowNext s who) = totalSupply s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "accrualStart_le",
+   "kind": "theorem",
+   "text": "theorem accrualStart_le (recorded index oldIndex : Nat) (hrec : recorded \u2264 oldIndex)\n    (hidx : oldIndex \u2264 index) : accrualStart recorded index \u2264 index := by\n  unfold accrualStart\n  by_cases hr : recorded = 0\n  \u00b7 simp only [hr, ite_true]\n    split <;> omega\n  \u00b7 simp only [hr, ite_false]\n    omega",
+   "deps": [],
+   "statement": "theorem accrualStart_le (recorded index oldIndex : Nat) (hrec : recorded \u2264 oldIndex)\n    (hidx : oldIndex \u2264 index) : accrualStart recorded index \u2264 index",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "accrue_index_le",
+   "kind": "theorem",
+   "text": "theorem accrue_index_le (sd : Side) (now total : Nat) :\n    sd.index \u2264 (accrueSide sd now total).index := by\n  rw [accrue_index]\n  exact ProofForgeFin.Accumulator.le_catchUp _ _ _ _ _ _",
+   "deps": [
+    "accrue_index"
+   ],
+   "statement": "theorem accrue_index_le (sd : Side) (now total : Nat) :\n    sd.index \u2264 (accrueSide sd now total).index",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "accrue_index",
+   "kind": "theorem",
+   "text": "theorem accrue_index (sd : Side) (now total : Nat) :\n    (accrueSide sd now total).index =\n      ProofForgeFin.Accumulator.catchUp doubleScale sd.index sd.block sd.speed now total := by\n  unfold accrueSide ProofForgeFin.Accumulator.catchUp\n  by_cases h : 0 < now - sd.block \u2227 0 < sd.speed \u2227 0 < total <;> simp [h]",
+   "deps": [],
+   "statement": "theorem accrue_index (sd : Side) (now total : Nat) :\n    (accrueSide sd now total).index =\n      ProofForgeFin.Accumulator.catchUp doubleScale sd.index sd.block sd.speed now total",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "setSpeeds_eq",
+   "kind": "theorem",
+   "text": "theorem setSpeeds_eq (s : St) (a b : Nat) :\n    comptroller s (.setSpeeds a b) =\n      if (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n         (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber)\n      then some (speedsNext s a b) else none := rfl",
+   "deps": [
+    "borrowNext",
+    "borrowPre",
+    "comptroller",
+    "speedsNext",
+    "supplyNext",
+    "supplyPre"
+   ],
+   "statement": "theorem setSpeeds_eq (s : St) (a b : Nat) :\n    comptroller s (.setSpeeds a b) =\n      if (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n         (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber)\n      then some (speedsNext s a b) else none",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "claim_eq",
+   "kind": "theorem",
+   "text": "theorem claim_eq (s : St) (who : Account) :\n    comptroller s (.claim who) =\n      if borrowPre s who \u2227 supplyPre (borrowNext s who) who then\n        some (grant (supplyNext (borrowNext s who) who) who)\n      else none := rfl",
+   "deps": [
+    "borrowNext",
+    "borrowPre",
+    "comptroller",
+    "speedsNext",
+    "supplyNext",
+    "supplyPre"
+   ],
+   "statement": "theorem claim_eq (s : St) (who : Account) :\n    comptroller s (.claim who) =\n      if borrowPre s who \u2227 supplyPre (borrowNext s who) who then\n        some (grant (supplyNext (borrowNext s who) who) who)\n      else none",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "borrowHook_eq",
+   "kind": "theorem",
+   "text": "theorem borrowHook_eq (s : St) (who : Account) :\n    comptroller s (.borrowHook who) =\n      if borrowPre s who then some (borrowNext s who) else none := rfl",
+   "deps": [
+    "borrowNext",
+    "borrowPre",
+    "comptroller",
+    "speedsNext",
+    "supplyNext",
+    "supplyPre"
+   ],
+   "statement": "theorem borrowHook_eq (s : St) (who : Account) :\n    comptroller s (.borrowHook who) =\n      if borrowPre s who then some (borrowNext s who) else none",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "supplyHook_eq",
+   "kind": "theorem",
+   "text": "theorem supplyHook_eq (s : St) (who : Account) :\n    comptroller s (.supplyHook who) =\n      if supplyPre s who then some (supplyNext s who) else none := rfl",
+   "deps": [
+    "borrowNext",
+    "borrowPre",
+    "comptroller",
+    "speedsNext",
+    "supplyNext",
+    "supplyPre"
+   ],
+   "statement": "theorem supplyHook_eq (s : St) (who : Account) :\n    comptroller s (.supplyHook who) =\n      if supplyPre s who then some (supplyNext s who) else none",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "comptroller",
+   "kind": "def",
+   "text": "def comptroller : Impl := fun s c =>\n  match c with\n  | .supplyHook who =>\n    if supplyPre s who then some (supplyNext s who) else none\n  | .borrowHook who =>\n    if borrowPre s who then some (borrowNext s who) else none\n  | .claim who =>\n    if borrowPre s who \u2227 supplyPre (borrowNext s who) who then\n      some (grant (supplyNext (borrowNext s who) who) who)\n    else none\n  | .setSpeeds a b =>\n    if (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n       (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber)\n    then some (speedsNext s a b) else none",
+   "deps": [
+    "borrowNext",
+    "borrowPre",
+    "speedsNext",
+    "supplyNext",
+    "supplyPre"
+   ],
+   "statement": "def comptroller : Impl := fun s c =>\n  match c with\n  | .supplyHook who =>\n    if supplyPre s who then some (supplyNext s who) else none\n  | .borrowHook who =>\n    if borrowPre s who then some (borrowNext s who) else none\n  | .claim who =>\n    if borrowPre s who \u2227 supplyPre (borrowNext s who) who then\n      some (grant (supplyNext (borrowNext s who) who) who)\n    else none\n  | .setSpeeds a b =>\n    if (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n       (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber)\n    then some (speedsNext s a b) else none",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "borrowPreDec",
+   "kind": "instance",
+   "text": "instance borrowPreDec (s : St) (who : Account) : Decidable (borrowPre s who) := by\n  unfold borrowPre; infer_instance",
+   "deps": [
+    "borrowPre"
+   ],
+   "statement": "instance borrowPreDec (s : St) (who : Account) : Decidable (borrowPre s who) := by\n  unfold borrowPre; infer_instance",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "supplyPreDec",
+   "kind": "instance",
+   "text": "instance supplyPreDec (s : St) (who : Account) : Decidable (supplyPre s who) := by\n  unfold supplyPre; infer_instance",
+   "deps": [
+    "supplyPre"
+   ],
+   "statement": "instance supplyPreDec (s : St) (who : Account) : Decidable (supplyPre s who) := by\n  unfold supplyPre; infer_instance",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "borrowPre",
+   "kind": "def",
+   "text": "def borrowPre (s : St) (who : Account) : Prop :=\n  s.borrowState.block \u2264 s.blockNumber \u2227\n  accrualStart (s.acct who).borrowerIndex\n      (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index \u2264\n    (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index",
+   "deps": [],
+   "statement": "def borrowPre (s : St) (who : Account) : Prop :=\n  s.borrowState.block \u2264 s.blockNumber \u2227\n  accrualStart (s.acct who).borrowerIndex\n      (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index \u2264\n    (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "supplyPre",
+   "kind": "def",
+   "text": "def supplyPre (s : St) (who : Account) : Prop :=\n  s.supplyState.block \u2264 s.blockNumber \u2227\n  accrualStart (s.acct who).supplierIndex\n      (accrueSide s.supplyState s.blockNumber (totalSupply s)).index \u2264\n    (accrueSide s.supplyState s.blockNumber (totalSupply s)).index",
+   "deps": [],
+   "statement": "def supplyPre (s : St) (who : Account) : Prop :=\n  s.supplyState.block \u2264 s.blockNumber \u2227\n  accrualStart (s.acct who).supplierIndex\n      (accrueSide s.supplyState s.blockNumber (totalSupply s)).index \u2264\n    (accrueSide s.supplyState s.blockNumber (totalSupply s)).index",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "speedsNext",
+   "kind": "def",
+   "text": "def speedsNext (s : St) (sup bor : Nat) : St :=\n  { s with\n    supplyState := if s.supplyState.speed = sup then s.supplyState\n      else { accrueSide s.supplyState s.blockNumber (totalSupply s) with speed := sup },\n    borrowState := if s.borrowState.speed = bor then s.borrowState\n      else { accrueSide s.borrowState s.blockNumber (totalBorrows s) with speed := bor } }",
+   "deps": [],
+   "statement": "def speedsNext (s : St) (sup bor : Nat) : St :=\n  { s with\n    supplyState := if s.supplyState.speed = sup then s.supplyState\n      else { accrueSide s.supplyState s.blockNumber (totalSupply s) with speed := sup },\n    borrowState := if s.borrowState.speed = bor then s.borrowState\n      else { accrueSide s.borrowState s.blockNumber (totalBorrows s) with speed := bor } }",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "borrowNext",
+   "kind": "def",
+   "text": "def borrowNext (s : St) (who : Account) : St :=\n  { s with\n    borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s),\n    accts := s.accts.modify who fun a =>\n      { a with\n        borrowerIndex := (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index,\n        accrued := a.accrued + creditFor a.borrow\n          (accrualStart a.borrowerIndex (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index)\n          (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index } }",
+   "deps": [],
+   "statement": "def borrowNext (s : St) (who : Account) : St :=\n  { s with\n    borrowState := accrueSide s.borrowState s.blockNumber (totalBorrows s),\n    accts := s.accts.modify who fun a =>\n      { a with\n        borrowerIndex := (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index,\n        accrued := a.accrued + creditFor a.borrow\n          (accrualStart a.borrowerIndex (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index)\n          (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index } }",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "supplyNext",
+   "kind": "def",
+   "text": "def supplyNext (s : St) (who : Account) : St :=\n  { s with\n    supplyState := accrueSide s.supplyState s.blockNumber (totalSupply s),\n    accts := s.accts.modify who fun a =>\n      { a with\n        supplierIndex := (accrueSide s.supplyState s.blockNumber (totalSupply s)).index,\n        accrued := a.accrued + creditFor a.supply\n          (accrualStart a.supplierIndex (accrueSide s.supplyState s.blockNumber (totalSupply s)).index)\n          (accrueSide s.supplyState s.blockNumber (totalSupply s)).index } }",
+   "deps": [],
+   "statement": "def supplyNext (s : St) (who : Account) : St :=\n  { s with\n    supplyState := accrueSide s.supplyState s.blockNumber (totalSupply s),\n    accts := s.accts.modify who fun a =>\n      { a with\n        supplierIndex := (accrueSide s.supplyState s.blockNumber (totalSupply s)).index,\n        accrued := a.accrued + creditFor a.supply\n          (accrualStart a.supplierIndex (accrueSide s.supplyState s.blockNumber (totalSupply s)).index)\n          (accrueSide s.supplyState s.blockNumber (totalSupply s)).index } }",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "settle\u2082",
+   "kind": "theorem",
+   "text": "theorem settle\u2082 (s : St) (who : Account) : M.Settle\u2082 who s (borrowNext s who) :=\n  \u27e8by\n    have h1 : M.clock (borrowNext s who) =\n        ProofForgeFin.Accumulator.Clock.mk s.blockNumber\n          s.supplyState.index s.supplyState.block s.supplyState.speed\n          (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index\n          (accrueSide s.borrowState s.blockNumber (totalBorrows s)).block\n          (accrueSide s.borrowState s.blockNumber (totalBorrows s)).speed := rfl\n    have h2 : (M.clock s).catchUp\u2082 M.one (M.total\u2082 s) =\n        ProofForgeFin.Accumulator.Clock.mk s.blockNumber\n          s.supplyState.index s.supplyState.block s.supplyState.speed\n          (ProofForgeFin.Accumulator.catchUp M.one s.borrowState.index s.borrowState.block\n            s.borrowState.speed s.blockNumber (M.total\u2082 s))\n          s.blockNumber s.borrowState.speed := by\n      show (ProofForgeFin.Accumulator.Clock.mk s.blockNumber s.supplyState.index\n        s.supplyState.block s.supplyState.speed s.borrowState.index s.borrowState.block\n        s.borrowState.speed).catchUp\u2082 M.one (M.total\u2082 s) = _\n      rw [ProofForgeFin.Accumulator.Clock.catchUp\u2082_mk]\n    rw [h1, h2, accrue_index, accrue_block, accrue_speed, one_eq, total\u2082_eq],\n  (fun a =>\n    { a with\n      borrowerIndex := (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index,\n      accrued := a.accrued + creditFor a.borrow\n        (accrualStart a.borrowerIndex (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index)\n        (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index }),\n  rfl,\n  fun a => \u27e8rfl, rfl, rfl, rfl, Nat.le_of_eq (Nat.add_right_comm _ _ _)\u27e9\u27e9\n\n/-! ## Every operation is a market action -/",
+   "deps": [
+    "M",
+    "accrue_block",
+    "accrue_index",
+    "accrue_speed",
+    "borrowNext",
+    "one_eq",
+    "total\u2082_eq"
+   ],
+   "statement": "theorem settle\u2082 (s : St) (who : Account) : M.Settle\u2082 who s (borrowNext s who)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "settle\u2081",
+   "kind": "theorem",
+   "text": "theorem settle\u2081 (s : St) (who : Account) : M.Settle\u2081 who s (supplyNext s who) :=\n  \u27e8by\n    have h1 : M.clock (supplyNext s who) =\n        ProofForgeFin.Accumulator.Clock.mk s.blockNumber\n          (accrueSide s.supplyState s.blockNumber (totalSupply s)).index\n          (accrueSide s.supplyState s.blockNumber (totalSupply s)).block\n          (accrueSide s.supplyState s.blockNumber (totalSupply s)).speed\n          s.borrowState.index s.borrowState.block s.borrowState.speed := rfl\n    have h2 : (M.clock s).catchUp\u2081 M.one (M.total\u2081 s) =\n        ProofForgeFin.Accumulator.Clock.mk s.blockNumber\n          (ProofForgeFin.Accumulator.catchUp M.one s.supplyState.index s.supplyState.block\n            s.supplyState.speed s.blockNumber (M.total\u2081 s))\n          s.blockNumber s.supplyState.speed\n          s.borrowState.index s.borrowState.block s.borrowState.speed := by\n      show (ProofForgeFin.Accumulator.Clock.mk s.blockNumber s.supplyState.index\n        s.supplyState.block s.supplyState.speed s.borrowState.index s.borrowState.block\n        s.borrowState.speed).catchUp\u2081 M.one (M.total\u2081 s) = _\n      rw [ProofForgeFin.Accumulator.Clock.catchUp\u2081_mk]\n    rw [h1, h2, accrue_index, accrue_block, accrue_speed, one_eq, total\u2081_eq],\n  (fun a =>\n    { a with\n      supplierIndex := (accrueSide s.supplyState s.blockNumber (totalSupply s)).index,\n      accrued := a.accrued + creditFor a.supply\n        (accrualStart a.supplierIndex (accrueSide s.supplyState s.blockNumber (totalSupply s)).index)\n        (accrueSide s.supplyState s.blockNumber (totalSupply s)).index }),\n  rfl,\n  fun a => \u27e8rfl, rfl, rfl, rfl, Nat.le_of_eq (Nat.add_right_comm _ _ _)\u27e9\u27e9",
+   "deps": [
+    "M",
+    "accrue_block",
+    "accrue_index",
+    "accrue_speed",
+    "one_eq",
+    "supplyNext",
+    "total\u2081_eq"
+   ],
+   "statement": "theorem settle\u2081 (s : St) (who : Account) : M.Settle\u2081 who s (supplyNext s who)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "Consistent_of_Inv",
+   "kind": "theorem",
+   "text": "theorem Consistent_of_Inv {g\u2081 g\u2082 : Nat} {sp : Nat \u00d7 Nat} {s : St}\n    (hI : M.Inv g\u2081 g\u2082 sp s) : Consistent s := by\n  obtain \u27e8hl1, hl2, hrec, -, -, -, -\u27e9 := hI\n  exact \u27e8hl1, hl2, hrec\u27e9",
+   "deps": [
+    "M"
+   ],
+   "statement": "theorem Consistent_of_Inv {g\u2081 g\u2082 : Nat} {sp : Nat \u00d7 Nat} {s : St}\n    (hI : M.Inv g\u2081 g\u2082 sp s) : Consistent s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "accrue_accrue_index",
+   "kind": "theorem",
+   "text": "theorem accrue_accrue_index (sd : Side) (now total total' : Nat) :\n    (accrueSide (accrueSide sd now total) now total').index =\n      (accrueSide sd now total).index := by\n  generalize hy : accrueSide sd now total = Y\n  have hY : Y.block = now := by rw [\u2190 hy]; exact accrue_block _ _ _\n  unfold accrueSide\n  rw [hY]\n  simp",
+   "deps": [
+    "accrue_block"
+   ],
+   "statement": "theorem accrue_accrue_index (sd : Side) (now total total' : Nat) :\n    (accrueSide (accrueSide sd now total) now total').index =\n      (accrueSide sd now total).index",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "totalBorrows_borrowNext",
+   "kind": "theorem",
+   "text": "theorem totalBorrows_borrowNext (s : St) (who : Account) :\n    totalBorrows (borrowNext s who) = totalBorrows s := by\n  unfold borrowNext totalBorrows\n  exact ProofForgeFin.Ledger.sum_map_modify_eq s.accts who _ _ noAcct (fun _ => rfl)",
+   "deps": [
+    "borrowNext"
+   ],
+   "statement": "theorem totalBorrows_borrowNext (s : St) (who : Account) :\n    totalBorrows (borrowNext s who) = totalBorrows s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "totalSupply_supplyNext",
+   "kind": "theorem",
+   "text": "theorem totalSupply_supplyNext (s : St) (who : Account) :\n    totalSupply (supplyNext s who) = totalSupply s := by\n  unfold supplyNext totalSupply\n  exact ProofForgeFin.Ledger.sum_map_modify_eq s.accts who _ _ noAcct (fun _ => rfl)",
+   "deps": [
+    "supplyNext"
+   ],
+   "statement": "theorem totalSupply_supplyNext (s : St) (who : Account) :\n    totalSupply (supplyNext s who) = totalSupply s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "accrue_speed",
+   "kind": "theorem",
+   "text": "theorem accrue_speed (sd : Side) (now total : Nat) :\n    (accrueSide sd now total).speed = sd.speed := by\n  unfold accrueSide; split <;> rfl",
+   "deps": [],
+   "statement": "theorem accrue_speed (sd : Side) (now total : Nat) :\n    (accrueSide sd now total).speed = sd.speed",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "accrue_block",
+   "kind": "theorem",
+   "text": "theorem accrue_block (sd : Side) (now total : Nat) :\n    (accrueSide sd now total).block = now := by\n  unfold accrueSide; split <;> rfl",
+   "deps": [],
+   "statement": "theorem accrue_block (sd : Side) (now total : Nat) :\n    (accrueSide sd now total).block = now",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "un\u2082_eq",
+   "kind": "theorem",
+   "text": "theorem un\u2082_eq (L : Legacy) : (cL L).un\u2082 = L.unindexedBorrow := rfl",
+   "deps": [
+    "cL"
+   ],
+   "statement": "theorem un\u2082_eq (L : Legacy) : (cL L).un\u2082 = L.unindexedBorrow",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "un\u2081_eq",
+   "kind": "theorem",
+   "text": "theorem un\u2081_eq (L : Legacy) : (cL L).un\u2081 = L.unindexedSupply := rfl",
+   "deps": [
+    "cL"
+   ],
+   "statement": "theorem un\u2081_eq (L : Legacy) : (cL L).un\u2081 = L.unindexedSupply",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "owed_eq",
+   "kind": "theorem",
+   "text": "theorem owed_eq (L : Legacy) (a : Acct) :\n    M.owed L.supplyStart L.borrowStart (cL L) a = L.pendingScaled a := rfl",
+   "deps": [
+    "M",
+    "cL"
+   ],
+   "statement": "theorem owed_eq (L : Legacy) (a : Acct) :\n    M.owed L.supplyStart L.borrowStart (cL L) a = L.pendingScaled a",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "creditedTo_eq",
+   "kind": "theorem",
+   "text": "theorem creditedTo_eq (s : St) (w : Nat) :\n    M.credited (M.acct s w) = s.creditedTo w := rfl",
+   "deps": [
+    "M"
+   ],
+   "statement": "theorem creditedTo_eq (s : St) (w : Nat) :\n    M.credited (M.acct s w) = s.creditedTo w",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "acct_eq",
+   "kind": "theorem",
+   "text": "theorem acct_eq (s : St) (w : Nat) : M.acct s w = s.acct w := rfl",
+   "deps": [
+    "M"
+   ],
+   "statement": "theorem acct_eq (s : St) (w : Nat) : M.acct s w = s.acct w",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "creditSum_eq",
+   "kind": "theorem",
+   "text": "theorem creditSum_eq (s : St) : M.creditSum s = s.credited := rfl",
+   "deps": [
+    "M"
+   ],
+   "statement": "theorem creditSum_eq (s : St) : M.creditSum s = s.credited",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "total\u2082_eq",
+   "kind": "theorem",
+   "text": "theorem total\u2082_eq (s : St) : M.total\u2082 s = totalBorrows s := rfl",
+   "deps": [
+    "M"
+   ],
+   "statement": "theorem total\u2082_eq (s : St) : M.total\u2082 s = totalBorrows s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "total\u2081_eq",
+   "kind": "theorem",
+   "text": "theorem total\u2081_eq (s : St) : M.total\u2081 s = totalSupply s := rfl",
+   "deps": [
+    "M"
+   ],
+   "statement": "theorem total\u2081_eq (s : St) : M.total\u2081 s = totalSupply s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "one_eq",
+   "kind": "theorem",
+   "text": "theorem one_eq : M.one = doubleScale := rfl",
+   "deps": [
+    "M"
+   ],
+   "statement": "theorem one_eq : M.one = doubleScale",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "cL",
+   "kind": "def",
+   "text": "def cL (L : Legacy) : ProofForgeFin.Accumulator.Clock :=\n  \u27e8L.blockNumber, L.supplyIndex, L.supplyBlock, L.compSpeed,\n    L.borrowIndex, L.borrowBlock, L.compSpeed\u27e9",
+   "deps": [],
+   "statement": "def cL (L : Legacy) : ProofForgeFin.Accumulator.Clock :=\n  \u27e8L.blockNumber, L.supplyIndex, L.supplyBlock, L.compSpeed,\n    L.borrowIndex, L.borrowBlock, L.compSpeed\u27e9",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "M",
+   "kind": "def",
+   "text": "def M : ProofForgeFin.Accumulator.Market St Acct where\n  one := doubleScale\n  init := compInitialIndex\n  clock s := \u27e8s.blockNumber, s.supplyState.index, s.supplyState.block, s.supplyState.speed,\n    s.borrowState.index, s.borrowState.block, s.borrowState.speed\u27e9\n  accts s := s.accts\n  dflt := noAcct\n  units\u2081 a := a.supply\n  units\u2082 a := a.borrow\n  rec\u2081 a := a.supplierIndex\n  rec\u2082 a := a.borrowerIndex\n  credited a := a.accrued + a.wallet\n  dflt_units\u2081 := rfl\n  dflt_units\u2082 := rfl",
+   "deps": [],
+   "statement": "def M : ProofForgeFin.Accumulator.Market St Acct where\n  one := doubleScale\n  init := compInitialIndex\n  clock s := \u27e8s.blockNumber, s.supplyState.index, s.supplyState.block, s.supplyState.speed,\n    s.borrowState.index, s.borrowState.block, s.borrowState.speed\u27e9\n  accts s := s.accts\n  dflt := noAcct\n  units\u2081 a := a.supply\n  units\u2082 a := a.borrow\n  rec\u2081 a := a.supplierIndex\n  rec\u2082 a := a.borrowerIndex\n  credited a := a.accrued + a.wallet\n  dflt_units\u2081 := rfl\n  dflt_units\u2082 := rfl",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "exec_act",
+   "kind": "theorem",
+   "text": "theorem exec_act (g\u2081 g\u2082 : Nat) (sp : Nat \u00d7 Nat) (s : St) (op : Op)\n    (hI : M.Inv g\u2081 g\u2082 sp s) :\n    M.Act sp s (nextSpeeds sp op) (emittedBy sp op) (exec comptroller s op) := by\n  cases op with\n  | mint who x =>\n    by_cases hwho : who < s.accts.length\n    \u00b7 have hhook := supplyHook_some g\u2081 g\u2082 sp s who hI\n      have hexec : exec comptroller s (.mint who x) =\n          (supplyNext s who).withAcct who fun a => { a with supply := a.supply + x } := by\n        simp only [exec]\n        rw [if_pos hwho, hhook]\n      rw [hexec]\n      exact .moves (Market.Settle\u2081.then_adjust (settle\u2081 s who) rfl rfl\n        (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9) (fun _ => rfl))\n    \u00b7 have hexec : exec comptroller s (.mint who x) = s := by\n        simp only [exec]\n        rw [if_neg hwho]\n      rw [hexec]\n      exact .moves (Market.Reach.refl s)\n  | redeem who x =>\n    by_cases hwho : who < s.accts.length\n    \u00b7 have hhook := supplyHook_some g\u2081 g\u2082 sp s who hI\n      by_cases hbal : x \u2264 ((supplyNext s who).acct who).supply\n      \u00b7 have hexec : exec comptroller s (.redeem who x) =\n            (supplyNext s who).withAcct who fun a => { a with supply := a.supply - x } := by\n          simp only [exec]\n          rw [if_pos hwho, hhook]\n          dsimp only\n          rw [if_pos hbal]\n        rw [hexec]\n        exact .moves (Market.Settle\u2081.then_adjust (settle\u2081 s who) rfl rfl\n          (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9) (fun _ => rfl))\n      \u00b7 have hexec : exec comptroller s (.redeem who x) = s := by\n          simp only [exec]\n          rw [if_pos hwho, hhook]\n          dsimp only\n          rw [if_neg hbal]\n        rw [hexec]\n        exact .moves (Market.Reach.refl s)\n    \u00b7 have hexec : exec comptroller s (.redeem who x) = s := by\n        simp only [exec]\n        rw [if_neg hwho]\n      rw [hexec]\n      exact .moves (Market.Reach.refl s)\n  | transfer src dst x =>\n    by_cases h : src < s.accts.length \u2227 dst < s.accts.length \u2227 src \u2260 dst\n    \u00b7 have hne : src \u2260 dst := h.2.2\n      have h1 : comptroller s (.supplyHook src) = some (supplyNext s src) :=\n        supplyHook_some g\u2081 g\u2082 sp s src hI\n      have h2 : comptroller (supplyNext s src) (.supplyHook dst) =\n          some (supplyNext (supplyNext s src) dst) := by\n        rw [supplyHook_eq, if_pos (supplyPre_supplyNext_of_ne g\u2081 g\u2082 sp s src dst hne hI)]\n      by_cases hbal : x \u2264 ((supplyNext (supplyNext s src) dst).acct src).supply\n      \u00b7 have hexec : exec comptroller s (.transfer src dst x) =\n            ((supplyNext (supplyNext s src) dst).withAcct src\n              fun a => { a with supply := a.supply - x }).withAcct dst\n              fun a => { a with supply := a.supply + x } := by\n          simp only [exec]\n          rw [if_pos h, h1]\n          dsimp only\n          rw [h2]\n          dsimp only\n          rw [if_pos hbal]\n        rw [hexec]\n        exact .moves (Market.Settle\u2081.transfer (settle\u2081 s src)\n          (settle\u2081 (supplyNext s src) dst) rfl rfl\n          (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9) (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9)\n          (fun _ => rfl) (fun _ => rfl))\n      \u00b7 have hexec : exec comptroller s (.transfer src dst x) = s := by\n          simp only [exec]\n          rw [if_pos h, h1]\n          dsimp only\n          rw [h2]\n          dsimp only\n          rw [if_neg hbal]\n        rw [hexec]\n        exact .moves (Market.Reach.refl s)\n    \u00b7 have hexec : exec comptroller s (.transfer src dst x) = s := by\n        simp only [exec]\n        rw [if_neg h]\n      rw [hexec]\n      exact .moves (Market.Reach.refl s)\n  | borrow who x =>\n    by_cases hwho : who < s.accts.length\n    \u00b7 have hhook := borrowHook_some g\u2081 g\u2082 sp s who hI\n      have hexec : exec comptroller s (.borrow who x) =\n          (borrowNext s who).withAcct who fun a => { a with borrow := a.borrow + x } := by\n        simp only [exec]\n        rw [if_pos hwho, hhook]\n      rw [hexec]\n      exact .moves (Market.Settle\u2082.then_adjust (settle\u2082 s who) rfl rfl\n        (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9) (fun _ => rfl))\n    \u00b7 have hexec : exec comptroller s (.borrow who x) = s := by\n        simp only [exec]\n        rw [if_neg hwho]\n      rw [hexec]\n      exact .moves (Market.Reach.refl s)\n  | repay who x =>\n    by_cases hwho : who < s.accts.length\n    \u00b7 have hhook := borrowHook_some g\u2081 g\u2082 sp s who hI\n      by_cases hbal : x \u2264 ((borrowNext s who).acct who).borrow\n      \u00b7 have hexec : exec comptroller s (.repay who x) =\n            (borrowNext s who).withAcct who fun a => { a with borrow := a.borrow - x } := by\n          simp only [exec]\n          rw [if_pos hwho, hhook]\n          dsimp only\n          rw [if_pos hbal]\n        rw [hexec]\n        exact .moves (Market.Settle\u2082.then_adjust (settle\u2082 s who) rfl rfl\n          (fun a => \u27e8Nat.le_refl _, rfl, rfl\u27e9) (fun _ => rfl))\n      \u00b7 have hexec : exec comptroller s (.repay who x) = s := by\n          simp only [exec]\n          rw [if_pos hwho, hhook]\n          dsimp only\n          rw [if_neg hbal]\n        rw [hexec]\n        exact .moves (Market.Reach.refl s)\n    \u00b7 have hexec : exec comptroller s (.repay who x) = s := by\n        simp only [exec]\n        rw [if_neg hwho]\n      rw [hexec]\n      exact .moves (Market.Reach.refl s)\n  | claim who =>\n    have hI' := Consistent_of_Inv hI\n    have hb : borrowPre s who := borrowPre_of_Consistent s who hI'\n    have hs : supplyPre (borrowNext s who) who := supplyPre_borrowNext s who hI'\n    have hclaim : comptroller s (.claim who) =\n        some (grant (supplyNext (borrowNext s who) who) who) := by\n      rw [claim_eq, if_pos \u27e8hb, hs\u27e9]\n    have hexec : exec comptroller s (.claim who) =\n        grant (supplyNext (borrowNext s who) who) who := by\n      simp only [exec]\n      rw [hclaim]\n      rfl\n    have h\u2082 : M.Settle\u2082 who s (borrowNext s who) := settle\u2082 s who\n    have h\u2081 : M.Settle\u2081 who (borrowNext s who) (supplyNext (borrowNext s who) who) :=\n      settle\u2081 (borrowNext s who) who\n    by_cases hg : 0 < ((supplyNext (borrowNext s who) who).acct who).accrued \u2227\n        ((supplyNext (borrowNext s who) who).acct who).accrued \u2264\n          (supplyNext (borrowNext s who) who).reserve\n    \u00b7 rw [hexec]\n      exact .moves (((Market.Reach.single (.settle\u2082 h\u2082)).tail (.settle\u2081 h\u2081)).tail\n        (.adjust (grant_adjust _ _ hg)))\n    \u00b7 rw [hexec]\n      exact .moves (((Market.Reach.single (.settle\u2082 h\u2082)).tail (.settle\u2081 h\u2081)).tail\n        (grant_same _ _ hg))\n  | setSpeeds a b =>\n    have hcond : (s.supplyState.speed \u2260 a \u2192 s.supplyState.block \u2264 s.blockNumber) \u2227\n        (s.borrowState.speed \u2260 b \u2192 s.borrowState.block \u2264 s.blockNumber) :=\n      \u27e8fun _ => hI.1, fun _ => hI.2\u27e9\n    have hset : comptroller s (.setSpeeds a b) = some (speedsNext s a b) := by\n      rw [setSpeeds_eq, if_pos hcond]\n    have hexec : exec comptroller s (.setSpeeds a b) = speedsNext s a b := by\n      simp only [exec]\n      rw [hset]\n      rfl\n    rw [hexec]\n    exact .retune (retune_speeds s a b) (speedsNext_rate\u2081 s a b) (speedsNext_rate\u2082 s a b)\n  | advance k =>\n    have hexec : exec comptroller s (.advance k) = { s with blockNumber := s.blockNumber + k } := by\n      simp only [exec]\n    rw [hexec]\n    exact .advance k \u27e8rfl, rfl\u27e9\n  | drip x =>\n    have hexec : exec comptroller s (.drip x) = { s with reserve := s.reserve + x } := by\n      simp only [exec]\n    rw [hexec]\n    exact .moves (Market.Reach.single (.same rfl rfl))\n\n/-! ## The upgrade and the bounds over runs -/",
+   "deps": [
+    "Consistent_of_Inv",
+    "M",
+    "accrualStart_le",
+    "accrue_accrue_index",
+    "accrue_block",
+    "accrue_index",
+    "accrue_index_le",
+    "accrue_speed",
+    "borrowHook_eq",
+    "borrowHook_some",
+    "borrowNext",
+    "borrowNext_blockNumber",
+    "borrowNext_supplierIndex",
+    "borrowNext_supplyState",
+    "borrowPre",
+    "borrowPre_of",
+    "borrowPre_of_Consistent",
+    "claim_eq",
+    "comptroller",
+    "grant_adjust",
+    "grant_same",
+    "one_eq",
+    "rec_le_of_Consistent",
+    "rec_le_of_Inv",
+    "retune_speeds",
+    "setSpeeds_eq",
+    "settle\u2081",
+    "settle\u2082",
+    "speedsNext",
+    "speedsNext_rate\u2081",
+    "speedsNext_rate\u2082",
+    "supplyHook_eq",
+    "supplyHook_some",
+    "supplyNext",
+    "supplyPre",
+    "supplyPre_borrowNext",
+    "supplyPre_of",
+    "supplyPre_of_Consistent",
+    "supplyPre_supplyNext_of_ne",
+    "totalSupply_borrowNext",
+    "totalSupply_supplyNext",
+    "total\u2081_eq",
+    "total\u2082_eq"
+   ],
+   "statement": "theorem exec_act (g\u2081 g\u2082 : Nat) (sp : Nat \u00d7 Nat) (s : St) (op : Op)\n    (hI : M.Inv g\u2081 g\u2082 sp s) :\n    M.Act sp s (nextSpeeds sp op) (emittedBy sp op) (exec comptroller s op)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "grant_same",
+   "kind": "theorem",
+   "text": "theorem grant_same (s : St) (who : Account)\n    (hg : \u00ac (0 < (s.acct who).accrued \u2227 (s.acct who).accrued \u2264 s.reserve)) :\n    M.Step s (grant s who) := by\n  have hgrant : grant s who = s := by unfold grant; rw [if_neg hg]\n  rw [hgrant]\n  exact .same rfl rfl",
+   "deps": [
+    "M"
+   ],
+   "statement": "theorem grant_same (s : St) (who : Account)\n    (hg : \u00ac (0 < (s.acct who).accrued \u2227 (s.acct who).accrued \u2264 s.reserve)) :\n    M.Step s (grant s who)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "grant_adjust",
+   "kind": "theorem",
+   "text": "theorem grant_adjust (s : St) (who : Account)\n    (hg : 0 < (s.acct who).accrued \u2227 (s.acct who).accrued \u2264 s.reserve) :\n    M.Adjust who s (grant s who) := by\n  unfold grant\n  rw [if_pos hg]\n  refine \u27e8rfl, (fun a => { a with accrued := 0, wallet := a.wallet + a.accrued }), rfl,\n    ?_, .inl (fun _ => rfl), .inl (fun _ => rfl)\u27e9\n  intro a\n  exact \u27e8by show (0 : Nat) + (a.wallet + a.accrued) \u2264 a.accrued + a.wallet; omega,\n    rfl, rfl\u27e9",
+   "deps": [
+    "M"
+   ],
+   "statement": "theorem grant_adjust (s : St) (who : Account)\n    (hg : 0 < (s.acct who).accrued \u2227 (s.acct who).accrued \u2264 s.reserve) :\n    M.Adjust who s (grant s who)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "retune_speeds",
+   "kind": "theorem",
+   "text": "theorem retune_speeds (s : St) (a b : Nat) : M.Retune s (speedsNext s a b) := by\n  refine \u27e8rfl, rfl, ?_, ?_\u27e9\n  \u00b7 by_cases hsup : s.supplyState.speed = a\n    \u00b7 have e : (speedsNext s a b).supplyState = s.supplyState := by\n        unfold speedsNext; simp [hsup]\n      exact Or.inl \u27e8by show (speedsNext s a b).supplyState.index = _; rw [e]; rfl,\n        by show (speedsNext s a b).supplyState.block = _; rw [e]; rfl,\n        by show (speedsNext s a b).supplyState.speed = _; rw [e]; rfl\u27e9\n    \u00b7 have e : (speedsNext s a b).supplyState =\n          { accrueSide s.supplyState s.blockNumber (totalSupply s) with speed := a } := by\n        unfold speedsNext; simp [hsup]\n      refine Or.inr \u27e8?_, ?_\u27e9\n      \u00b7 show (speedsNext s a b).supplyState.index = _\n        rw [e]\n        show (accrueSide s.supplyState s.blockNumber (totalSupply s)).index = _\n        rw [accrue_index, one_eq, total\u2081_eq]\n        rfl\n      \u00b7 show (speedsNext s a b).supplyState.block = _\n        rw [e]\n        show (accrueSide s.supplyState s.blockNumber (totalSupply s)).block = _\n        rw [accrue_block]\n        rfl\n  \u00b7 by_cases hbor : s.borrowState.speed = b\n    \u00b7 have e : (speedsNext s a b).borrowState = s.borrowState := by\n        unfold speedsNext; simp [hbor]\n      exact Or.inl \u27e8by show (speedsNext s a b).borrowState.index = _; rw [e]; rfl,\n        by show (speedsNext s a b).borrowState.block = _; rw [e]; rfl,\n        by show (speedsNext s a b).borrowState.speed = _; rw [e]; rfl\u27e9\n    \u00b7 have e : (speedsNext s a b).borrowState =\n          { accrueSide s.borrowState s.blockNumber (totalBorrows s) with speed := b } := by\n        unfold speedsNext; simp [hbor]\n      refine Or.inr \u27e8?_, ?_\u27e9\n      \u00b7 show (speedsNext s a b).borrowState.index = _\n        rw [e]\n        show (accrueSide s.borrowState s.blockNumber (totalBorrows s)).index = _\n        rw [accrue_index, one_eq, total\u2082_eq]\n        rfl\n      \u00b7 show (speedsNext s a b).borrowState.block = _\n        rw [e]\n        show (accrueSide s.borrowState s.blockNumber (totalBorrows s)).block = _\n        rw [accrue_block]\n        rfl",
+   "deps": [
+    "M",
+    "accrue_block",
+    "accrue_index",
+    "one_eq",
+    "speedsNext",
+    "total\u2081_eq",
+    "total\u2082_eq"
+   ],
+   "statement": "theorem retune_speeds (s : St) (a b : Nat) : M.Retune s (speedsNext s a b)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "speedsNext_rate\u2082",
+   "kind": "theorem",
+   "text": "theorem speedsNext_rate\u2082 (s : St) (a b : Nat) :\n    (M.clock (speedsNext s a b)).rate\u2082 = b := by\n  show (speedsNext s a b).borrowState.speed = b\n  unfold speedsNext\n  by_cases hbor : s.borrowState.speed = b <;> simp [hbor]",
+   "deps": [
+    "M",
+    "speedsNext"
+   ],
+   "statement": "theorem speedsNext_rate\u2082 (s : St) (a b : Nat) :\n    (M.clock (speedsNext s a b)).rate\u2082 = b",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "speedsNext_rate\u2081",
+   "kind": "theorem",
+   "text": "theorem speedsNext_rate\u2081 (s : St) (a b : Nat) :\n    (M.clock (speedsNext s a b)).rate\u2081 = a := by\n  show (speedsNext s a b).supplyState.speed = a\n  unfold speedsNext\n  by_cases hsup : s.supplyState.speed = a <;> simp [hsup]",
+   "deps": [
+    "M",
+    "speedsNext"
+   ],
+   "statement": "theorem speedsNext_rate\u2081 (s : St) (a b : Nat) :\n    (M.clock (speedsNext s a b)).rate\u2081 = a",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "supplyPre_supplyNext_of_ne",
+   "kind": "theorem",
+   "text": "theorem supplyPre_supplyNext_of_ne (g\u2081 g\u2082 : Nat) (sp : Nat \u00d7 Nat) (s : St)\n    (src dst : Account) (hne : src \u2260 dst) (hI : M.Inv g\u2081 g\u2082 sp s) :\n    supplyPre (supplyNext s src) dst := by\n  have hT : totalSupply (supplyNext s src) = totalSupply s := totalSupply_supplyNext _ _\n  have hacct : ((supplyNext s src).acct dst).supplierIndex =\n      ((s.acct dst)).supplierIndex := by\n    show (((s.accts.modify src (fun a => { a with\n      supplierIndex := (accrueSide s.supplyState s.blockNumber (totalSupply s)).index,\n      accrued := a.accrued + creditFor a.supply\n        (accrualStart a.supplierIndex (accrueSide s.supplyState s.blockNumber (totalSupply s)).index)\n        (accrueSide s.supplyState s.blockNumber (totalSupply s)).index })).getD dst\n      noAcct)).supplierIndex = _\n    rw [ProofForgeFin.Ledger.getD_modify_ne _ _ _ hne]\n    rfl\n  have hidx : (accrueSide (supplyNext s src).supplyState (supplyNext s src).blockNumber\n      (totalSupply (supplyNext s src))).index =\n      (accrueSide s.supplyState s.blockNumber (totalSupply s)).index := by\n    have hY : (supplyNext s src).supplyState =\n        accrueSide s.supplyState s.blockNumber (totalSupply s) := rfl\n    have hN : (supplyNext s src).blockNumber = s.blockNumber := rfl\n    rw [hY, hN, hT]\n    exact accrue_accrue_index _ _ _ _\n  have hblock : (supplyNext s src).supplyState.block \u2264 (supplyNext s src).blockNumber := by\n    have hb : ((supplyNext s src).supplyState).block = s.blockNumber := accrue_block _ _ _\n    have hn : (supplyNext s src).blockNumber = s.blockNumber := rfl\n    rw [hb, hn]\n    exact Nat.le_refl _\n  unfold supplyPre\n  rw [hidx]\n  refine \u27e8hblock, ?_\u27e9\n  rw [hacct]\n  exact accrualStart_le _ _ _ (rec_le_of_Inv hI dst).1\n    (accrue_index_le s.supplyState s.blockNumber (totalSupply s))",
+   "deps": [
+    "M",
+    "accrualStart_le",
+    "accrue_accrue_index",
+    "accrue_block",
+    "accrue_index",
+    "accrue_index_le",
+    "rec_le_of_Inv",
+    "supplyNext",
+    "supplyPre",
+    "totalSupply_supplyNext"
+   ],
+   "statement": "theorem supplyPre_supplyNext_of_ne (g\u2081 g\u2082 : Nat) (sp : Nat \u00d7 Nat) (s : St)\n    (src dst : Account) (hne : src \u2260 dst) (hI : M.Inv g\u2081 g\u2082 sp s) :\n    supplyPre (supplyNext s src) dst",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "rec_le_of_Inv",
+   "kind": "theorem",
+   "text": "theorem rec_le_of_Inv {g\u2081 g\u2082 : Nat} {sp : Nat \u00d7 Nat} {s : St}\n    (hI : M.Inv g\u2081 g\u2082 sp s) (who : Account) :\n    (s.acct who).supplierIndex \u2264 s.supplyState.index \u2227\n    (s.acct who).borrowerIndex \u2264 s.borrowState.index :=\n  ProofForgeFin.Ledger.getD_of_forall s.accts who hI.recs \u27e8Nat.zero_le _, Nat.zero_le _\u27e9",
+   "deps": [
+    "M"
+   ],
+   "statement": "theorem rec_le_of_Inv {g\u2081 g\u2082 : Nat} {sp : Nat \u00d7 Nat} {s : St}\n    (hI : M.Inv g\u2081 g\u2082 sp s) (who : Account) :\n    (s.acct who).supplierIndex \u2264 s.supplyState.index \u2227\n    (s.acct who).borrowerIndex \u2264 s.borrowState.index",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "borrowHook_some",
+   "kind": "theorem",
+   "text": "theorem borrowHook_some (g\u2081 g\u2082 : Nat) (sp : Nat \u00d7 Nat) (s : St) (who : Account)\n    (hI : M.Inv g\u2081 g\u2082 sp s) :\n    comptroller s (.borrowHook who) = some (borrowNext s who) := by\n  rw [borrowHook_eq, if_pos (borrowPre_of_Consistent s who (Consistent_of_Inv hI))]",
+   "deps": [
+    "Consistent_of_Inv",
+    "M",
+    "accrualStart_le",
+    "accrue_index",
+    "accrue_index_le",
+    "borrowHook_eq",
+    "borrowNext",
+    "borrowPre",
+    "borrowPre_of",
+    "borrowPre_of_Consistent",
+    "comptroller",
+    "rec_le_of_Consistent",
+    "speedsNext",
+    "supplyNext",
+    "supplyPre"
+   ],
+   "statement": "theorem borrowHook_some (g\u2081 g\u2082 : Nat) (sp : Nat \u00d7 Nat) (s : St) (who : Account)\n    (hI : M.Inv g\u2081 g\u2082 sp s) :\n    comptroller s (.borrowHook who) = some (borrowNext s who)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "supplyHook_some",
+   "kind": "theorem",
+   "text": "theorem supplyHook_some (g\u2081 g\u2082 : Nat) (sp : Nat \u00d7 Nat) (s : St) (who : Account)\n    (hI : M.Inv g\u2081 g\u2082 sp s) :\n    comptroller s (.supplyHook who) = some (supplyNext s who) := by\n  rw [supplyHook_eq, if_pos (supplyPre_of_Consistent s who (Consistent_of_Inv hI))]",
+   "deps": [
+    "Consistent_of_Inv",
+    "M",
+    "accrualStart_le",
+    "accrue_index",
+    "accrue_index_le",
+    "borrowNext",
+    "borrowPre",
+    "comptroller",
+    "rec_le_of_Consistent",
+    "speedsNext",
+    "supplyHook_eq",
+    "supplyNext",
+    "supplyPre",
+    "supplyPre_of",
+    "supplyPre_of_Consistent"
+   ],
+   "statement": "theorem supplyHook_some (g\u2081 g\u2082 : Nat) (sp : Nat \u00d7 Nat) (s : St) (who : Account)\n    (hI : M.Inv g\u2081 g\u2082 sp s) :\n    comptroller s (.supplyHook who) = some (supplyNext s who)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "req_no_backdated",
+   "kind": "theorem",
+   "text": "theorem req_no_backdated        : NoBackdatedRewards comptroller := by\n  intro L history ops who hL hpos\n  have hI := inv_start L hL\n  have hone : 0 < M.one := by decide\n  have hu\u2081 : M.units\u2081 (M.acct (run comptroller (upgrade L) history) who) = 0 := hpos.1\n  have hu\u2082 : M.units\u2082 (M.acct (run comptroller (upgrade L) history) who) = 0 := hpos.2\n  have h := M.rewards_after_no_position_bounded (run comptroller) emitted speedsAfter\n    (exec_act _ _) hone hI history ops who hu\u2081 hu\u2082\n  rw [creditedTo_eq, creditedTo_eq] at h\n  exact h",
+   "deps": [
+    "Consistent_of_Inv",
+    "M",
+    "accrualStart_le",
+    "accrue_accrue_index",
+    "accrue_block",
+    "accrue_index",
+    "accrue_index_le",
+    "accrue_speed",
+    "borrowHook_eq",
+    "borrowHook_some",
+    "borrowNext",
+    "borrowNext_blockNumber",
+    "borrowNext_supplierIndex",
+    "borrowNext_supplyState",
+    "borrowPre",
+    "borrowPre_of",
+    "borrowPre_of_Consistent",
+    "cL",
+    "claim_eq",
+    "clock_upgrade",
+    "comptroller",
+    "creditedTo_eq",
+    "exec_act",
+    "grant_adjust",
+    "grant_same",
+    "inv_start",
+    "inv_start_hr",
+    "one_eq",
+    "rec_le_of_Consistent",
+    "rec_le_of_Inv",
+    "retune_speeds",
+    "setSpeeds_eq",
+    "settle\u2081",
+    "settle\u2082",
+    "speedsNext",
+    "speedsNext_rate\u2081",
+    "speedsNext_rate\u2082",
+    "supplyHook_eq",
+    "supplyHook_some",
+    "supplyNext",
+    "supplyPre",
+    "supplyPre_borrowNext",
+    "supplyPre_of",
+    "supplyPre_of_Consistent",
+    "supplyPre_supplyNext_of_ne",
+    "totalSupply_borrowNext",
+    "totalSupply_supplyNext",
+    "total\u2081_eq",
+    "total\u2082_eq"
+   ],
+   "statement": "theorem req_no_backdated        : NoBackdatedRewards comptroller",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "req_account_bounded",
+   "kind": "theorem",
+   "text": "theorem req_account_bounded     : AccountBounded comptroller := by\n  intro L ops who hL\n  have hI := inv_start L hL\n  have hs := M.potOf_reinit_le L.supplyStart L.borrowStart who (clock_upgrade L)\n    (inv_start_hr_acct L hL who)\n  have hone : 0 < M.one := by decide\n  have h := M.account_rewards_bounded (run comptroller) emitted speedsAfter\n    (exec_act _ _) hone hI who hs ops\n  rw [creditedTo_eq, creditedTo_eq, owed_eq, acct_upgrade, un\u2081_eq, un\u2082_eq, one_eq] at h\n  exact h",
+   "deps": [
+    "Consistent_of_Inv",
+    "M",
+    "accrualStart_le",
+    "accrue_accrue_index",
+    "accrue_block",
+    "accrue_index",
+    "accrue_index_le",
+    "accrue_speed",
+    "acct_upgrade",
+    "borrowHook_eq",
+    "borrowHook_some",
+    "borrowNext",
+    "borrowNext_blockNumber",
+    "borrowNext_supplierIndex",
+    "borrowNext_supplyState",
+    "borrowPre",
+    "borrowPre_of",
+    "borrowPre_of_Consistent",
+    "cL",
+    "claim_eq",
+    "clock_upgrade",
+    "comptroller",
+    "creditedTo_eq",
+    "exec_act",
+    "grant_adjust",
+    "grant_same",
+    "inv_start",
+    "inv_start_hr",
+    "inv_start_hr_acct",
+    "one_eq",
+    "owed_eq",
+    "rec_le_of_Consistent",
+    "rec_le_of_Inv",
+    "retune_speeds",
+    "setSpeeds_eq",
+    "settle\u2081",
+    "settle\u2082",
+    "speedsNext",
+    "speedsNext_rate\u2081",
+    "speedsNext_rate\u2082",
+    "supplyHook_eq",
+    "supplyHook_some",
+    "supplyNext",
+    "supplyPre",
+    "supplyPre_borrowNext",
+    "supplyPre_of",
+    "supplyPre_of_Consistent",
+    "supplyPre_supplyNext_of_ne",
+    "totalSupply_borrowNext",
+    "totalSupply_supplyNext",
+    "total\u2081_eq",
+    "total\u2082_eq",
+    "un\u2081_eq",
+    "un\u2082_eq"
+   ],
+   "statement": "theorem req_account_bounded     : AccountBounded comptroller",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "req_rewards_bounded",
+   "kind": "theorem",
+   "text": "theorem req_rewards_bounded     : RewardsBounded comptroller := by\n  intro L ops hL\n  have hI := inv_start L hL\n  have hs := M.pot_reinit_le L.supplyStart L.borrowStart (clock_upgrade L)\n    (inv_start_hr L hL)\n  have hone : 0 < M.one := by decide\n  have h := M.rewards_bounded (run comptroller) emitted speedsAfter\n    (exec_act _ _) hone hI hs ops\n  rw [creditSum_eq, owed_sum_eq, un\u2081_eq, un\u2082_eq, one_eq] at h\n  exact h",
+   "deps": [
+    "Consistent_of_Inv",
+    "M",
+    "accrualStart_le",
+    "accrue_accrue_index",
+    "accrue_block",
+    "accrue_index",
+    "accrue_index_le",
+    "accrue_speed",
+    "borrowHook_eq",
+    "borrowHook_some",
+    "borrowNext",
+    "borrowNext_blockNumber",
+    "borrowNext_supplierIndex",
+    "borrowNext_supplyState",
+    "borrowPre",
+    "borrowPre_of",
+    "borrowPre_of_Consistent",
+    "cL",
+    "claim_eq",
+    "clock_upgrade",
+    "comptroller",
+    "creditSum_eq",
+    "exec_act",
+    "grant_adjust",
+    "grant_same",
+    "inv_start",
+    "inv_start_hr",
+    "one_eq",
+    "owed_eq",
+    "owed_sum_eq",
+    "rec_le_of_Consistent",
+    "rec_le_of_Inv",
+    "retune_speeds",
+    "setSpeeds_eq",
+    "settle\u2081",
+    "settle\u2082",
+    "speedsNext",
+    "speedsNext_rate\u2081",
+    "speedsNext_rate\u2082",
+    "supplyHook_eq",
+    "supplyHook_some",
+    "supplyNext",
+    "supplyPre",
+    "supplyPre_borrowNext",
+    "supplyPre_of",
+    "supplyPre_of_Consistent",
+    "supplyPre_supplyNext_of_ne",
+    "totalSupply_borrowNext",
+    "totalSupply_supplyNext",
+    "total\u2081_eq",
+    "total\u2082_eq",
+    "un\u2081_eq",
+    "un\u2082_eq"
+   ],
+   "statement": "theorem req_rewards_bounded     : RewardsBounded comptroller",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "acct_upgrade",
+   "kind": "theorem",
+   "text": "theorem acct_upgrade (L : Legacy) (who : Account) :\n    M.acct (upgrade L) who = L.accts.getD who noAcct := rfl",
+   "deps": [
+    "M"
+   ],
+   "statement": "theorem acct_upgrade (L : Legacy) (who : Account) :\n    M.acct (upgrade L) who = L.accts.getD who noAcct",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "inv_start_hr_acct",
+   "kind": "theorem",
+   "text": "theorem inv_start_hr_acct (L : Legacy) (hL : L.WellFormed) (who : Account) :\n    M.rec\u2081 (M.acct (upgrade L) who) \u2264 (cL L).index\u2081 \u2227\n    M.rec\u2082 (M.acct (upgrade L) who) \u2264 (cL L).index\u2082 :=\n  ProofForgeFin.Ledger.getD_of_forall (M.accts (upgrade L)) who\n    (inv_start_hr L hL) \u27e8Nat.zero_le _, Nat.zero_le _\u27e9",
+   "deps": [
+    "M",
+    "cL",
+    "inv_start_hr"
+   ],
+   "statement": "theorem inv_start_hr_acct (L : Legacy) (hL : L.WellFormed) (who : Account) :\n    M.rec\u2081 (M.acct (upgrade L) who) \u2264 (cL L).index\u2081 \u2227\n    M.rec\u2082 (M.acct (upgrade L) who) \u2264 (cL L).index\u2082",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "inv_start",
+   "kind": "theorem",
+   "text": "theorem inv_start (L : Legacy) (hL : L.WellFormed) :\n    M.Inv (reinitStart M.init (cL L).index\u2081 L.supplyStart)\n      (reinitStart M.init (cL L).index\u2082 L.borrowStart)\n      ((cL L).rate\u2081, (cL L).rate\u2082) (upgrade L) :=\n  M.inv_reinit (clock_upgrade L) hL.1 hL.2.1 hL.2.2.1 hL.2.2.2.1 hL.2.2.2.2.1\n    hL.2.2.2.2.2.1 (inv_start_hr L hL)",
+   "deps": [
+    "M",
+    "cL",
+    "clock_upgrade",
+    "inv_start_hr"
+   ],
+   "statement": "theorem inv_start (L : Legacy) (hL : L.WellFormed) :\n    M.Inv (reinitStart M.init (cL L).index\u2081 L.supplyStart)\n      (reinitStart M.init (cL L).index\u2082 L.borrowStart)\n      ((cL L).rate\u2081, (cL L).rate\u2082) (upgrade L)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "inv_start_hr",
+   "kind": "theorem",
+   "text": "theorem inv_start_hr (L : Legacy) (hL : L.WellFormed) :\n    \u2200 a \u2208 M.accts (upgrade L),\n      M.rec\u2081 a \u2264 (cL L).index\u2081 \u2227 M.rec\u2082 a \u2264 (cL L).index\u2082 :=\n  fun a ha => hL.2.2.2.2.2.2 a ha",
+   "deps": [
+    "M",
+    "cL"
+   ],
+   "statement": "theorem inv_start_hr (L : Legacy) (hL : L.WellFormed) :\n    \u2200 a \u2208 M.accts (upgrade L),\n      M.rec\u2081 a \u2264 (cL L).index\u2081 \u2227 M.rec\u2082 a \u2264 (cL L).index\u2082",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "owed_sum_eq",
+   "kind": "theorem",
+   "text": "theorem owed_sum_eq (L : Legacy) :\n    ((M.accts (upgrade L)).map (M.owed L.supplyStart L.borrowStart (cL L))).sum =\n      (L.accts.map L.pendingScaled).sum := by\n  have hmod : M.accts (upgrade L) = L.accts := rfl\n  rw [hmod]\n  exact ProofForgeFin.Ledger.sum_map_congr L.accts (fun a _ => owed_eq L a)",
+   "deps": [
+    "M",
+    "cL",
+    "owed_eq"
+   ],
+   "statement": "theorem owed_sum_eq (L : Legacy) :\n    ((M.accts (upgrade L)).map (M.owed L.supplyStart L.borrowStart (cL L))).sum =\n      (L.accts.map L.pendingScaled).sum",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  },
+  {
+   "name": "clock_upgrade",
+   "kind": "theorem",
+   "text": "theorem clock_upgrade (L : Legacy) : M.clock (upgrade L) = (cL L).reinit M.init := by\n  show ProofForgeFin.Accumulator.Clock.mk _ _ _ _ _ _ _ = _\n  simp only [M, cL, upgrade, initSide, ProofForgeFin.Accumulator.Clock.reinit]\n  by_cases h1 : L.supplyIndex = 0 <;> by_cases h2 : L.borrowIndex = 0 <;>\n    simp [h1, h2]",
+   "deps": [
+    "M",
+    "cL"
+   ],
+   "statement": "theorem clock_upgrade (L : Legacy) : M.clock (upgrade L) = (cL L).reinit M.init",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "rw-compound-comp",
+   "spec_sha256": "1490fbf459091f4ea9d0717f912178a6e85597172a7bcd24ab3ce44678192e96"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [],
+ "budget": {
+  "usd_list": 3.1275,
+  "elapsed_s": 576.7
+ },
+ "resumed_from": []
+}
