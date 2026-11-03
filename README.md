@@ -1,5 +1,11 @@
 # ProofForge
 
+[![tests](https://github.com/davidwilliam/proof_forge/actions/workflows/tests.yml/badge.svg)](https://github.com/davidwilliam/proof_forge/actions/workflows/tests.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-1c2532)](LICENSE)
+[![Lean v4.35.0](https://img.shields.io/badge/Lean-v4.35.0-1c2532)](https://github.com/leanprover/lean4/releases/tag/v4.35.0)
+[![Built with Muse Code](https://img.shields.io/badge/built%20with-Muse%20Code%20(Meta)-ff9a3c)](#meta-models-and-tools-used)
+[![proofforge.dev](https://img.shields.io/badge/site-proofforge.dev-5be4f0)](https://proofforge.dev)
+
 ProofForge turns Meta's Muse models into provers of financial code.
 
 Each task states what financial code must guarantee as locked Lean 4 requirements. ProofForge refutes code that breaks a requirement with a counterexample checked in the Lean kernel, and accepts a fix, written by Muse Spark or by people, only when Lean's Comparator checks its proof with six independent kernels in a fresh sandbox, `leanchecker` replays it, an axiom audit passes, and the executable rebuilt from the same source passes property tests. Every verdict is a Proof Passport, bound by hash to the specification, the source, the executable and the judge image, that anyone can re-run. No proof, no merge.
