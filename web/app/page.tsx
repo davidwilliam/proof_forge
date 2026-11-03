@@ -80,9 +80,9 @@ const andListOf = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(
 
 const pr6 = FEATURED.timeline.find((v) => v.key === "pr6")!;
 const metaDescription = (() => {
-  const { f3 } = compoundFrontier(WINS);
+  const { f4 } = compoundFrontier(WINS);
   const oz = comparison(WINS, HEADLINE_IDS.oz);
-  return `With ProofForge as its MCP server, Muse Code, Meta's coding agent, running ${modelName(oz.model)} verified ${runsOf(oz.proofforge)} runs on OpenZeppelin Math.sqrt, against ${runsOf(oz.alone)} on its own, and ${runsOf(f3.proofforge)} on Compound Proposal 62, against ${runsOf(f3.alone)}. Locked Lean 4 specifications of ${count(COMPARISON.length)} real financial failures, kernel-checked counterexamples and hash-bound Passports anyone can re-run.`;
+  return `With ProofForge as its MCP server, Muse Code, Meta's coding agent, running ${modelName(oz.model)} verified ${runsOf(oz.proofforge)} runs on OpenZeppelin Math.sqrt, against ${runsOf(oz.alone)} on its own, and ${runsOf(f4.proofforge)} on Compound Proposal 62, against ${runsOf(f4.alone)}. Locked Lean 4 specifications of ${count(COMPARISON.length)} real financial failures, kernel-checked counterexamples and hash-bound Passports anyone can re-run.`;
 })();
 
 export const metadata: Metadata = {
@@ -415,7 +415,7 @@ function Comparison() {
   // Tasks where every run of every arm was accepted.
   const easy = COMPARISON.filter((r) => [r.alone, ...r.harness].every((x) => x.accepted === x.runs.length) && !r.library);
   const rows = matrixRows(WINS, FLAGSHIPS);
-  const { f3, pooled } = compoundFrontier(WINS);
+  const { f4, pooled } = compoundFrontier(WINS);
   return (
     <section className="home-section" id="compare" aria-labelledby="home-compare">
       <h2 id="home-compare">Muse alone and Muse with ProofForge, on the real failures</h2>
@@ -431,17 +431,17 @@ function Comparison() {
           against the property tests first, then proves one obligation at a time with snippet checks; the second harness arm adds Muse Wonder 1.0
           as lemma planner. On Compound, Knight and Balancer the counts include{" "}
           <a href={githubFile(`${LIBRARY_RUN.source}/README.md`)}>{LIBRARY_RUN.source}</a>, where the planner arm also imports the ProofForgeFin
-          library, and on Compound the runs of Muse Code (Muse Spark 1.3 in Muse Code, on its own and with ProofForge) in frontier-2 and
-          frontier-3, at the same caps.
+          library, and on Compound the runs of Muse Code (Muse Spark 1.3 in Muse Code, on its own and with ProofForge) in frontier-2,
+          frontier-3 and frontier-4, at the same caps.
         </p>
       </details>
-      <CompareMatrix rows={rows} initial={{ row: rows.findIndex((r) => r.key === "compound"), col: "proofforge", group: "f3-proofforge" }} />
+      <CompareMatrix rows={rows} initial={{ row: rows.findIndex((r) => r.key === "compound"), col: "proofforge", group: "f4-proofforge" }} />
       <div className="compare-notes hm-notes">
         <p className="hm-lead-note">
-          <strong>{compoundLead(WINS)}</strong> Both verified runs prove the three sequence bounds (rewards, each account, no backdated rewards)
-          that no earlier run of either arm proved, with ProofForgeFin.Accumulator.Market. Preregistered one-sided Fisher exact p ={" "}
-          {pValue(f3.test!.p)}; pooled with frontier-2, p = {pValue(pooled.test!.p)} (
-          <a href={githubFile(COMPOUND_FRONTIER.readme)}>frontier-3</a>).
+          <strong>{compoundLead(WINS)}</strong> Every verified run proves the three sequence bounds (rewards, each account, no backdated
+          rewards) with ProofForgeFin.Accumulator.Market; no run on its own proved any of them. Preregistered one-sided Fisher exact p ={" "}
+          {pValue(f4.test!.p)}; pooled with frontier-2 and frontier-3, p = {pValue(pooled.test!.p)} (
+          <a href={githubFile(COMPOUND_FRONTIER.readme)}>frontier-4</a>, <a href={githubFile(COMPOUND_FRONTIER.first)}>frontier-3</a>).
         </p>
         <p>
           On {listWords(easy.map((r) => shortIncident(r.incident)))} both arms succeed: Muse alone and the harness were accepted in every run. On{" "}
@@ -504,7 +504,8 @@ function Comparison() {
             <a href={githubFile(`${LIBRARY_RUN.source}/README.md`)}>library-1</a>,{" "}
             <a href={githubFile("results/library-live-1/README.md")}>library-live-1</a>,{" "}
             <a href={githubFile("results/counterexamples-1/README.md")}>counterexamples-1</a>,{" "}
-            <a href={githubFile(COMPOUND_FRONTIER.earlier)}>frontier-2</a>, <a href={githubFile(COMPOUND_FRONTIER.readme)}>frontier-3</a> and each
+            <a href={githubFile(COMPOUND_FRONTIER.earlier)}>frontier-2</a>, <a href={githubFile(COMPOUND_FRONTIER.first)}>frontier-3</a>,{" "}
+            <a href={githubFile(COMPOUND_FRONTIER.readme)}>frontier-4</a> and each
             task&apos;s results README.
           </p>
         </div>
@@ -538,7 +539,7 @@ function CompareRow({ row, f }: { row: ComparisonRow; f: Flagship | null }) {
       <td className="compare-cell" data-label="Muse alone, accepted" data-zero={alone.accepted === 0 || undefined}>
         {mc ? (
           <span className="compare-arm">
-            <strong>{runsOf(mc.pooled.alone)}</strong> Muse Code on its own, frontier-2 and frontier-3
+            <strong>{runsOf(mc.pooled.alone)}</strong> Muse Code on its own, frontier-2 to frontier-4
           </span>
         ) : null}
         <strong>{accepted(alone)}</strong>
@@ -547,6 +548,9 @@ function CompareRow({ row, f }: { row: ComparisonRow; f: Flagship | null }) {
       <td className="compare-cell" data-label="With the ProofForge harness, accepted">
         {mc ? (
           <>
+            <span className="compare-arm">
+              <strong>{runsOf(mc.f4.proofforge)}</strong> Muse Code with ProofForge, frontier-4
+            </span>
             <span className="compare-arm">
               <strong>{runsOf(mc.f3.proofforge)}</strong> Muse Code with ProofForge, frontier-3
             </span>
@@ -618,7 +622,7 @@ function Lift() {
   const compoundLib = COMPARISON.find((r) => r.key === "compound")!.library!;
   const compoundLibraryRuns = compoundLib.withLibrary.runs.length + (compoundLib.topdown?.runs.length ?? 0);
   const pct = (x: number) => `${x >= 0 ? "+" : ""}${Math.round(x * 100)}`;
-  const { f3 } = compoundFrontier(WINS);
+  const { f4, f3 } = compoundFrontier(WINS);
   return (
     <section className="home-section" id="lift" aria-labelledby="home-lift">
       <h2 id="home-lift">Where the harness and the planner change the outcome</h2>
@@ -722,12 +726,13 @@ function Lift() {
                 .map((r) => `${shortIncident(r.incident)} in ${r.library!.withLibrary.accepted} of ${r.library!.withLibrary.runs.length}`)
                 .join(" and ")}{" "}
               further runs, and Compound in none of {compoundLibraryRuns}. Compound was then verified by Muse Code with ProofForge in frontier-3,{" "}
-              {runsOf(f3.proofforge)} runs.
+              {runsOf(f3.proofforge)} runs, and in frontier-4, {runsOf(f4.proofforge)} runs.
             </p>
             <p className="small muted">
               Muse alone was also accepted on Knight in one of two runs. <a href={githubFile("results/compound-1/README.md")}>Compound runs</a>,{" "}
               <a href={githubFile("results/knight-1/README.md")}>Knight runs</a>,{" "}
-              <a href={githubFile(`${LIBRARY_RUN.source}/README.md`)}>library-1</a>, <a href={githubFile(COMPOUND_FRONTIER.readme)}>frontier-3</a>
+              <a href={githubFile(`${LIBRARY_RUN.source}/README.md`)}>library-1</a>, <a href={githubFile(COMPOUND_FRONTIER.first)}>frontier-3</a>,{" "}
+              <a href={githubFile(COMPOUND_FRONTIER.readme)}>frontier-4</a>
             </p>
           </details>
         </article>
@@ -743,14 +748,14 @@ function Library() {
   const verifiedEvery = COMPARISON.filter((r) => r.library && r.library.withLibrary.accepted === r.library.withLibrary.runs.length).map((r) =>
     shortIncident(r.incident),
   );
-  const { f3 } = compoundFrontier(WINS);
+  const { f4 } = compoundFrontier(WINS);
   return (
     <section className="home-section hm-lib" id="library" aria-labelledby="home-library">
       <h2 id="home-library">ProofForgeFin, the proved library behind the judge</h2>
       <p className="home-section-lead">
         Floor and ceiling division, fixed point at any scale, share accounting, runs of operations with invariants over every reachable state,
         and conservation over accounts, with no dependency beyond Lean&apos;s core library. With it, Muse Code with ProofForge verified Compound
-        in {runsOf(f3.proofforge)} frontier-3 runs.
+        in {runsOf(f4.proofforge)} frontier-4 runs.
       </p>
       <KpiStrip
         label="ProofForgeFin in figures"
@@ -778,10 +783,10 @@ function Library() {
             version and every Passport records it.
           </p>
           <p>
-            In <a href={githubFile(COMPOUND_FRONTIER.readme)}>frontier-3</a>, every ProofForge run imported ProofForgeFin.Accumulator.Market, and
-            Muse Code with ProofForge verified Compound in {runsOf(f3.proofforge)} runs; both verified runs prove the three sequence bounds with it.{" "}
-            <a href={githubFile(COMPOUND_FRONTIER.gaps)}>library-compound-gaps-1</a> reads the runs that did not verify and adds the list glue
-            they wrote to the library. A Compound candidate whose three sequence bounds come from the library is VERIFIED, eight of eight
+            In <a href={githubFile(COMPOUND_FRONTIER.readme)}>frontier-4</a>, Muse Code with ProofForge verified Compound in{" "}
+            {runsOf(f4.proofforge)} runs, each proving the three sequence bounds with ProofForgeFin.Accumulator.Market.{" "}
+            <a href={githubFile(COMPOUND_FRONTIER.gaps)}>library-compound-gaps-1</a> read the runs of{" "}
+            <a href={githubFile(COMPOUND_FRONTIER.first)}>frontier-3</a> that did not verify and added the list glue they wrote to the library. A Compound candidate whose three sequence bounds come from the library is VERIFIED, eight of eight
             requirements, on the deployed judge (Passport{" "}
             <Link className="hash" href={`/passport/${LIBRARY.compoundLivePassport}`}>
               {LIBRARY.compoundLivePassport.slice(0, 16)}
@@ -1027,7 +1032,7 @@ function CaseVerdicts({ f }: { f: Flagship }) {
 /**
  * Compound Proposal 62, the sixth real failure: not a flagship record (its loss is not in the total),
  * shown with the same structure from COMPOUND and COMPOUND_CASE (lib/contribution.ts) and the
- * frontier-2 and frontier-3 counts of the wins ledger.
+ * frontier-2 to frontier-4 counts of the wins ledger.
  */
 function CompoundPanel({ trail }: { trail: TrailStep[] }) {
   const c = COMPOUND;
@@ -1108,11 +1113,12 @@ function CompoundPanel({ trail }: { trail: TrailStep[] }) {
   );
 }
 
-/** The refuted Proposal 62 port and the verified Muse Code repairs of frontier-3. */
+/** The refuted Proposal 62 port and the verified Muse Code repairs of frontier-4. */
 function CompoundVerdicts({ trail }: { trail: TrailStep[] }) {
   const c = COMPOUND;
   const C = COMPOUND_CASE;
-  const { f3, model } = compoundFrontier(WINS);
+  const { f4, model } = compoundFrontier(WINS);
+  const prices = C.repairs.map((r) => r.usdList).sort((a, b) => a - b);
   const total = trail.find((s) => s.key === "proofforge")!.total;
   return (
     <div className="cp-verdicts">
@@ -1133,9 +1139,9 @@ function CompoundVerdicts({ trail }: { trail: TrailStep[] }) {
           <span>{model} in Muse Code with ProofForge</span>
         </div>
         <p>
-          Verified in {runsOf(f3.proofforge)} runs of frontier-3, at {listWords(C.repairs.map((r) => usd(r.usdList)))} at list prices. Both
-          prove all {total} requirements, among them the three bounds over any sequence of operations ({listWords(C.bounds)}) that no earlier
-          run of either arm proved. {c.property.requirement} says that {lowerFirst(c.property.text)}
+          Verified in {runsOf(f4.proofforge)} runs of frontier-4, at {usd(prices[0]!)} to {usd(prices[prices.length - 1]!)} at list prices per run.
+          Each proves all {total} requirements, among them the three bounds over any sequence of operations ({listWords(C.bounds)}) that no run
+          on its own proved. {c.property.requirement} says that {lowerFirst(c.property.text)}
         </p>
         <p className="small">
           {C.repairs.map((r, i) => (

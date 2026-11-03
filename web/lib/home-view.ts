@@ -1,8 +1,8 @@
 // The home page's figures below the hero, as views of the data the rest of the site reads: the wins
 // ledger (generated/wins.json), the Muse comparison of lib/contribution.ts, the flagships of
 // lib/flagships.ts and the library counts of generated/library.json. Nothing here is typed in by
-// hand except the names of the two verified frontier-3 runs, which tests/home-view.test.ts pins to
-// results/frontier-3/README.md along with every figure below, and the few words that describe each
+// hand except the names of the eight verified frontier-4 runs, which tests/home-view.test.ts pins to
+// results/frontier-4/README.md along with every figure below, and the few words that describe each
 // version of the Compound code in its case.
 
 import type { Kpi, Strip } from "@/components/FrontierViz";
@@ -25,35 +25,37 @@ export function homeKpis(d: WinsData): Kpi[] {
   ];
 }
 
-/** frontier-3 on Compound Proposal 62: Muse Code (Muse Spark 1.3) on its own and with ProofForge. */
+/** frontier-4 on Compound Proposal 62: Muse Code (Muse Spark 1.3) on its own and with ProofForge. */
 export const COMPOUND_FRONTIER = {
-  readme: "results/frontier-3/README.md",
+  readme: "results/frontier-4/README.md",
+  first: "results/frontier-3/README.md",
   earlier: "results/frontier-2/README.md",
   gaps: "results/library-compound-gaps-1/README.md",
-  // results/frontier-3/README.md, "Every run": the two runs whose Passport is VERIFIED
-  verifiedRuns: ["proofforge-full-5", "proofforge-full-9"],
+  // results/frontier-4/README.md, "Every run": the eight runs whose Passport is VERIFIED
+  verifiedRuns: ["proofforge-full-1", "proofforge-full-3", "proofforge-full-4", "proofforge-full-5", "proofforge-full-6", "proofforge-full-7", "proofforge-full-8", "proofforge-full-9"],
 } as const;
 
 export function compoundFrontier(d: WinsData) {
-  const f3 = comparison(d, HEADLINE_IDS.compound);
+  const f4 = comparison(d, HEADLINE_IDS.compound);
   const pooled = comparison(d, HEADLINE_IDS.compoundPooled);
+  const f3 = comparison(d, HEADLINE_IDS.compoundFirst);
   const f2 = comparison(d, "frontier-2/rw-compound-comp");
-  return { f3, f2, pooled, model: modelName(f3.model) };
+  return { f4, f3, f2, pooled, model: modelName(f4.model) };
 }
 
 /** The sentence every Compound passage of the home page leads with. */
 export function compoundLead(d: WinsData): string {
-  const { f3, pooled, model } = compoundFrontier(d);
-  return `On Compound, Muse Code (${model}) with ProofForge verified ${runsOf(f3.proofforge)} runs in frontier-3 (${COMPOUND_FRONTIER.verifiedRuns.join(" and ")}), the first verified repairs of this task in any measured run; on its own it verified ${runsOf(f3.alone)}, and ${runsOf(pooled.alone)} with the runs on its own of frontier-2 pooled.`;
+  const { f4, f3, pooled, model } = compoundFrontier(d);
+  return `On Compound, Muse Code (${model}) with ProofForge verified ${runsOf(f4.proofforge)} runs in frontier-4; on its own it verified ${runsOf(f4.alone)}, and ${runsOf(pooled.alone)} with the runs on its own of frontier-2 and frontier-3 pooled. The first verified repairs of this task in any measured run came in frontier-3, ${runsOf(f3.proofforge)} runs with ProofForge.`;
 }
 
-/** Compound Proposal 62 from frontier-3, as /frontier shows it. */
-function compoundStrip(d: WinsData): Strip {
-  const { f3: c, f2, pooled } = compoundFrontier(d);
+/** Compound Proposal 62 from frontier-4, as the home page and /frontier show it. */
+export function compoundStrip(d: WinsData): Strip {
+  const { f4: c, f3, pooled } = compoundFrontier(d);
   return {
     key: "compound",
     title: "Compound Proposal 62",
-    context: `COMP reward distribution, a task no measured run of any arm had verified before. ${modelName(c.model)} in Muse Code.`,
+    context: `COMP reward distribution, a task no measured run of any arm had verified before frontier-3. ${modelName(c.model)} in Muse Code.`,
     unit: "run",
     alone: c.alone,
     proofforge: c.proofforge,
@@ -61,14 +63,14 @@ function compoundStrip(d: WinsData): Strip {
     figureAlt: "runs verified",
     stats: [
       { value: `${c.alone.reqMean} → ${c.proofforge.reqMean}`, label: `requirements of ${c.proofforge.reqTotal} proved per run` },
-      { value: `${runsOf(pooled.alone)}`, label: "verified on its own, frontier-2 and frontier-3 pooled" },
-      { value: `${c.alone.capStops} to ${c.proofforge.capStops}`, label: "runs stopped by a cap" },
+      { value: usd(c.proofforge.usdPerVerified), label: `per verified run with ProofForge; ${usd(c.alone.usdTotal)} spent on its own, nothing verified` },
+      { value: `p = ${pValue(c.test!.p)}`, label: "preregistered one-sided Fisher exact" },
     ],
-    text: `Compound Proposal 62, the COMP reward distribution: ${modelName(c.model)} in Muse Code verified ${runsOf(c.proofforge)} runs with ProofForge, at ${usd(c.proofforge.usdPerVerified)} per verified run, and ${runsOf(c.alone)} on its own after spending ${usd(c.alone.usdTotal)}. Both verified runs prove the three bounds over any sequence of operations (rewards, each account, no backdated rewards) that no earlier run of either arm proved.`,
-    note: `Preregistered one-sided ${c.test!.name.replace(/^one-sided /, "")} p = ${pValue(c.test!.p)}; with the runs on its own of frontier-2 pooled, ${runsOf(c.proofforge)} against ${runsOf(pooled.alone)}, p = ${pValue(pooled.test!.p)}. ProofForgeFin now supplies Accumulator.Market, two-sided reward markets bounded from one case analysis, written after the frontier-2 runs stopped at 5 of 8 requirements (${runsOf(f2.proofforge)} and ${runsOf(f2.alone)} verified). Caps of $${c.alone.caps[0]!.usd} and ${c.alone.caps[0]!.seconds / 3600} hours per run, list prices.`,
+    text: `Compound Proposal 62, the COMP reward distribution: ${modelName(c.model)} in Muse Code verified ${runsOf(c.proofforge)} runs with ProofForge, at ${usd(c.proofforge.usdPerVerified)} per verified run, and ${runsOf(c.alone)} on its own after spending ${usd(c.alone.usdTotal)}. Every verified run proves the three bounds over any sequence of operations (rewards, each account, no backdated rewards); no run on its own proved any of them.`,
+    note: `With the runs on its own of frontier-2 and frontier-3 pooled, ${runsOf(c.proofforge)} against ${runsOf(pooled.alone)}, p = ${pValue(pooled.test!.p)}. frontier-3 gave the first verified repairs, ${runsOf(f3.proofforge)} with ProofForge; frontier-4 measures the build feedback, the skill step and the ProofForgeFin additions built from those runs (${runsOf(c.proofforge)} against ${runsOf(f3.proofforge)}, preregistered p = ${pValue(c.test!.secondary!.p)}). Caps of $${c.alone.caps[0]!.usd} and ${c.alone.caps[0]!.seconds / 3600} hours per run, list prices.`,
     links: [
       { label: "Full comparison", href: githubFile(c.links.comparison) },
-      ...[...new Set([...c.links.reports, ...f2.links.reports])].map((p) => ({ label: reportLabel(p), href: githubFile(p) })),
+      ...[...new Set([...c.links.reports, ...f3.links.reports])].map((p) => ({ label: reportLabel(p), href: githubFile(p) })),
     ],
   };
 }
@@ -154,7 +156,7 @@ export interface DotGroup {
   runs: number;
   /** The readout: what was run and where its records are. */
   detail: string;
-  /** The frontier-3 result on Compound, drawn first and marked. */
+  /** The frontier-4 result on Compound, drawn first and marked. */
   lead?: boolean;
 }
 
@@ -188,18 +190,27 @@ const ARM_WHAT = {
 } as const;
 
 function museCodeGroups(d: WinsData, side: "alone" | "proofforge"): DotGroup[] {
-  const { f3, f2, pooled, model } = compoundFrontier(d);
+  const { f4, f3, f2, pooled, model } = compoundFrontier(d);
   const who = side === "alone" ? `Muse Code (${model}) on its own` : `Muse Code (${model}) with ProofForge, the skill and ProofForgeFin`;
   const verifiedNote =
-    side === "proofforge" ? ` Verified: ${COMPOUND_FRONTIER.verifiedRuns.join(" and ")}, both proving the three sequence bounds no earlier run proved.` : ` With frontier-2 pooled: ${runsOf(pooled.alone)}.`;
+    side === "proofforge"
+      ? ` Verified: ${COMPOUND_FRONTIER.verifiedRuns.join(", ")}, each proving the three sequence bounds.`
+      : ` With frontier-2 and frontier-3 pooled: ${runsOf(pooled.alone)}.`;
   return [
+    {
+      key: `f4-${side}`,
+      label: side === "alone" ? "Muse Code, frontier-4" : "Muse Code with ProofForge, frontier-4",
+      verified: f4[side].verified,
+      runs: f4[side].runs,
+      detail: `${who}, frontier-4 (preregistered, caps of $${f4[side].caps[0]!.usd} and ${f4[side].caps[0]!.seconds / 3600} hours): ${runsOf(f4[side])} runs verified.${verifiedNote} ${COMPOUND_FRONTIER.readme}`,
+      lead: side === "proofforge",
+    },
     {
       key: `f3-${side}`,
       label: side === "alone" ? "Muse Code, frontier-3" : "Muse Code with ProofForge, frontier-3",
       verified: f3[side].verified,
       runs: f3[side].runs,
-      detail: `${who}, frontier-3 (preregistered, caps of $${f3[side].caps[0]!.usd} and ${f3[side].caps[0]!.seconds / 3600} hours): ${runsOf(f3[side])} runs verified.${verifiedNote} ${COMPOUND_FRONTIER.readme}`,
-      lead: side === "proofforge",
+      detail: `${who}, frontier-3${side === "proofforge" ? ", the first verified repairs of this task" : ""}: ${runsOf(f3[side])} runs verified, ${f3[side].reqMean} of ${f3[side].reqTotal} requirements proved per run on average. ${COMPOUND_FRONTIER.first}`,
     },
     {
       key: `f2-${side}`,
@@ -315,11 +326,11 @@ export function caseTrail(f: Flagship, rows: readonly ComparisonRow[] = COMPARIS
 
 /**
  * Compound Proposal 62 as a case: the Proposal 62 port, Muse Code on its own and with ProofForge
- * (frontier-2 and frontier-3, from the wins ledger), and the Proposal 64 fix, all against the same
+ * (frontier-2 to frontier-4, from the wins ledger), and the Proposal 64 fix, all against the same
  * locked requirements.
  */
 export function compoundTrail(d: WinsData): TrailStep[] {
-  const { f3, f2, pooled, model } = compoundFrontier(d);
+  const { f4, f3, f2, pooled, model } = compoundFrontier(d);
   const C = COMPOUND_CASE;
   const total = Object.keys(C.fix.requirements).length;
   const first = C.repairs[0];
@@ -337,7 +348,7 @@ export function compoundTrail(d: WinsData): TrailStep[] {
     {
       key: "alone",
       title: "Muse Code on its own",
-      detail: `${model} in Muse Code with Lean only, frontier-2 and frontier-3`,
+      detail: `${model} in Muse Code with Lean only, frontier-2 to frontier-4`,
       verdict: "UNRESOLVED",
       counts: { refuted: 0, verified: 0, unresolved: total },
       total,
@@ -346,19 +357,19 @@ export function compoundTrail(d: WinsData): TrailStep[] {
       runs: {
         verified: pooled.alone.verified,
         runs: pooled.alone.runs,
-        text: `${runsOf(f2.alone)} in frontier-2 and ${runsOf(f3.alone)} in frontier-3; no Passport VERIFIED.`,
+        text: `${runsOf(f2.alone)} in frontier-2, ${runsOf(f3.alone)} in frontier-3 and ${runsOf(f4.alone)} in frontier-4; no Passport VERIFIED.`,
       },
     },
     {
       key: "proofforge",
       title: "Muse Code with ProofForge",
-      detail: `${model} in Muse Code with ProofForge, frontier-3`,
+      detail: `${model} in Muse Code with ProofForge, frontier-4`,
       verdict: "VERIFIED",
       counts: countsOf(first!.passport.requirements),
       total,
       passport: first!.passport,
       author: "muse",
-      runs: { verified: f3.proofforge.verified, runs: f3.proofforge.runs, text: `Verified: ${C.repairs.map((r) => r.run).join(" and ")}.` },
+      runs: { verified: f4.proofforge.verified, runs: f4.proofforge.runs, text: `Verified: ${C.repairs.map((r) => r.run).join(", ")}.` },
       passports: C.repairs.map((r) => ({ label: r.run, passport: r.passport })),
     },
     {

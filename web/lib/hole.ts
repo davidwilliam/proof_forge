@@ -12,7 +12,7 @@ import { WINS } from "@/lib/wins-data";
 
 /**
  * The run and the guarantee shown first. No Muse run verified Compound before results/frontier-3
- * (2 of 10 with ProofForge there). REQ-NO-BACKDATED-REWARDS is open in each of the Compound runs
+ * (2 of 10 with ProofForge there; 8 of 10 in results/frontier-4). REQ-NO-BACKDATED-REWARDS is open in each of the Compound runs
  * whose graphs are extracted (generated/shapes/summary.json); in this one (Muse Spark with the Muse
  * Wonder planner, top-down) it hangs from four lemmas left as `sorry`.
  */
@@ -56,7 +56,7 @@ export interface HoleRun {
   /** The run has no Passport: no kernel check accepted it. */
   passport: null;
   runsMeasured: number;
-  /** Compound only: the frontier-3 runs that verified with ProofForge, each proving every guarantee. */
+  /** Compound only: the frontier-4 runs that verified with ProofForge, each proving every guarantee. */
   laterVerified: { verified: number; runs: number; experiment: string } | null;
   /** Every declaration of the run's graph; a hole or a declaration that uses one is the same in every shape. */
   nodes: { id: string; kind: string; origin: string; depth: number; role: HoleRole }[];

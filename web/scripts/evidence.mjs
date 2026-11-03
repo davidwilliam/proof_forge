@@ -26,8 +26,9 @@ const WL = await loadTs("lib/wins.ts");
 const W = JSON.parse(fs.readFileSync(path.join(web, "generated/wins.json"), "utf8"));
 const LIB = JSON.parse(fs.readFileSync(path.join(web, "generated/library.json"), "utf8"));
 const wc = (id) => W.comparisons.find((c) => c.id === id);
-const C3 = wc(WL.HEADLINE_IDS.compound);
+const C4 = wc(WL.HEADLINE_IDS.compound);
 const CP = wc(WL.HEADLINE_IDS.compoundPooled);
+const C3 = wc(WL.HEADLINE_IDS.compoundFirst);
 const C2 = wc("frontier-2/rw-compound-comp");
 const OZ = wc(WL.HEADLINE_IDS.oz);
 const usd2 = (n) => `$${n.toFixed(2)}`;
@@ -121,7 +122,7 @@ function flagship(f) {
 
 const flagships = F.FLAGSHIPS.map(flagship);
 
-/** Compound Proposal 62: not a flagship record (lib/flagships.ts); its verified repairs are Muse Code runs of frontier-3. */
+/** Compound Proposal 62: not a flagship record (lib/flagships.ts); its verified repairs are Muse Code runs of frontier-3 and frontier-4. */
 function compound() {
   const c = K.COMPOUND;
   const row = K.COMPARISON.find((r) => r.key === c.key);
@@ -131,7 +132,7 @@ function compound() {
     // The Passport's stored reproduce line names the candidate without the runs/ directory; the committed candidate is r.candidate.
     p.reproduce = `bin/proofforge verify ${r.passport} --candidate ${r.candidate}`;
     return {
-      run: `results/frontier-3 ${r.run}`,
+      run: `results/frontier-4 ${r.run}`,
       agent: s.muse_code,
       model: s.model,
       mcp_profile: s.mcp_profile,
@@ -158,22 +159,29 @@ function compound() {
     upstream_fix: { label: c.fix.label, passport: passport({ path: c.fix.passport }) },
     muse_code_with_proofforge: {
       source: COMPOUND_README,
-      verified: C3.proofforge.verified,
-      runs: C3.proofforge.runs,
-      alone_verified: C3.alone.verified,
-      alone_runs: C3.alone.runs,
-      alone_pooled_with_frontier_2: { verified: CP.alone.verified, runs: CP.alone.runs },
-      fisher_exact_one_sided_p: C3.test.p,
+      verified: C4.proofforge.verified,
+      runs: C4.proofforge.runs,
+      alone_verified: C4.alone.verified,
+      alone_runs: C4.alone.runs,
+      alone_pooled_with_frontier_2_and_3: { verified: CP.alone.verified, runs: CP.alone.runs },
+      fisher_exact_one_sided_p: C4.test.p,
       fisher_exact_one_sided_p_pooled: CP.test.p,
-      usd_list_price_per_verified_run: C3.proofforge.usdPerVerified,
+      usd_list_price_per_verified_run: C4.proofforge.usdPerVerified,
+      first_verified_repairs: {
+        source: COMPOUND_FIRST,
+        verified: C3.proofforge.verified,
+        runs: C3.proofforge.runs,
+        fisher_exact_one_sided_p_frontier_4_against_frontier_3: C4.test.secondary.p,
+      },
       verified_runs: repairs,
     },
-    earlier_runs: `Before frontier-3 no measured run of any method verified the task (${COMPOUND_README}): Muse Spark 1.3 alone (A0) ${K.aloneRuns(row).accepted} of ${K.aloneRuns(row).runs.length}, with the ProofForge harness (A1) ${row.harness.filter((h) => h.arm === "A1").map((h) => `${h.accepted} of ${h.runs.length}`).join(", ")}, with the harness and the Muse Wonder planner ${K.plannerRuns(row).accepted} of ${K.plannerRuns(row).runs.length}, implement mode ${row.implement.accepted} of ${row.implement.runs.length}, and Muse Code in frontier-2 ${C2.alone.verified} of ${C2.alone.runs} on its own and ${C2.proofforge.verified} of ${C2.proofforge.runs} with ProofForge.`,
+    earlier_runs: `Before frontier-3 no measured run of any method verified the task (${COMPOUND_FIRST}): Muse Spark 1.3 alone (A0) ${K.aloneRuns(row).accepted} of ${K.aloneRuns(row).runs.length}, with the ProofForge harness (A1) ${row.harness.filter((h) => h.arm === "A1").map((h) => `${h.accepted} of ${h.runs.length}`).join(", ")}, with the harness and the Muse Wonder planner ${K.plannerRuns(row).accepted} of ${K.plannerRuns(row).runs.length}, implement mode ${row.implement.accepted} of ${row.implement.runs.length}, and Muse Code in frontier-2 ${C2.alone.verified} of ${C2.alone.runs} on its own and ${C2.proofforge.verified} of ${C2.proofforge.runs} with ProofForge.`,
     real_code: { method: c.realCode.method, sequences: c.realCode.sequences, results: c.realCode.rows, report: c.realCode.report },
     not_proved: c.notProved,
   };
 }
-const COMPOUND_README = "results/frontier-3/README.md";
+const COMPOUND_README = "results/frontier-4/README.md";
+const COMPOUND_FIRST = "results/frontier-3/README.md";
 const compoundRecord = compound();
 const incidents = [...F.FLAGSHIPS.map((f) => f.incident), compoundRecord.incident];
 const notClaimed = [
@@ -184,16 +192,16 @@ const notClaimed = [
   ...F.FLAGSHIPS.map((f) => f.reconstruction).filter(Boolean),
 ];
 
-/** frontier-3 on Compound, worded as the home page's Compound strip (lib/home-view.ts). */
+/** frontier-4 on Compound, worded as the home page's Compound strip (lib/home-view.ts). */
 function compoundHeadline() {
-  const cap = C3.alone.caps[0];
+  const cap = C4.alone.caps[0];
   return {
     key: "compound",
-    figure: `${C3.alone.verified} → ${C3.proofforge.verified}`,
-    figureAlt: `of ${C3.proofforge.runs}`,
-    text: `Compound Proposal 62, the COMP reward distribution, a task no measured run of any arm had verified before: ${WL.modelName(C3.model)} in Muse Code verified ${WL.runsOf(C3.proofforge)} runs with ProofForge, at ${usd2(C3.proofforge.usdPerVerified)} per verified run, and ${WL.runsOf(C3.alone)} on its own after spending ${usd2(C3.alone.usdTotal)}. Both verified runs prove the three bounds over any sequence of operations (rewards, each account, no backdated rewards) that no earlier run of either arm proved. Passports ${compoundRecord.muse_code_with_proofforge.verified_runs.map((r) => r.passport.sha256.slice(0, 16)).join(", ")}.`,
-    note: `Preregistered one-sided ${C3.test.name.replace(/^one-sided /, "")} p = ${WL.pValue(C3.test.p)}; with the runs on its own of frontier-2 pooled, ${WL.runsOf(C3.proofforge)} against ${WL.runsOf(CP.alone)}, p = ${WL.pValue(CP.test.p)}. ProofForgeFin now supplies Accumulator.Market, two-sided reward markets bounded from one case analysis, written after the frontier-2 runs stopped at 5 of 8 requirements (${WL.runsOf(C2.proofforge)} and ${WL.runsOf(C2.alone)} verified). Caps of $${cap.usd} and ${cap.seconds / 3600} hours per run, list prices.`,
-    links: [{ label: "Full comparison", path: C3.links.comparison }, ...[...new Set([...C3.links.reports, ...C2.links.reports])].map((p) => ({ label: p.replace(/^results\//, "").replace(/\/README\.md$/, ""), path: p }))],
+    figure: `${C4.alone.verified} → ${C4.proofforge.verified}`,
+    figureAlt: `of ${C4.proofforge.runs}`,
+    text: `Compound Proposal 62, the COMP reward distribution, a task no measured run of any arm had verified before frontier-3: ${WL.modelName(C4.model)} in Muse Code verified ${WL.runsOf(C4.proofforge)} runs with ProofForge, at ${usd2(C4.proofforge.usdPerVerified)} per verified run, and ${WL.runsOf(C4.alone)} on its own after spending ${usd2(C4.alone.usdTotal)}. Every verified run proves the three bounds over any sequence of operations (rewards, each account, no backdated rewards); no run on its own proved any of them. Passports ${compoundRecord.muse_code_with_proofforge.verified_runs.map((r) => r.passport.sha256.slice(0, 16)).join(", ")}.`,
+    note: `Preregistered one-sided ${C4.test.name.replace(/^one-sided /, "")} p = ${WL.pValue(C4.test.p)}; with the runs on its own of frontier-2 and frontier-3 pooled, ${WL.runsOf(C4.proofforge)} against ${WL.runsOf(CP.alone)}, p = ${WL.pValue(CP.test.p)}. frontier-3 gave the first verified repairs, ${WL.runsOf(C3.proofforge)} with ProofForge; frontier-4 measures the build feedback, the skill step and the ProofForgeFin additions built from those runs (${WL.runsOf(C4.proofforge)} against ${WL.runsOf(C3.proofforge)}, preregistered p = ${WL.pValue(C4.test.secondary.p)}). Caps of $${cap.usd} and ${cap.seconds / 3600} hours per run, list prices.`,
+    links: [{ label: "Full comparison", path: C4.links.comparison }, ...[...new Set([...C4.links.reports, ...C3.links.reports])].map((p) => ({ label: p.replace(/^results\//, "").replace(/\/README\.md$/, ""), path: p }))],
   };
 }
 
@@ -325,7 +333,7 @@ function llms() {
   L.push("# ProofForge", "", `> ${F.HEADLINE} ${F.SUMMARY}`, "");
   const plannerKeys = F.FLAGSHIPS.filter((f) => f.repair.planner).map((f) => f.incident);
   L.push(
-    `With ProofForge as its MCP server, Muse Code, Meta's coding agent, running ${WL.modelName(OZ.model)} verified ${WL.runsOf(OZ.proofforge)} runs on OpenZeppelin Math.sqrt behind the Aerodrome first deposit, against ${WL.runsOf(OZ.alone)} on its own (preregistered one-sided Fisher exact p = ${WL.pValue(OZ.test.p)}), and ${WL.runsOf(C3.proofforge)} runs on Compound Proposal 62, against ${WL.runsOf(C3.alone)}, the first verified repairs of that task in any measured run.`,
+    `With ProofForge as its MCP server, Muse Code, Meta's coding agent, running ${WL.modelName(OZ.model)} verified ${WL.runsOf(OZ.proofforge)} runs on OpenZeppelin Math.sqrt behind the Aerodrome first deposit, against ${WL.runsOf(OZ.alone)} on its own (preregistered one-sided Fisher exact p = ${WL.pValue(OZ.test.p)}), and ${WL.runsOf(C4.proofforge)} runs on Compound Proposal 62, against ${WL.runsOf(C4.alone)} (p = ${WL.pValue(C4.test.p)}), a task no measured run had verified before frontier-3.`,
     "",
     `${count(incidents.length)} real financial failures are specified in Lean 4: ${incidents.join(", ")}. Each vulnerable version is refuted by a kernel-checked counterexample, and each has a VERIFIED repair written by ${WL.modelName(OZ.model)} (with Muse Wonder 1.0 planning on ${plannerKeys.join(" and ")}, and in Muse Code on Compound) and checked by ProofForge. The ${count(flagships.length).toLowerCase()} with a quoted dollar loss total ${F.lossTotalPhrase()} taken or lost, as the cited sources report.`,
     "",
@@ -389,7 +397,7 @@ function llms() {
     L.push(`- Property proved in Lean 4 (${c.property_proved.requirement}): ${c.property_proved.text}`);
     const vp = c.vulnerable_code.passport;
     L.push(`- Vulnerable code (${c.vulnerable_code.label}): ${vp.status}, ${Object.values(vp.requirements).filter((x) => x === "REFUTED").length} of ${c.requirements} requirements refuted. ${c.vulnerable_code.finding} Kernel-checked counterexample: ${c.vulnerable_code.kernel_checked_counterexample}. Passport ${vp.sha256} (${vp.path})`);
-    L.push(`- Muse repair in Muse Code with ProofForge (${m.source}): ${m.verified} of ${m.runs} runs VERIFIED, ${m.alone_verified} of ${m.alone_runs} on its own (${m.alone_pooled_with_frontier_2.verified} of ${m.alone_pooled_with_frontier_2.runs} with frontier-2 pooled); one-sided Fisher exact p = ${WL.pValue(m.fisher_exact_one_sided_p)}, pooled p = ${WL.pValue(m.fisher_exact_one_sided_p_pooled)}.`);
+    L.push(`- Muse repair in Muse Code with ProofForge (${m.source}): ${m.verified} of ${m.runs} runs VERIFIED, ${m.alone_verified} of ${m.alone_runs} on its own (${m.alone_pooled_with_frontier_2_and_3.verified} of ${m.alone_pooled_with_frontier_2_and_3.runs} with frontier-2 and frontier-3 pooled); one-sided Fisher exact p = ${WL.pValue(m.fisher_exact_one_sided_p)}, pooled p = ${WL.pValue(m.fisher_exact_one_sided_p_pooled)}. The first verified repairs came in frontier-3 (${m.first_verified_repairs.source}): ${m.first_verified_repairs.verified} of ${m.first_verified_repairs.runs} with ProofForge; frontier-4 against frontier-3, p = ${WL.pValue(m.first_verified_repairs.fisher_exact_one_sided_p_frontier_4_against_frontier_3)}.`);
     for (const r of m.verified_runs) {
       const reqs = Object.keys(r.passport.requirements).length;
       L.push(`  - ${r.run}: ${r.passport.status}, ${reqs} of ${reqs} requirements, ${r.passport.kernels} kernels, ${r.passport.property_cases} property cases; ${r.agent}, ${r.model}, MCP profile ${r.mcp_profile}, ${r.ended_by === "accepted" ? "ended at an accepted check" : `ended by ${r.ended_by}`}, ${r.seconds} s, ${r.model_calls} model calls, ${usd2(r.usd_list_price)} at list prices, $${r.usd_charged} charged. Passport ${r.passport.sha256} (${r.passport.path}). Reproduce: ${r.passport.reproduce}`);

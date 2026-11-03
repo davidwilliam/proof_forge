@@ -18,13 +18,13 @@ import {
   kindOf,
   modelName,
   pValue,
-  runsOf,
   testPhrase,
   usd,
   winDetail,
   type Comparison,
   type Headline,
 } from "@/lib/wins";
+import { compoundStrip } from "@/lib/home-view";
 import { WINS } from "@/lib/wins-data";
 
 const description = `What Meta's models reach with ProofForge that they do not reach on their own: every measured comparison, from results/wins/ledger.json. ${countsSentence(WINS)}`;
@@ -75,35 +75,6 @@ function factorPoints(): FactorPoint[] {
 
 const hrefs = (h: Headline) => h.links.map((l) => ({ label: l.label, href: githubFile(l.path) }));
 
-/** Compound Proposal 62 from frontier-3: the first verified repairs of the task. */
-function compoundStrip(): Strip {
-  const d = WINS;
-  const c = comparison(d, HEADLINE_IDS.compound);
-  const pooled = comparison(d, HEADLINE_IDS.compoundPooled);
-  const f2 = comparison(d, "frontier-2/rw-compound-comp");
-  return {
-    key: "compound",
-    title: "Compound Proposal 62",
-    context: `COMP reward distribution, a task no measured run of any arm had verified before. ${modelName(c.model)} in Muse Code.`,
-    unit: "run",
-    alone: c.alone,
-    proofforge: c.proofforge,
-    figure: `${c.alone.verified} → ${c.proofforge.verified}`,
-    figureAlt: "runs verified",
-    stats: [
-      { value: `${c.alone.reqMean} → ${c.proofforge.reqMean}`, label: `requirements of ${c.proofforge.reqTotal} proved per run` },
-      { value: `${runsOf(pooled.alone)}`, label: "verified on its own, frontier-2 and frontier-3 pooled" },
-      { value: `${c.alone.capStops} to ${c.proofforge.capStops}`, label: "runs stopped by a cap" },
-    ],
-    text: `Compound Proposal 62, the COMP reward distribution: ${modelName(c.model)} in Muse Code verified ${runsOf(c.proofforge)} runs with ProofForge, at ${usd(c.proofforge.usdPerVerified)} per verified run, and ${runsOf(c.alone)} on its own after spending ${usd(c.alone.usdTotal)}. Both verified runs prove the three bounds over any sequence of operations (rewards, each account, no backdated rewards) that no earlier run of either arm proved.`,
-    note: `Preregistered one-sided ${c.test!.name.replace(/^one-sided /, "")} p = ${pValue(c.test!.p)}; with the runs on its own of frontier-2 pooled, ${runsOf(c.proofforge)} against ${runsOf(pooled.alone)}, p = ${pValue(pooled.test!.p)}. ProofForgeFin now supplies Accumulator.Market, two-sided reward markets bounded from one case analysis, written after the frontier-2 runs stopped at 5 of 8 requirements (${runsOf(f2.proofforge)} and ${runsOf(f2.alone)} verified). Caps of $${c.alone.caps[0]!.usd} and ${c.alone.caps[0]!.seconds / 3600} hours per run, list prices.`,
-    links: [
-      { label: "Full comparison", href: githubFile(c.links.comparison) },
-      ...[...new Set([...c.links.reports, ...f2.links.reports])].map((p) => ({ label: reportLabel(p), href: githubFile(p) })),
-    ],
-  };
-}
-
 /** The headline gains as run strips; the sentences and conditions of each are kept under "What was measured". */
 function strips(): Strip[] {
   const d = WINS;
@@ -129,7 +100,7 @@ function strips(): Strip[] {
         { value: `p = ${pValue(oz.test!.p)}`, label: "preregistered one-sided Fisher exact" },
       ],
     },
-    compoundStrip(),
+    compoundStrip(WINS),
     {
       ...common("vyper"),
       title: "Vyper sqrt(), CVE-2025-26622",

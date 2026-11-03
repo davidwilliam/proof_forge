@@ -110,10 +110,10 @@ describe("a guarantee with a hole", () => {
     expect(h.guarantees.filter((x) => x.openInEveryRun).map((x) => x.id)).toEqual(["REQ-REWARDS-BOUNDED", "REQ-ACCOUNT-BOUNDED", "REQ-NO-BACKDATED-REWARDS"]);
   });
 
-  it("states the frontier-3 runs that later verified Compound, each with every requirement VERIFIED", () => {
-    expect(h.laterVerified).toEqual({ verified: 2, runs: 10, experiment: "frontier-3" });
-    for (const run of ["proofforge-full-5", "proofforge-full-9"]) {
-      const p = JSON.parse(read(`results/frontier-3/judged/rw-compound-comp/${run}/passport.json`));
+  it("states the frontier-4 runs that later verified Compound, each with every requirement VERIFIED", () => {
+    expect(h.laterVerified).toEqual({ verified: 8, runs: 10, experiment: "frontier-4" });
+    for (const run of [1, 3, 4, 5, 6, 7, 8, 9].map((i) => `proofforge-full-${i}`)) {
+      const p = JSON.parse(read(`results/frontier-4/judged/rw-compound-comp/${run}/passport.json`));
       expect(p.status).toBe("VERIFIED");
       expect(p.requirements.map((r: { id: string }) => r.id)).toEqual(expect.arrayContaining(["REQ-REWARDS-BOUNDED", "REQ-ACCOUNT-BOUNDED", "REQ-NO-BACKDATED-REWARDS"]));
       expect(p.requirements.every((r: { status: string }) => r.status === "VERIFIED"), run).toBe(true);

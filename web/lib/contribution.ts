@@ -381,7 +381,7 @@ export const META_TOOLING = [
     id: null,
     how: "Runs ProofForge as an MCP server (integrations/muse/proofforge_mcp.py) with the ProofForge skill (.agents/skills/proofforge/SKILL.md) and the ProofForgeFin library in its workspace; headless `muse exec` runs driven by agents/muse_code.py, every model request metered at the wire (integrations/muse/meter.py). The arm on its own is the same Muse Code with Lean only (the MCP server's `lean_build`).",
     paths: ["integrations/muse/proofforge_mcp.py", ".agents/skills/proofforge/SKILL.md", "agents/muse_code.py", "integrations/muse/meter.py"],
-    experiments: ["results/frontier-2", "results/frontier-3", "results/hard-task-1", "results/vyper-replication-1", "results/muse-code-1"],
+    experiments: ["results/frontier-4", "results/frontier-2", "results/frontier-3", "results/hard-task-1", "results/vyper-replication-1", "results/muse-code-1"],
   },
   {
     key: "muse-spark",
@@ -424,8 +424,9 @@ export const META_TOOLING = [
 /**
  * Compound Proposal 62, the sixth real failure. It is not in FLAGSHIPS (lib/flagships.ts), whose
  * records each carry a Muse repair from the harness runs; its first verified repairs are the
- * Muse Code runs of frontier-3. Every entry is copied from realworld/tasks/rw-compound-comp/README.md,
- * results/compound-1/README.md and results/frontier-3/README.md; tests/contribution.test.ts checks them.
+ * Muse Code runs of frontier-3, and the repairs shown are the eight of frontier-4. Every entry is copied
+ * from realworld/tasks/rw-compound-comp/README.md, results/compound-1/README.md and
+ * results/frontier-4/README.md; tests/contribution.test.ts checks them.
  */
 export const COMPOUND = {
   key: "compound",
@@ -450,12 +451,12 @@ export const COMPOUND = {
     finding: "The cSUSHI claim made on mainnet 139 blocks after the upgrade: nothing was owed and nothing was emitted to the market, and the port pays 18977306140567618322762 COMP-wei (18,977.35 COMP), as the transaction did.",
   },
   fix: { label: "Proposal 64 fix, ported by the build team", passport: "results/compound-1/passports/reference.json" },
-  /** results/frontier-3/README.md, "Every run": the two runs whose Passport is VERIFIED. */
-  museRepairs: ["proofforge-full-5", "proofforge-full-9"].map((run) => ({
+  /** results/frontier-4/README.md, "Every run": the eight runs whose Passport is VERIFIED. */
+  museRepairs: [1, 3, 4, 5, 6, 7, 8, 9].map((i) => `proofforge-full-${i}`).map((run) => ({
     run,
-    summary: `results/frontier-3/runs/rw-compound-comp/${run}/summary.json`,
-    passport: `results/frontier-3/judged/rw-compound-comp/${run}/passport.json`,
-    candidate: `results/frontier-3/runs/rw-compound-comp/${run}/final.lean`,
+    summary: `results/frontier-4/runs/rw-compound-comp/${run}/summary.json`,
+    passport: `results/frontier-4/judged/rw-compound-comp/${run}/passport.json`,
+    candidate: `results/frontier-4/runs/rw-compound-comp/${run}/final.lean`,
   })),
   realCode: {
     report: "results/compound-1/real-code/report.json",
@@ -483,7 +484,7 @@ export const COMPOUND_CASE: {
   port: PassportRef;
   fix: PassportRef;
   repairs: { run: string; usdList: number; passport: PassportRef }[];
-  /** The three bounds over any sequence of operations; both verified runs prove them (results/frontier-3/README.md). */
+  /** The three bounds over any sequence of operations; every verified run proves them (results/frontier-4/README.md). */
   bounds: string[];
 } = {
   // realworld/tasks/rw-compound-comp/README.md, "Sources"
@@ -527,12 +528,11 @@ export const COMPOUND_CASE: {
   // the committed candidate, as scripts/evidence.mjs publishes it.
   repairs: [
     {
-      run: "proofforge-full-5",
-      // summary.json meter.usd_list
-      usdList: 6.7,
+      run: "proofforge-full-1",
+      usdList: 4.2936,
       passport: {
-        path: "results/frontier-3/judged/rw-compound-comp/proofforge-full-5/passport.json",
-        sha256: "b7aca6c04101c9fc27a6baca82e45dddaf69663c698f95913434c354e97e2beb",
+        path: "results/frontier-4/judged/rw-compound-comp/proofforge-full-1/passport.json",
+        sha256: "79450c41fd0ea77cf82dc6ac8ce9918afa0d498719c4d23bd7c0fea918633977",
         status: "VERIFIED",
         requirements: {
           "REQ-CALLS-SUCCEED": "VERIFIED",
@@ -544,15 +544,135 @@ export const COMPOUND_CASE: {
           "REQ-ACCOUNT-BOUNDED": "VERIFIED",
           "REQ-NO-BACKDATED-REWARDS": "VERIFIED",
         },
-        reproduce: "bin/proofforge verify results/frontier-3/judged/rw-compound-comp/proofforge-full-5/passport.json --candidate results/frontier-3/runs/rw-compound-comp/proofforge-full-5/final.lean",
+        reproduce: "bin/proofforge verify results/frontier-4/judged/rw-compound-comp/proofforge-full-1/passport.json --candidate results/frontier-4/runs/rw-compound-comp/proofforge-full-1/final.lean",
+      },
+    },
+    {
+      run: "proofforge-full-3",
+      usdList: 5.1689,
+      passport: {
+        path: "results/frontier-4/judged/rw-compound-comp/proofforge-full-3/passport.json",
+        sha256: "56fe74dd5031aa23d0a61b821b4d2aed026f4e49efd4aecbf6519191074aa4a8",
+        status: "VERIFIED",
+        requirements: {
+          "REQ-CALLS-SUCCEED": "VERIFIED",
+          "REQ-SUPPLY-HOOK": "VERIFIED",
+          "REQ-BORROW-HOOK": "VERIFIED",
+          "REQ-CLAIM": "VERIFIED",
+          "REQ-SET-SPEEDS": "VERIFIED",
+          "REQ-REWARDS-BOUNDED": "VERIFIED",
+          "REQ-ACCOUNT-BOUNDED": "VERIFIED",
+          "REQ-NO-BACKDATED-REWARDS": "VERIFIED",
+        },
+        reproduce: "bin/proofforge verify results/frontier-4/judged/rw-compound-comp/proofforge-full-3/passport.json --candidate results/frontier-4/runs/rw-compound-comp/proofforge-full-3/final.lean",
+      },
+    },
+    {
+      run: "proofforge-full-4",
+      usdList: 4.253,
+      passport: {
+        path: "results/frontier-4/judged/rw-compound-comp/proofforge-full-4/passport.json",
+        sha256: "dd8943d482bd33d67ed5bf0d02cc89b9e38dd8d38b7ab0c8c1ff48d6b889ed33",
+        status: "VERIFIED",
+        requirements: {
+          "REQ-CALLS-SUCCEED": "VERIFIED",
+          "REQ-SUPPLY-HOOK": "VERIFIED",
+          "REQ-BORROW-HOOK": "VERIFIED",
+          "REQ-CLAIM": "VERIFIED",
+          "REQ-SET-SPEEDS": "VERIFIED",
+          "REQ-REWARDS-BOUNDED": "VERIFIED",
+          "REQ-ACCOUNT-BOUNDED": "VERIFIED",
+          "REQ-NO-BACKDATED-REWARDS": "VERIFIED",
+        },
+        reproduce: "bin/proofforge verify results/frontier-4/judged/rw-compound-comp/proofforge-full-4/passport.json --candidate results/frontier-4/runs/rw-compound-comp/proofforge-full-4/final.lean",
+      },
+    },
+    {
+      run: "proofforge-full-5",
+      usdList: 4.6262,
+      passport: {
+        path: "results/frontier-4/judged/rw-compound-comp/proofforge-full-5/passport.json",
+        sha256: "de111c83c26b493c9ccbea06ad6e8c5228532632bb7af1e960c6ac66161f3e13",
+        status: "VERIFIED",
+        requirements: {
+          "REQ-CALLS-SUCCEED": "VERIFIED",
+          "REQ-SUPPLY-HOOK": "VERIFIED",
+          "REQ-BORROW-HOOK": "VERIFIED",
+          "REQ-CLAIM": "VERIFIED",
+          "REQ-SET-SPEEDS": "VERIFIED",
+          "REQ-REWARDS-BOUNDED": "VERIFIED",
+          "REQ-ACCOUNT-BOUNDED": "VERIFIED",
+          "REQ-NO-BACKDATED-REWARDS": "VERIFIED",
+        },
+        reproduce: "bin/proofforge verify results/frontier-4/judged/rw-compound-comp/proofforge-full-5/passport.json --candidate results/frontier-4/runs/rw-compound-comp/proofforge-full-5/final.lean",
+      },
+    },
+    {
+      run: "proofforge-full-6",
+      usdList: 8.6692,
+      passport: {
+        path: "results/frontier-4/judged/rw-compound-comp/proofforge-full-6/passport.json",
+        sha256: "d073ccf63cb75abf7f1ef12e7715c005ee3755c171321e44fd0b473e7101a2b4",
+        status: "VERIFIED",
+        requirements: {
+          "REQ-CALLS-SUCCEED": "VERIFIED",
+          "REQ-SUPPLY-HOOK": "VERIFIED",
+          "REQ-BORROW-HOOK": "VERIFIED",
+          "REQ-CLAIM": "VERIFIED",
+          "REQ-SET-SPEEDS": "VERIFIED",
+          "REQ-REWARDS-BOUNDED": "VERIFIED",
+          "REQ-ACCOUNT-BOUNDED": "VERIFIED",
+          "REQ-NO-BACKDATED-REWARDS": "VERIFIED",
+        },
+        reproduce: "bin/proofforge verify results/frontier-4/judged/rw-compound-comp/proofforge-full-6/passport.json --candidate results/frontier-4/runs/rw-compound-comp/proofforge-full-6/final.lean",
+      },
+    },
+    {
+      run: "proofforge-full-7",
+      usdList: 3.9385,
+      passport: {
+        path: "results/frontier-4/judged/rw-compound-comp/proofforge-full-7/passport.json",
+        sha256: "459f18db9b68f18bafc88a3d0da237a56df35126bd44e975da9b95765c4b44fb",
+        status: "VERIFIED",
+        requirements: {
+          "REQ-CALLS-SUCCEED": "VERIFIED",
+          "REQ-SUPPLY-HOOK": "VERIFIED",
+          "REQ-BORROW-HOOK": "VERIFIED",
+          "REQ-CLAIM": "VERIFIED",
+          "REQ-SET-SPEEDS": "VERIFIED",
+          "REQ-REWARDS-BOUNDED": "VERIFIED",
+          "REQ-ACCOUNT-BOUNDED": "VERIFIED",
+          "REQ-NO-BACKDATED-REWARDS": "VERIFIED",
+        },
+        reproduce: "bin/proofforge verify results/frontier-4/judged/rw-compound-comp/proofforge-full-7/passport.json --candidate results/frontier-4/runs/rw-compound-comp/proofforge-full-7/final.lean",
+      },
+    },
+    {
+      run: "proofforge-full-8",
+      usdList: 3.1275,
+      passport: {
+        path: "results/frontier-4/judged/rw-compound-comp/proofforge-full-8/passport.json",
+        sha256: "a381e7a35f97d951bfc068f2f99b35efc671e179c7b4391d89a0c60eb510dc32",
+        status: "VERIFIED",
+        requirements: {
+          "REQ-CALLS-SUCCEED": "VERIFIED",
+          "REQ-SUPPLY-HOOK": "VERIFIED",
+          "REQ-BORROW-HOOK": "VERIFIED",
+          "REQ-CLAIM": "VERIFIED",
+          "REQ-SET-SPEEDS": "VERIFIED",
+          "REQ-REWARDS-BOUNDED": "VERIFIED",
+          "REQ-ACCOUNT-BOUNDED": "VERIFIED",
+          "REQ-NO-BACKDATED-REWARDS": "VERIFIED",
+        },
+        reproduce: "bin/proofforge verify results/frontier-4/judged/rw-compound-comp/proofforge-full-8/passport.json --candidate results/frontier-4/runs/rw-compound-comp/proofforge-full-8/final.lean",
       },
     },
     {
       run: "proofforge-full-9",
-      usdList: 7.4101,
+      usdList: 4.2989,
       passport: {
-        path: "results/frontier-3/judged/rw-compound-comp/proofforge-full-9/passport.json",
-        sha256: "4f7e8adfccefae8542370f3a9621b72594978fc2166283f4f000eefc9aabfb1e",
+        path: "results/frontier-4/judged/rw-compound-comp/proofforge-full-9/passport.json",
+        sha256: "ad5c81f6774ea3547cf16ca6cce890423ba2b68c748fc614d46b73f1cef1f7dc",
         status: "VERIFIED",
         requirements: {
           "REQ-CALLS-SUCCEED": "VERIFIED",
@@ -564,7 +684,7 @@ export const COMPOUND_CASE: {
           "REQ-ACCOUNT-BOUNDED": "VERIFIED",
           "REQ-NO-BACKDATED-REWARDS": "VERIFIED",
         },
-        reproduce: "bin/proofforge verify results/frontier-3/judged/rw-compound-comp/proofforge-full-9/passport.json --candidate results/frontier-3/runs/rw-compound-comp/proofforge-full-9/final.lean",
+        reproduce: "bin/proofforge verify results/frontier-4/judged/rw-compound-comp/proofforge-full-9/passport.json --candidate results/frontier-4/runs/rw-compound-comp/proofforge-full-9/final.lean",
       },
     },
   ],

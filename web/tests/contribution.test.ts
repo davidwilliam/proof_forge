@@ -363,21 +363,21 @@ describe("Compound Proposal 62", () => {
     expect(existsSync(path.join(ROOT, COMPOUND.vulnerable.witness))).toBe(true);
     expect(readme).toContain("the port pays 18977306140567618322762");
   });
-  it("the Passports of the port, the fix and the two verified Muse Code runs", () => {
+  it("the Passports of the port, the fix and the eight verified Muse Code runs of frontier-4", () => {
     const port = readPassport(COMPOUND.vulnerable.passport);
     expect(port.recomputedSha256).toBe(port.sha256);
     expect(port.status).toBe("REFUTED");
     expect(Object.values(port.requirements).filter((s) => s === "REFUTED")).toHaveLength(5);
     const fix = readPassport(COMPOUND.fix.passport);
     expect(fix.status).toBe("VERIFIED");
-    const f3 = flatText("results/frontier-3/README.md");
+    const f4 = flatText("results/frontier-4/README.md");
     for (const r of COMPOUND.museRepairs) {
       const p = readPassport(r.passport);
       expect(p.recomputedSha256, r.passport).toBe(p.sha256);
       expect(p.status, r.passport).toBe("VERIFIED");
       expect(p.task).toBe(COMPOUND.task);
-      expect(f3).toContain(`| ${r.run} | VERIFIED | VERIFIED | 8 of 8 |`);
-      expect(f3).toContain(`\`${p.sha256.slice(0, 16)}\``);
+      expect(f4).toContain(`| ${r.run} | VERIFIED | VERIFIED | 8 of 8 |`);
+      expect(f4).toContain(`\`${p.sha256.slice(0, 16)}\``);
       const sol = readExact(r.passport).solution.files["final.lean"];
       expect(fileSha256(r.candidate), r.candidate).toBe(sol);
       expect(readExact(r.summary).model).toBe("muse-spark-1.3-contributor");
@@ -403,7 +403,7 @@ describe("Compound Proposal 62", () => {
       expect(p.task, ref.path).toBe(COMPOUND.task);
     }
     for (const ref of [C.port, C.fix]) expect(ref.reproduce).toBe(readPassport(ref.path).reproduce);
-    const f3 = flatText("results/frontier-3/README.md");
+    const f4 = flatText("results/frontier-4/README.md");
     const task = JSON.parse(text("realworld/tasks/rw-compound-comp/task.json")) as { requirements: [string, string][] };
     const leanName = new Map(task.requirements);
     for (const [i, r] of C.repairs.entries()) {
@@ -411,11 +411,11 @@ describe("Compound Proposal 62", () => {
       expect(r.passport.path).toBe(m.passport);
       expect(r.passport.reproduce).toBe(`bin/proofforge verify ${m.passport} --candidate ${m.candidate}`);
       expect(r.usdList, m.summary).toBe((readExact(m.summary) as { meter: { usd_list: number } }).meter.usd_list);
-      expect(f3).toContain(`| ${r.run} | VERIFIED | VERIFIED | 8 of 8 | $${r.usdList.toFixed(2)} |`);
+      expect(f4).toContain(`| ${r.run} | VERIFIED | VERIFIED | 8 of 8 | $${r.usdList.toFixed(2)} |`);
       for (const b of C.bounds) expect(r.passport.requirements[b], `${r.run} ${b}`).toBe("VERIFIED");
     }
-    expect(f3).toContain(`at ${C.repairs.map((r) => `$${r.usdList.toFixed(2)}`).join(" and ")} list dollars`);
-    expect(f3).toContain(`both prove the three sequence bounds (${C.bounds.map((b) => `\`${leanName.get(b)}\``).join(", ")})`);
+    expect(f4).toContain(`Muse Code with ProofForge verified ${C.repairs.length} of 10 runs`);
+    expect(f4).toContain(`proves the three sequence bounds (${C.bounds.map((b) => `\`${leanName.get(b)}\``).join(", ")})`);
     expect(C.bounds.map((b) => leanName.get(b))).toEqual([...LIBRARY_COMPOUND.bounds]);
     const readme = flatText(COMPOUND.readme);
     expect(C.citations.map((s) => s.url)).toEqual([...COMPOUND.loss.sources]);

@@ -22,21 +22,24 @@ const text = html
 const has = (s: string) => expect(text, s).toContain(s.replace(/\s+/g, " "));
 
 describe("the home page below the hero, as served", () => {
-  it("leads every Compound passage with frontier-3 and states nothing it contradicts", () => {
-    const readme = readFileSync(path.join(ROOT, "results/frontier-3/README.md"), "utf8").replace(/\s+/g, " ");
-    expect(readme).toContain("Muse Code with ProofForge verified 2 of 10 runs; on its own it verified 0 of 10");
-    expect(readme).toContain("2 of 10 with ProofForge against 0 of 20");
+  it("leads every Compound passage with frontier-4 and states nothing it contradicts", () => {
+    const readme = readFileSync(path.join(ROOT, "results/frontier-4/README.md"), "utf8").replace(/\s+/g, " ");
+    expect(readme).toContain("Muse Code with ProofForge verified 8 of 10 runs; on its own it verified 0 of 10");
+    expect(readme).toContain("0 of 30, against 8 of 10 with ProofForge");
+    const first = readFileSync(path.join(ROOT, "results/frontier-3/README.md"), "utf8").replace(/\s+/g, " ");
+    expect(first).toContain("Muse Code with ProofForge verified 2 of 10 runs; on its own it verified 0 of 10");
     has(
-      "On Compound, Muse Code (Muse Spark 1.3) with ProofForge verified 2 of 10 runs in frontier-3 (proofforge-full-5 and proofforge-full-9), the first verified repairs of this task in any measured run; on its own it verified 0 of 10, and 0 of 20 with the runs on its own of frontier-2 pooled.",
+      "On Compound, Muse Code (Muse Spark 1.3) with ProofForge verified 8 of 10 runs in frontier-4; on its own it verified 0 of 10, and 0 of 30 with the runs on its own of frontier-2 and frontier-3 pooled. The first verified repairs of this task in any measured run came in frontier-3, 2 of 10 runs with ProofForge.",
     );
-    has("Muse Code with ProofForge verified Compound in 2 of 10 runs");
+    has("Muse Code with ProofForge verified Compound in 8 of 10 runs");
     has("Before frontier-3, no run of any method had proved all 8 of Compound's requirements");
     for (const stale of ["On Compound nothing succeeds", "No Muse run has proved Compound", "no run of any method has proved all"]) {
       expect(text).not.toContain(stale);
     }
     // The table's Compound row leads with Muse Code.
+    has("8 of 10 Muse Code with ProofForge, frontier-4");
     has("2 of 10 Muse Code with ProofForge, frontier-3");
-    has("0 of 20 Muse Code on its own, frontier-2 and frontier-3");
+    has("0 of 30 Muse Code on its own, frontier-2 to frontier-4");
   });
 
   it("keeps the earlier Compound facts as history", () => {
@@ -94,8 +97,7 @@ describe("the home page below the hero, as served", () => {
     expect(panel).toContain("about $80 million at the time");
     expect(panel).toContain(COMPOUND.loss.basis);
     for (const s of COMPOUND.loss.sources) expect(panel).toContain(s);
-    expect(panel).toContain("b7aca6c04101c9fc");
-    expect(panel).toContain("4f7e8adfccefae85");
+    for (const r of COMPOUND_CASE.repairs) expect(panel).toContain(r.passport.sha256.slice(0, 16));
     expect(panel).toContain(COMPOUND_CASE.port.sha256.slice(0, 12));
     expect(panel).toContain(COMPOUND_CASE.fix.sha256.slice(0, 12));
     expect([...panel.matchAll(/class="tr-step" data-verdict="([A-Z]+)" data-author="([a-z]+)"/g)].map((m) => `${m[1]} ${m[2]}`)).toEqual([
@@ -104,13 +106,13 @@ describe("the home page below the hero, as served", () => {
       "VERIFIED muse",
       "VERIFIED upstream",
     ]);
-    has("0 of 20 runs verified");
-    has("2 of 10 runs verified");
+    has("0 of 30 runs verified");
+    has("8 of 10 runs verified");
     // The README's code spans become <code>.
     has(COMPOUND.bug.replace(/`([^`]+)`/g, " $1 "));
     expect(panel).toContain("<code>&gt;=</code>");
     has(COMPOUND.vulnerable.finding);
-    has("Verified in 2 of 10 runs of frontier-3, at $6.70 and $7.41 at list prices");
+    has("Verified in 8 of 10 runs of frontier-4, at $3.13 to $8.67 at list prices per run");
     has("REQ-REWARDS-BOUNDED, REQ-ACCOUNT-BOUNDED and REQ-NO-BACKDATED-REWARDS");
     expect(panel).toContain(`${COMPOUND.realCode.sequences} sequences`);
     expect(panel).toContain("503 sequences");
