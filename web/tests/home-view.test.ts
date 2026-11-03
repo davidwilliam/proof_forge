@@ -3,7 +3,19 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { COMPARISON, aloneRuns, plannerRuns } from "../lib/contribution";
 import { FEATURED, FLAGSHIPS } from "../lib/flagships";
-import { COMPOUND_FRONTIER, caseTrail, compoundFrontier, compoundLead, countsOf, homeKpis, homeStrips, lossParts, matrixRows } from "../lib/home-view";
+import {
+  COMPOUND_FRONTIER,
+  caseTrail,
+  compoundFrontier,
+  compoundLead,
+  compoundTabLoss,
+  compoundTrail,
+  countsOf,
+  homeKpis,
+  homeStrips,
+  lossParts,
+  matrixRows,
+} from "../lib/home-view";
 import { HEADLINE_IDS, pValue } from "../lib/wins";
 import { WINS } from "../lib/wins-data";
 import { ROOT, readPassport } from "../scripts/lib/results.mjs";
@@ -117,6 +129,36 @@ describe("the incidents' verdict trails", () => {
     expect(knight.map((s) => s.verdict)).toEqual(["REFUTED", "UNRESOLVED", "UNRESOLVED", "UNRESOLVED", "VERIFIED"]);
     const knightFlagship = FLAGSHIPS.find((f) => f.key === "knight")!;
     expect(knight.slice(1, 4).map((s) => s.provedInSession)).toEqual(knightFlagship.unresolved.map((u) => u.proved));
+  });
+
+  it("trace Compound Proposal 62 from the refuted port to the verified runs and the fix", () => {
+    const trail = compoundTrail(WINS);
+    expect(trail.map((s) => s.key)).toEqual(["p62", "alone", "proofforge", "p64"]);
+    expect(trail.map((s) => s.verdict)).toEqual(["REFUTED", "UNRESOLVED", "VERIFIED", "VERIFIED"]);
+    expect(trail.map((s) => s.author)).toEqual(["upstream", "muse", "muse", "upstream"]);
+    for (const s of trail) {
+      expect(s.total, s.key).toBe(COMPARISON.find((r) => r.key === "compound")!.requirements);
+      expect(s.counts.refuted + s.counts.verified + s.counts.unresolved, s.key).toBe(s.total);
+      if (s.passport) expect(s.counts, s.key).toEqual(countsOf(readPassport(s.passport.path).requirements));
+    }
+    expect(trail[0]!.counts).toEqual({ refuted: 5, verified: 0, unresolved: 3 });
+    // results/frontier-3/README.md: 0 of 10 on its own, 0 of 20 with frontier-2 pooled, 2 of 10 with ProofForge
+    expect(trail[1]!.passport).toBeNull();
+    expect(trail[1]!.runs).toMatchObject({ verified: 0, runs: 20 });
+    expect(trail[2]!.runs).toMatchObject({ verified: 2, runs: 10 });
+    expect(trail[2]!.passports!.map((p) => p.label)).toEqual([...COMPOUND_FRONTIER.verifiedRuns]);
+    expect(trail[2]!.passports!.map((p) => p.passport.sha256.slice(0, 16))).toEqual(["b7aca6c04101c9fc", "4f7e8adfccefae85"]);
+  });
+
+  it("gives the Compound tab the dollar figure of the README's loss, with the words that bound it", () => {
+    expect(compoundTabLoss()).toEqual({ qualifier: "at worst about", figure: "$80 million" });
+    expect(() => compoundTabLoss("$80 million")).toThrow();
+  });
+
+  it("links the Compound row of the comparison to its case", () => {
+    const rows = matrixRows(WINS, FLAGSHIPS);
+    expect(rows.find((r) => r.key === "compound")!.href).toBe("#case-compound");
+    for (const r of rows) expect(r.href, r.key).toBe(`#case-${r.key}`);
   });
 
   it("splits a loss into its qualifier and figure without changing either", () => {

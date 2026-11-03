@@ -2,10 +2,11 @@
 // ledger (generated/wins.json), the Muse comparison of lib/contribution.ts, the flagships of
 // lib/flagships.ts and the library counts of generated/library.json. Nothing here is typed in by
 // hand except the names of the two verified frontier-3 runs, which tests/home-view.test.ts pins to
-// results/frontier-3/README.md along with every figure below.
+// results/frontier-3/README.md along with every figure below, and the few words that describe each
+// version of the Compound code in its case.
 
 import type { Kpi, Strip } from "@/components/FrontierViz";
-import { COMPARISON, aloneRuns, plannerRuns, type ComparisonRow, type Runs } from "@/lib/contribution";
+import { COMPARISON, COMPOUND, COMPOUND_CASE, aloneRuns, plannerRuns, type ComparisonRow, type Runs } from "@/lib/contribution";
 import { githubFile, type Flagship, type PassportRef, type Verdict } from "@/lib/flagships";
 import { HEADLINE_IDS, comparison, factor1, fmtInt, headlines, modelName, pValue, runsOf, usd, type Headline, type WinsData } from "@/lib/wins";
 
@@ -229,7 +230,7 @@ export function matrixRows(d: WinsData, flagships: readonly Flagship[], rows: re
       key: row.key,
       incident: row.incident,
       year: row.year,
-      href: f ? `#case-${f.key}` : null,
+      href: f || row.key === COMPOUND.key ? `#case-${row.key}` : null,
       loss: f ? `${f.loss.amount.charAt(0).toUpperCase()}${f.loss.amount.slice(1)} ${f.loss.short}` : "COMP rewards credited but never emitted",
       requirements: row.requirements,
       alone: isCompound ? [...museCodeGroups(d, "alone"), ...alone] : alone,
@@ -256,6 +257,12 @@ export interface TrailStep {
   provedInSession?: number;
   total: number;
   passport: PassportRef | null;
+  /** Who wrote the version: upstream code (ported by the build team) or a Muse model; unset for a vulnerable port of a flagship. */
+  author?: "upstream" | "muse";
+  /** For a step that stands for a set of runs rather than one version: how many of them were verified. */
+  runs?: { verified: number; runs: number; text: string };
+  /** For a step of several verified runs: each run's Passport, `passport` being the first. */
+  passports?: { label: string; passport: PassportRef }[];
 }
 
 export function countsOf(reqs: Record<string, string>) {
@@ -304,6 +311,74 @@ export function caseTrail(f: Flagship, rows: readonly ComparisonRow[] = COMPARIS
     passport: f.repair.passport,
   };
   return [vulnerable, ...earlier, repair];
+}
+
+/**
+ * Compound Proposal 62 as a case: the Proposal 62 port, Muse Code on its own and with ProofForge
+ * (frontier-2 and frontier-3, from the wins ledger), and the Proposal 64 fix, all against the same
+ * locked requirements.
+ */
+export function compoundTrail(d: WinsData): TrailStep[] {
+  const { f3, f2, pooled, model } = compoundFrontier(d);
+  const C = COMPOUND_CASE;
+  const total = Object.keys(C.fix.requirements).length;
+  const first = C.repairs[0];
+  return [
+    {
+      key: "p62",
+      title: COMPOUND.vulnerable.label,
+      detail: "the upgrade's reward code, ported to Lean by the build team",
+      verdict: "REFUTED",
+      counts: countsOf(C.port.requirements),
+      total,
+      passport: C.port,
+      author: "upstream",
+    },
+    {
+      key: "alone",
+      title: "Muse Code on its own",
+      detail: `${model} in Muse Code with Lean only, frontier-2 and frontier-3`,
+      verdict: "UNRESOLVED",
+      counts: { refuted: 0, verified: 0, unresolved: total },
+      total,
+      passport: null,
+      author: "muse",
+      runs: {
+        verified: pooled.alone.verified,
+        runs: pooled.alone.runs,
+        text: `${runsOf(f2.alone)} in frontier-2 and ${runsOf(f3.alone)} in frontier-3; no Passport VERIFIED.`,
+      },
+    },
+    {
+      key: "proofforge",
+      title: "Muse Code with ProofForge",
+      detail: `${model} in Muse Code with ProofForge, frontier-3`,
+      verdict: "VERIFIED",
+      counts: countsOf(first!.passport.requirements),
+      total,
+      passport: first!.passport,
+      author: "muse",
+      runs: { verified: f3.proofforge.verified, runs: f3.proofforge.runs, text: `Verified: ${C.repairs.map((r) => r.run).join(" and ")}.` },
+      passports: C.repairs.map((r) => ({ label: r.run, passport: r.passport })),
+    },
+    {
+      key: "p64",
+      title: "Proposal 64 fix",
+      detail: "the fix that shipped, ported to Lean by the build team",
+      verdict: "VERIFIED",
+      counts: countsOf(C.fix.requirements),
+      total,
+      passport: C.fix,
+      author: "upstream",
+    },
+  ];
+}
+
+/** The Compound loss for its tab: the dollar figure of COMPOUND.loss.amount, with the words that bound it. */
+export function compoundTabLoss(amount: string = COMPOUND.loss.amount): { qualifier: string; figure: string } {
+  const m = /^(at worst) .+?, (about) (\$\d+ (?:million|billion)) at the time$/.exec(amount);
+  if (!m) throw new Error(`unexpected Compound loss: ${amount}`);
+  return { qualifier: `${m[1]} ${m[2]}`, figure: m[3]! };
 }
 
 /** "about $223 million" as a qualifier and a figure, so the figure can be drawn large; the words are the README's. */
