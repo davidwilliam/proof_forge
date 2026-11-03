@@ -32,6 +32,9 @@ STANDARD = {
     # Open-weight Muse Spark Open on Baseten Model APIs; Baseten list price as published
     # on 2026-10-23. Confirm against the Baseten dashboard before a measured run.
     "meta-models/muse-spark-open-1026": (1.25, 0.15, 4.25),
+    # Muse Spark Open under its public Model APIs ID, served from the owner's account once the
+    # hackathon credit behind -1026 ran out; price from Baseten /v1/models on 2026-11-02 (fp4).
+    "meta-models/muse-spark-open": (1.25, 0.15, 4.25),
     # Muse Glimmer 30B self-hosted on Modal (infra/modal/glimmer_vllm.py): no list price, so
     # the GPU cost per token. Container price c = H100 $3.95/h + 4 cores x $0.0473/core/h
     # + 32 GiB x $0.008/GiB/h = $0.00122089/s (`modal billing rates`, 2026-10-30).
