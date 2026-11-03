@@ -35,10 +35,14 @@ export default function AboutPage() {
           <p className="lead">{SUMMARY}</p>
         </div>
         <aside className="ab-person" aria-labelledby="ab-person-name">
-          <span className="ab-person-mark" aria-hidden="true">
-            <img className="lockup-primary" src="/brand/proofforge-icon-primary.svg" alt="" width={56} height={56} />
-            <img className="lockup-reversed" src="/brand/proofforge-icon-reversed.svg" alt="" width={56} height={56} />
-          </span>
+          <img
+            className="ab-person-photo"
+            src="/about/david-william-silva-160.jpg"
+            srcSet="/about/david-william-silva-160.jpg 1x, /about/david-william-silva-320.jpg 2x"
+            alt={`Portrait of ${CREATOR.name}`}
+            width={88}
+            height={88}
+          />
           <h2 id="ab-person-name" className="ab-person-name">
             {CREATOR.name}
           </h2>
