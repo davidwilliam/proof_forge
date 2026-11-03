@@ -17,6 +17,9 @@ Development uses AI coding agents under the owner's direction and review.
 | elan | Lean toolchain installer |
 | Ubuntu 24.04 base image | Judge/dev container |
 | Meta Model API (Muse Spark, Muse Wonder) | Repair, proof and planning agents |
+| Muse Code 1.4.14 (Meta's coding agent) | Runs ProofForge as an MCP server with the ProofForge skill |
+| Baseten Model APIs (Muse Spark Open) | Serving of Meta's open-weight model |
+| Modal and vLLM (Muse Glimmer 30B) | Self-hosted serving of Muse Glimmer 30B |
 | FastAPI, Starlette, Pydantic, Uvicorn | API server |
 | Next.js, React | Web front end |
 | fast-check, Vitest | Property tests of the web glue code |
