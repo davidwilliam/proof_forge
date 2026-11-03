@@ -5,9 +5,10 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 APP=${1:-$(sed -n 's/^app = "\(.*\)"/\1/p' "$ROOT/infra/fly/fly.toml")}
+COMMIT=$(git -C "$ROOT" rev-parse HEAD)
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
-git -C "$ROOT" archive HEAD | tar -x -C "$STAGE"
+git -C "$ROOT" archive "$COMMIT" | tar -x -C "$STAGE"
 cp "$STAGE/infra/docker/Dockerfile.api.dockerignore" "$STAGE/.dockerignore"
 LEAN="registry.fly.io/$APP:lean-4.35.0"
 # The pinned Lean image, built on Fly's amd64 builder from infra/docker/Dockerfile.lean.
@@ -29,3 +30,4 @@ done
 case "$DIGEST" in sha256:*) ;; *) echo "no digest for $LABEL" >&2; exit 1 ;; esac
 fly deploy -a "$APP" -c "$STAGE/infra/fly/fly.toml" --image "registry.fly.io/$APP:$LABEL" \
   --env PF_IMAGE_ID="registry.fly.io/$APP@$DIGEST"
+"$ROOT/infra/github-deployment.sh" api "https://$APP.fly.dev" "$COMMIT"
