@@ -48,6 +48,17 @@ export default function AboutPage() {
           </p>
           <ul className="ab-person-links">
             <li>
+              <a href={CREATOR.website}>
+                <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                  <g fill="none" stroke="currentColor" strokeWidth="1.3">
+                    <circle cx="8" cy="8" r="6.5" />
+                    <path d="M1.5 8h13M8 1.5c-2.2 2.4-2.2 10.6 0 13M8 1.5c2.2 2.4 2.2 10.6 0 13" />
+                  </g>
+                </svg>
+                {CREATOR.websiteLabel}
+              </a>
+            </li>
+            <li>
               <a href={CREATOR.github}>
                 <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
                   <path

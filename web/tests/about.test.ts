@@ -27,6 +27,10 @@ describe("the contact address", () => {
     }
   });
 
+  it("sits beside the creator's website link on /about and /", () => {
+    for (const [p, html] of Object.entries(pages)) expect(html, p).toContain('href="https://www.davidwsilva.com/"');
+  });
+
   it("is in no source file or published text file of the site", () => {
     const files: string[] = [];
     const walk = (d: string) => {

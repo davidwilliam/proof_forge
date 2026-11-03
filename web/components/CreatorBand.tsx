@@ -7,6 +7,8 @@ export const CREATOR = {
   name: "David William Silva",
   github: "https://github.com/davidwilliam",
   githubUser: "davidwilliam",
+  website: "https://www.davidwsilva.com/",
+  websiteLabel: "davidwsilva.com",
 } as const;
 
 /** The credit line at the end of the home page: who built ProofForge, with what and when. */
@@ -21,6 +23,7 @@ export function CreatorBand() {
         ProofForge was built by <strong>{CREATOR.name}</strong> with Meta&apos;s Muse models during the {HACKATHON.event}.
       </p>
       <p className="creator-links">
+        <a href={CREATOR.website}>Website</a>
         <a href={CREATOR.github}>GitHub</a>
         <Email />
         <Link href="/about">About ProofForge</Link>
