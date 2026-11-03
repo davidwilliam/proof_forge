@@ -954,7 +954,7 @@ e2-all-1:
 | `results/frontier-4/README.md` | requirements per run 3.8 of 8 on its own | 3.8 | 3.8 | yes |
 | `results/frontier-4/README.md` | requirements per run 7.3 of 8 with ProofForge | 7.3 | 7.3 | yes |
 | `results/frontier-4/README.md` | pooled frontier-2, frontier-3 and frontier-4 on its own: 0 of 30 | 0 | 0 | yes |
-| `results/frontier-4/README.md` | pooled one-sided Fisher exact p = 5.9e-7 | 5.9e-07 | 5.851e-07 | yes |
+| `results/frontier-4/README.md` | pooled one-sided Fisher exact p = 0.00000059 | 5.9e-07 | 5.851e-07 | yes |
 | `results/hard-task-2/README.md` | with ProofForge verified 0 of 10 | 0 | 0 | yes |
 | `results/hard-task-2/README.md` | on its own verified 0 of 10 | 0 | 0 | yes |
 | `results/hard-task-2/README.md` | one-sided Fisher exact p = 1 | 1.0 | 1.0 | yes |

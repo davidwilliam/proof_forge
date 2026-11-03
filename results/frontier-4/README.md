@@ -17,7 +17,7 @@ Preregistered secondaries:
 - Against the ProofForge arm of `results/frontier-3` (2 of 10): 8 of 10, one-sided Fisher exact
   p = 0.012. This compares two versions of ProofForge run at different times.
 - The runs on its own of `frontier-2`, `frontier-3` and this experiment pooled: 0 of 30, against
-  8 of 10 with ProofForge, one-sided Fisher exact p = 5.9e-7.
+  8 of 10 with ProofForge, one-sided Fisher exact p = 0.00000059.
 
 | | On its own | With ProofForge |
 |---|---|---|

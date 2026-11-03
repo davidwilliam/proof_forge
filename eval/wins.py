@@ -897,7 +897,7 @@ def claims(L):
         claim(f4r, "requirements per run 3.8 of 8 on its own", 3.8, g(f4, "alone", "req_proved_mean"), 0.005)
         claim(f4r, "requirements per run 7.3 of 8 with ProofForge", 7.3, g(f4, "proofforge", "req_proved_mean"), 0.005)
         claim(f4r, "pooled frontier-2, frontier-3 and frontier-4 on its own: 0 of 30", 0, g("frontier-4+frontier-3+frontier-2/rw-compound-comp", "alone", "verified"))
-        claim(f4r, "pooled one-sided Fisher exact p = 5.9e-7", 5.9e-7, by["frontier-4+frontier-3+frontier-2/rw-compound-comp"]["test"]["p"], 5e-9)
+        claim(f4r, "pooled one-sided Fisher exact p = 0.00000059", 5.9e-7, by["frontier-4+frontier-3+frontier-2/rw-compound-comp"]["test"]["p"], 5e-9)
     if "hard-task-2/rw-kyber-swapstep" in by:
         h2r, h2 = "results/hard-task-2/README.md", "hard-task-2/rw-kyber-swapstep"
         claim(h2r, "with ProofForge verified 0 of 10", 0, g(h2, "proofforge", "verified"))
