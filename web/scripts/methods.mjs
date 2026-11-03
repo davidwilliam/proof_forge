@@ -18,20 +18,15 @@ const LEDGER = "results/wins/ledger.json";
 const AS_OF = "2026-11-02";
 /** Experiments without a README result yet, as of AS_OF. */
 const STATUS = {
-  "hard-task-2": {
+  "frontier-4": {
     status: "running",
     label: "Running",
-    note: "The 20 preregistered runs are in progress. Every run is reported in results/hard-task-2/README.md when they end.",
-  },
-  "frontier-4": {
-    status: "queued",
-    label: "Queued",
-    note: "Starts after results/hard-task-2 ends, as its preregistration states.",
+    note: "The 20 preregistered runs started on 2026-11-02 at 22:36, after results/hard-task-2 ended, as the preregistration states. Every run is reported in results/frontier-4/README.md when they end.",
   },
   "e1-test-open-2": {
-    status: "queued",
-    label: "Rerun queued",
-    note: "The 60 runs were scored. The 24 runs on twelve tasks that the model provider refused with HTTP 402 are rerun once, after results/hard-task-2 has ended and the account answers (Addenda 1 and 2).",
+    status: "running",
+    label: "Rerun running",
+    note: "The 60 runs were scored. The 24 runs on twelve tasks that the model provider refused with HTTP 402 are rerun once (Addenda 1 to 3), on meta-models/muse-spark-open from the owner's Baseten account, since 2026-11-02 at 22:36.",
   },
 };
 

@@ -69,7 +69,7 @@ describe("the /methods page data (generated/methods.json)", () => {
   it("states the known status of the experiments still without a result", () => {
     const by = new Map(METHODS.entries.map((e) => [e.id, e]));
     if (!existsSync(path.join(ROOT, "results/hard-task-2/README.md"))) expect(by.get("hard-task-2")!.status).toBe("running");
-    if (!existsSync(path.join(ROOT, "results/frontier-4/README.md"))) expect(by.get("frontier-4")!.status).toBe("queued");
+    if (!existsSync(path.join(ROOT, "results/frontier-4/README.md"))) expect(by.get("frontier-4")!.status).toBe("running");
   });
 
   it("leads each result with figures, p as a number, and no hedging or significance claims", () => {
