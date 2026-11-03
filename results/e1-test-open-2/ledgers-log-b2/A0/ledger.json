@@ -1,0 +1,205 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "ledgers-log-b2",
+ "spec_sha256": "871eec453fd0c9f30c0edf62fbda5d3fd187ca1b86cdc844834d632724c827ee",
+ "run_dir": "results/e1-test-open-2/ledgers-log-b2/A0",
+ "arm": "A0",
+ "loop": null,
+ "model": "meta-models/muse-spark-open-1026",
+ "created": "2026-11-01T18:22:44-0500",
+ "reconstructed": false,
+ "final": {
+  "text": "import EntryLog.Spec\nimport EntryLog.Lemmas\n\nnamespace EntryLog\n\ninstance instDecidableValidEntry (s : State) (e : Entry) : Decidable (ValidEntry s e) := by\n  unfold ValidEntry\n  infer_instance\n\ndef step : Impl := fun s e =>\n  match receiptOf s.log e.id with\n  | some n => (.ok n, s)\n  | none =>\n    if ValidEntry s e then\n      (.ok s.log.length,\n       { s with log := s.log ++ [e],\n                balance := fun a => if a = e.account then s.balance a + e.amount else s.balance a })\n    else (.rejected, s)\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s e hNotIn hValid\n  have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hNotIn\n  show (step s e).1 = .ok s.log.length\n  simp [step, hRec, hValid]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s e hNotIn hInvalid\n  have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hNotIn\n  show step s e = (.rejected, s)\n  simp [step, hRec, hInvalid]\n\ntheorem req_duplicate : DuplicateReturnsOriginal step := by\n  intro s e n hRec\n  show step s e = (.ok n, s)\n  simp [step, hRec]\n\ntheorem req_effects : Effects step := by\n  intro s e hNotIn hValid\n  have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hNotIn\n  show (step s e).2.accounts = s.accounts \u2227 (step s e).2.log = s.log ++ [e] \u2227 \u2200 a, (step s e).2.balance a = s.balance a + (if a = e.account then e.amount else 0)\n  simp only [step, hRec, hValid]\n  constructor\n  \u00b7 rfl\n  constructor\n  \u00b7 rfl\n  \u00b7 intro a\n    by_cases h : a = e.account\n    \u00b7 simp [h]\n    \u00b7 simp [h]\n\ntheorem req_append_only : AppendOnly step := by\n  intro s e\n  show \u2203 t, (step s e).2.log = s.log ++ t\n  by_cases hm : e.id \u2208 ids s.log\n  \u00b7 obtain \u27e8n, hn\u27e9 := receiptOf_isSome hm\n    exact \u27e8[], by simp [step, hn]\u27e9\n  \u00b7 have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hm\n    by_cases hv : ValidEntry s e\n    \u00b7 exact \u27e8[e], by simp [step, hRec, hv]\u27e9\n    \u00b7 exact \u27e8[], by simp [step, hRec, hv]\u27e9\n\nprivate theorem nodup_append_singleton {\u03b1 : Type} [DecidableEq \u03b1] (l : List \u03b1) (x : \u03b1) (hl : l.Nodup) (hx : x \u2209 l) : (l ++ [x]).Nodup := by\n  induction l with\n  | nil => simp\n  | cons hd tl ih =>\n    have hl1 : hd \u2209 tl := by\n      simp [List.nodup_cons] at hl\n      exact hl.1\n    have hl2 : tl.Nodup := by\n      simp [List.nodup_cons] at hl\n      exact hl.2\n    have hxTl : x \u2209 tl := fun h => hx (List.Mem.tail hd h)\n    have hne : hd \u2260 x := fun heq => hx (heq \u25b8 List.Mem.head tl)\n    have ih' := ih hl2 hxTl\n    rw [List.cons_append]\n    rw [List.nodup_cons]\n    constructor\n    \u00b7 intro hIn\n      rw [List.mem_append] at hIn\n      rcases hIn with hInTl | hInSing\n      \u00b7 exact hl1 hInTl\n      \u00b7 simp at hInSing\n        exact hne hInSing\n    \u00b7 exact ih'\n\ntheorem req_unique_ids : UniqueIds step := by\n  intro s e hNodup\n  show (ids (step s e).2.log).Nodup\n  by_cases hm : e.id \u2208 ids s.log\n  \u00b7 obtain \u27e8n, hn\u27e9 := receiptOf_isSome hm\n    simp [step, hn, hNodup]\n  \u00b7 have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hm\n    simp [step, hRec]\n    by_cases hv : ValidEntry s e\n    \u00b7 simp [hv, ids_append]\n      exact nodup_append_singleton (ids s.log) e.id hNodup hm\n    \u00b7 simp [hv, hNodup]\n\ntheorem req_nonnegative : NonNegative step := by\n  intro s e hNonNeg a ha\n  show 0 \u2264 (step s e).2.balance a\n  by_cases hm : e.id \u2208 ids s.log\n  \u00b7 obtain \u27e8n, hn\u27e9 := receiptOf_isSome hm\n    simp [step, hn] at ha \u22a2\n    exact hNonNeg a ha\n  \u00b7 have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hm\n    simp [step, hRec] at ha \u22a2\n    by_cases hv : ValidEntry s e\n    \u00b7 simp [hv] at ha \u22a2\n      by_cases heq : a = e.account\n      \u00b7 subst heq\n        simp\n        exact hv.2.2\n      \u00b7 simp [heq]\n        exact hNonNeg a ha\n    \u00b7 simp [hv] at ha \u22a2\n      exact hNonNeg a ha\n\ntheorem req_consistent : StaysConsistent step := by\n  intro s e hCons\n  show Consistent (step s e).2\n  intro a\n  show (step s e).2.balance a = logSum (step s e).2.log a\n  by_cases hm : e.id \u2208 ids s.log\n  \u00b7 obtain \u27e8n, hn\u27e9 := receiptOf_isSome hm\n    simp [step, hn]\n    exact hCons a\n  \u00b7 have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hm\n    simp [step, hRec]\n    by_cases hv : ValidEntry s e\n    \u00b7 simp [hv]\n      have hBal : s.balance a = logSum s.log a := hCons a\n      have hSum : logSum (s.log ++ [e]) a = logSum s.log a + (if e.account = a then e.amount else 0) := by\n        unfold logSum\n        rw [sumOver_append]\n        simp\n      rw [hSum, <- hBal]\n      by_cases heq : a = e.account\n      \u00b7 subst heq\n        simp\n      \u00b7 have hne : e.account \u2260 a := fun h => heq h.symm\n        simp [heq, hne]\n    \u00b7 simp [hv]\n      exact hCons a\n\nend EntryLog\n",
+  "sha256": "3ee55862aca2c3bab216ac39bce32c06a017fda895b5e00c19a4a675134ecbbf",
+  "proved_required": [
+   "req_append_only",
+   "req_consistent",
+   "req_duplicate",
+   "req_effects",
+   "req_invalid_noop",
+   "req_nonnegative",
+   "req_unique_ids",
+   "req_valid_succeeds"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_append_only",
+   "req_consistent",
+   "req_duplicate",
+   "req_effects",
+   "req_invalid_noop",
+   "req_nonnegative",
+   "req_unique_ids",
+   "req_valid_succeeds"
+  ],
+  "text": "import EntryLog.Spec\nimport EntryLog.Lemmas\n\nnamespace EntryLog\n\ninstance instDecidableValidEntry (s : State) (e : Entry) : Decidable (ValidEntry s e) := by\n  unfold ValidEntry\n  infer_instance\n\ndef step : Impl := fun s e =>\n  match receiptOf s.log e.id with\n  | some n => (.ok n, s)\n  | none =>\n    if ValidEntry s e then\n      (.ok s.log.length,\n       { s with log := s.log ++ [e],\n                balance := fun a => if a = e.account then s.balance a + e.amount else s.balance a })\n    else (.rejected, s)\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s e hNotIn hValid\n  have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hNotIn\n  show (step s e).1 = .ok s.log.length\n  simp [step, hRec, hValid]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s e hNotIn hInvalid\n  have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hNotIn\n  show step s e = (.rejected, s)\n  simp [step, hRec, hInvalid]\n\ntheorem req_duplicate : DuplicateReturnsOriginal step := by\n  intro s e n hRec\n  show step s e = (.ok n, s)\n  simp [step, hRec]\n\ntheorem req_effects : Effects step := by\n  intro s e hNotIn hValid\n  have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hNotIn\n  show (step s e).2.accounts = s.accounts \u2227 (step s e).2.log = s.log ++ [e] \u2227 \u2200 a, (step s e).2.balance a = s.balance a + (if a = e.account then e.amount else 0)\n  simp only [step, hRec, hValid]\n  constructor\n  \u00b7 rfl\n  constructor\n  \u00b7 rfl\n  \u00b7 intro a\n    by_cases h : a = e.account\n    \u00b7 simp [h]\n    \u00b7 simp [h]\n\ntheorem req_append_only : AppendOnly step := by\n  intro s e\n  show \u2203 t, (step s e).2.log = s.log ++ t\n  by_cases hm : e.id \u2208 ids s.log\n  \u00b7 obtain \u27e8n, hn\u27e9 := receiptOf_isSome hm\n    exact \u27e8[], by simp [step, hn]\u27e9\n  \u00b7 have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hm\n    by_cases hv : ValidEntry s e\n    \u00b7 exact \u27e8[e], by simp [step, hRec, hv]\u27e9\n    \u00b7 exact \u27e8[], by simp [step, hRec, hv]\u27e9\n\nprivate theorem nodup_append_singleton {\u03b1 : Type} [DecidableEq \u03b1] (l : List \u03b1) (x : \u03b1) (hl : l.Nodup) (hx : x \u2209 l) : (l ++ [x]).Nodup := by\n  induction l with\n  | nil => simp\n  | cons hd tl ih =>\n    have hl1 : hd \u2209 tl := by\n      simp [List.nodup_cons] at hl\n      exact hl.1\n    have hl2 : tl.Nodup := by\n      simp [List.nodup_cons] at hl\n      exact hl.2\n    have hxTl : x \u2209 tl := fun h => hx (List.Mem.tail hd h)\n    have hne : hd \u2260 x := fun heq => hx (heq \u25b8 List.Mem.head tl)\n    have ih' := ih hl2 hxTl\n    rw [List.cons_append]\n    rw [List.nodup_cons]\n    constructor\n    \u00b7 intro hIn\n      rw [List.mem_append] at hIn\n      rcases hIn with hInTl | hInSing\n      \u00b7 exact hl1 hInTl\n      \u00b7 simp at hInSing\n        exact hne hInSing\n    \u00b7 exact ih'\n\ntheorem req_unique_ids : UniqueIds step := by\n  intro s e hNodup\n  show (ids (step s e).2.log).Nodup\n  by_cases hm : e.id \u2208 ids s.log\n  \u00b7 obtain \u27e8n, hn\u27e9 := receiptOf_isSome hm\n    simp [step, hn, hNodup]\n  \u00b7 have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hm\n    simp [step, hRec]\n    by_cases hv : ValidEntry s e\n    \u00b7 simp [hv, ids_append]\n      exact nodup_append_singleton (ids s.log) e.id hNodup hm\n    \u00b7 simp [hv, hNodup]\n\ntheorem req_nonnegative : NonNegative step := by\n  intro s e hNonNeg a ha\n  show 0 \u2264 (step s e).2.balance a\n  by_cases hm : e.id \u2208 ids s.log\n  \u00b7 obtain \u27e8n, hn\u27e9 := receiptOf_isSome hm\n    simp [step, hn] at ha \u22a2\n    exact hNonNeg a ha\n  \u00b7 have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hm\n    simp [step, hRec] at ha \u22a2\n    by_cases hv : ValidEntry s e\n    \u00b7 simp [hv] at ha \u22a2\n      by_cases heq : a = e.account\n      \u00b7 subst heq\n        simp\n        exact hv.2.2\n      \u00b7 simp [heq]\n        exact hNonNeg a ha\n    \u00b7 simp [hv] at ha \u22a2\n      exact hNonNeg a ha\n\ntheorem req_consistent : StaysConsistent step := by\n  intro s e hCons\n  show Consistent (step s e).2\n  intro a\n  show (step s e).2.balance a = logSum (step s e).2.log a\n  by_cases hm : e.id \u2208 ids s.log\n  \u00b7 obtain \u27e8n, hn\u27e9 := receiptOf_isSome hm\n    simp [step, hn]\n    exact hCons a\n  \u00b7 have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hm\n    simp [step, hRec]\n    by_cases hv : ValidEntry s e\n    \u00b7 simp [hv]\n      have hBal : s.balance a = logSum s.log a := hCons a\n      have hSum : logSum (s.log ++ [e]) a = logSum s.log a + (if e.account = a then e.amount else 0) := by\n        unfold logSum\n        rw [sumOver_append]\n        simp\n      rw [hSum, <- hBal]\n      by_cases heq : a = e.account\n      \u00b7 subst heq\n        simp\n      \u00b7 have hne : e.account \u2260 a := fun h => heq h.symm\n        simp [heq, hne]\n    \u00b7 simp [hv]\n      exact hCons a\n\nend EntryLog\n"
+ },
+ "proved": [
+  {
+   "name": "req_consistent",
+   "kind": "theorem",
+   "text": "theorem req_consistent : StaysConsistent step := by\n  intro s e hCons\n  show Consistent (step s e).2\n  intro a\n  show (step s e).2.balance a = logSum (step s e).2.log a\n  by_cases hm : e.id \u2208 ids s.log\n  \u00b7 obtain \u27e8n, hn\u27e9 := receiptOf_isSome hm\n    simp [step, hn]\n    exact hCons a\n  \u00b7 have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hm\n    simp [step, hRec]\n    by_cases hv : ValidEntry s e\n    \u00b7 simp [hv]\n      have hBal : s.balance a = logSum s.log a := hCons a\n      have hSum : logSum (s.log ++ [e]) a = logSum s.log a + (if e.account = a then e.amount else 0) := by\n        unfold logSum\n        rw [sumOver_append]\n        simp\n      rw [hSum, <- hBal]\n      by_cases heq : a = e.account\n      \u00b7 subst heq\n        simp\n      \u00b7 have hne : e.account \u2260 a := fun h => heq h.symm\n        simp [heq, hne]\n    \u00b7 simp [hv]\n      exact hCons a",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_consistent : StaysConsistent step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-log-b2",
+   "spec_sha256": "871eec453fd0c9f30c0edf62fbda5d3fd187ca1b86cdc844834d632724c827ee"
+  },
+  {
+   "name": "req_nonnegative",
+   "kind": "theorem",
+   "text": "theorem req_nonnegative : NonNegative step := by\n  intro s e hNonNeg a ha\n  show 0 \u2264 (step s e).2.balance a\n  by_cases hm : e.id \u2208 ids s.log\n  \u00b7 obtain \u27e8n, hn\u27e9 := receiptOf_isSome hm\n    simp [step, hn] at ha \u22a2\n    exact hNonNeg a ha\n  \u00b7 have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hm\n    simp [step, hRec] at ha \u22a2\n    by_cases hv : ValidEntry s e\n    \u00b7 simp [hv] at ha \u22a2\n      by_cases heq : a = e.account\n      \u00b7 subst heq\n        simp\n        exact hv.2.2\n      \u00b7 simp [heq]\n        exact hNonNeg a ha\n    \u00b7 simp [hv] at ha \u22a2\n      exact hNonNeg a ha",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_nonnegative : NonNegative step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-log-b2",
+   "spec_sha256": "871eec453fd0c9f30c0edf62fbda5d3fd187ca1b86cdc844834d632724c827ee"
+  },
+  {
+   "name": "req_unique_ids",
+   "kind": "theorem",
+   "text": "theorem req_unique_ids : UniqueIds step := by\n  intro s e hNodup\n  show (ids (step s e).2.log).Nodup\n  by_cases hm : e.id \u2208 ids s.log\n  \u00b7 obtain \u27e8n, hn\u27e9 := receiptOf_isSome hm\n    simp [step, hn, hNodup]\n  \u00b7 have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hm\n    simp [step, hRec]\n    by_cases hv : ValidEntry s e\n    \u00b7 simp [hv, ids_append]\n      exact nodup_append_singleton (ids s.log) e.id hNodup hm\n    \u00b7 simp [hv, hNodup]",
+   "deps": [
+    "nodup_append_singleton",
+    "step"
+   ],
+   "statement": "theorem req_unique_ids : UniqueIds step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-log-b2",
+   "spec_sha256": "871eec453fd0c9f30c0edf62fbda5d3fd187ca1b86cdc844834d632724c827ee"
+  },
+  {
+   "name": "nodup_append_singleton",
+   "kind": "theorem",
+   "text": "private theorem nodup_append_singleton {\u03b1 : Type} [DecidableEq \u03b1] (l : List \u03b1) (x : \u03b1) (hl : l.Nodup) (hx : x \u2209 l) : (l ++ [x]).Nodup := by\n  induction l with\n  | nil => simp\n  | cons hd tl ih =>\n    have hl1 : hd \u2209 tl := by\n      simp [List.nodup_cons] at hl\n      exact hl.1\n    have hl2 : tl.Nodup := by\n      simp [List.nodup_cons] at hl\n      exact hl.2\n    have hxTl : x \u2209 tl := fun h => hx (List.Mem.tail hd h)\n    have hne : hd \u2260 x := fun heq => hx (heq \u25b8 List.Mem.head tl)\n    have ih' := ih hl2 hxTl\n    rw [List.cons_append]\n    rw [List.nodup_cons]\n    constructor\n    \u00b7 intro hIn\n      rw [List.mem_append] at hIn\n      rcases hIn with hInTl | hInSing\n      \u00b7 exact hl1 hInTl\n      \u00b7 simp at hInSing\n        exact hne hInSing\n    \u00b7 exact ih'",
+   "deps": [],
+   "statement": "private theorem nodup_append_singleton {\u03b1 : Type} [DecidableEq \u03b1] (l : List \u03b1) (x : \u03b1) (hl : l.Nodup) (hx : x \u2209 l) : (l ++ [x]).Nodup",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-log-b2",
+   "spec_sha256": "871eec453fd0c9f30c0edf62fbda5d3fd187ca1b86cdc844834d632724c827ee"
+  },
+  {
+   "name": "req_append_only",
+   "kind": "theorem",
+   "text": "theorem req_append_only : AppendOnly step := by\n  intro s e\n  show \u2203 t, (step s e).2.log = s.log ++ t\n  by_cases hm : e.id \u2208 ids s.log\n  \u00b7 obtain \u27e8n, hn\u27e9 := receiptOf_isSome hm\n    exact \u27e8[], by simp [step, hn]\u27e9\n  \u00b7 have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hm\n    by_cases hv : ValidEntry s e\n    \u00b7 exact \u27e8[e], by simp [step, hRec, hv]\u27e9\n    \u00b7 exact \u27e8[], by simp [step, hRec, hv]\u27e9",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_append_only : AppendOnly step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-log-b2",
+   "spec_sha256": "871eec453fd0c9f30c0edf62fbda5d3fd187ca1b86cdc844834d632724c827ee"
+  },
+  {
+   "name": "req_effects",
+   "kind": "theorem",
+   "text": "theorem req_effects : Effects step := by\n  intro s e hNotIn hValid\n  have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hNotIn\n  show (step s e).2.accounts = s.accounts \u2227 (step s e).2.log = s.log ++ [e] \u2227 \u2200 a, (step s e).2.balance a = s.balance a + (if a = e.account then e.amount else 0)\n  simp only [step, hRec, hValid]\n  constructor\n  \u00b7 rfl\n  constructor\n  \u00b7 rfl\n  \u00b7 intro a\n    by_cases h : a = e.account\n    \u00b7 simp [h]\n    \u00b7 simp [h]",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_effects : Effects step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-log-b2",
+   "spec_sha256": "871eec453fd0c9f30c0edf62fbda5d3fd187ca1b86cdc844834d632724c827ee"
+  },
+  {
+   "name": "req_duplicate",
+   "kind": "theorem",
+   "text": "theorem req_duplicate : DuplicateReturnsOriginal step := by\n  intro s e n hRec\n  show step s e = (.ok n, s)\n  simp [step, hRec]",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_duplicate : DuplicateReturnsOriginal step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-log-b2",
+   "spec_sha256": "871eec453fd0c9f30c0edf62fbda5d3fd187ca1b86cdc844834d632724c827ee"
+  },
+  {
+   "name": "req_invalid_noop",
+   "kind": "theorem",
+   "text": "theorem req_invalid_noop : InvalidNoop step := by\n  intro s e hNotIn hInvalid\n  have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hNotIn\n  show step s e = (.rejected, s)\n  simp [step, hRec, hInvalid]",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_invalid_noop : InvalidNoop step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-log-b2",
+   "spec_sha256": "871eec453fd0c9f30c0edf62fbda5d3fd187ca1b86cdc844834d632724c827ee"
+  },
+  {
+   "name": "req_valid_succeeds",
+   "kind": "theorem",
+   "text": "theorem req_valid_succeeds : ValidSucceeds step := by\n  intro s e hNotIn hValid\n  have hRec : receiptOf s.log e.id = none := receiptOf_eq_none hNotIn\n  show (step s e).1 = .ok s.log.length\n  simp [step, hRec, hValid]",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_valid_succeeds : ValidSucceeds step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-log-b2",
+   "spec_sha256": "871eec453fd0c9f30c0edf62fbda5d3fd187ca1b86cdc844834d632724c827ee"
+  },
+  {
+   "name": "step",
+   "kind": "def",
+   "text": "def step : Impl := fun s e =>\n  match receiptOf s.log e.id with\n  | some n => (.ok n, s)\n  | none =>\n    if ValidEntry s e then\n      (.ok s.log.length,\n       { s with log := s.log ++ [e],\n                balance := fun a => if a = e.account then s.balance a + e.amount else s.balance a })\n    else (.rejected, s)",
+   "deps": [],
+   "statement": "def step : Impl := fun s e =>\n  match receiptOf s.log e.id with\n  | some n => (.ok n, s)\n  | none =>\n    if ValidEntry s e then\n      (.ok s.log.length,\n       { s with log := s.log ++ [e],\n                balance := fun a => if a = e.account then s.balance a + e.amount else s.balance a })\n    else (.rejected, s)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "ledgers-log-b2",
+   "spec_sha256": "871eec453fd0c9f30c0edf62fbda5d3fd187ca1b86cdc844834d632724c827ee"
+  },
+  {
+   "name": "instDecidableValidEntry",
+   "kind": "instance",
+   "text": "instance instDecidableValidEntry (s : State) (e : Entry) : Decidable (ValidEntry s e) := by\n  unfold ValidEntry\n  infer_instance",
+   "deps": [],
+   "statement": "instance instDecidableValidEntry (s : State) (e : Entry) : Decidable (ValidEntry s e) := by\n  unfold ValidEntry\n  infer_instance",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-log-b2",
+   "spec_sha256": "871eec453fd0c9f30c0edf62fbda5d3fd187ca1b86cdc844834d632724c827ee"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [],
+ "budget": {
+  "usd_cap": 3.0,
+  "wall_cap_s": 3600.0,
+  "stop": null,
+  "usd_list": 0.0884,
+  "usd_actual": 0.0884,
+  "elapsed_s": 91.7,
+  "unknown_usage_calls": 0,
+  "lost_attempts": 0,
+  "input_bound_violations": 0,
+  "wall_overrun_s": 0.0,
+  "by_model": {
+   "meta-models/muse-spark-open-1026": {
+    "calls": 5,
+    "prompt": 38456,
+    "cached": 20096,
+    "completion": 14697,
+    "usd_list": 0.0884,
+    "usd_actual": 0.0884
+   }
+  }
+ },
+ "resumed_from": []
+}

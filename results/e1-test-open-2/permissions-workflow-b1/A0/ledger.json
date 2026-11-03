@@ -1,0 +1,273 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "permissions-workflow-b1",
+ "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52",
+ "run_dir": "results/e1-test-open-2/permissions-workflow-b1/A0",
+ "arm": "A0",
+ "loop": null,
+ "model": "meta-models/muse-spark-open-1026",
+ "created": "2026-11-01T20:32:15-0500",
+ "reconstructed": false,
+ "final": {
+  "text": "import Workflow.Spec\n\nnamespace Workflow\n\ninstance instDecidableValidRequest (s : State) (r : Request) : Decidable (ValidRequest s r) := by\n  unfold ValidRequest\n  infer_instance\n\ndef step : Impl := fun s r =>\n  if _h : ValidRequest s r then\n    (.ok, { docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r })\n  else\n    (.rejected, s)\n\nprivate theorem step_ok_iff (s : State) (r : Request) : (step s r).1 = .ok \u2194 ValidRequest s r := by\n  unfold step\n  split\n  \u00b7 next h => simp [h]\n  \u00b7 next h => simp [h]\n\nprivate theorem step_eq_ok_state (s : State) (r : Request) (h : ValidRequest s r) :\n    (step s r).2 = { docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r } := by\n  unfold step\n  simp [h]\n\nprivate theorem step_eq_rejected_state (s : State) (r : Request) (h : \u00ac ValidRequest s r) :\n    (step s r).2 = s := by\n  unfold step\n  simp [h]\n\nprivate theorem replay_append_single (l : List Entry) (e : Entry) (d : DocId) (st : Status) :\n    replay (l ++ [e]) d st = if e.doc = d then e.dst else replay l d st := by\n  induction l generalizing st with\n  | nil => simp [replay]\n  | cons hd tl ih => simp [replay, ih]\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s r h\n  exact (step_ok_iff s r).mpr h\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s r h\n  unfold step\n  simp [h]\n\ntheorem req_authorization : Authorized step := by\n  intro s r hOk\n  have hVR : ValidRequest s r := (step_ok_iff s r).mp hOk\n  exact \u27e8fun heq => hVR.2.2.1 heq, fun heq => hVR.2.2.2 heq\u27e9\n\ntheorem req_single_doc : SingleDoc step := by\n  intro s r hOk d hNe\n  have hVR : ValidRequest s r := (step_ok_iff s r).mp hOk\n  have hEq := step_eq_ok_state s r hVR\n  have hCond : \u00ac (r.kind = .move \u2227 d = r.doc) := fun h => hNe h.2\n  have hCond2 : \u00ac (r.kind = .edit \u2227 d = r.doc) := fun h => hNe h.2\n  constructor\n  \u00b7 have h1 : (step s r).2.status d = expectedStatus s r d := by rw [hEq]\n    rw [h1]\n    unfold expectedStatus\n    simp [hCond]\n  \u00b7 have h1 : (step s r).2.content d = expectedContent s r d := by rw [hEq]\n    rw [h1]\n    unfold expectedContent\n    simp [hCond2]\n\ntheorem req_published_immutable : PublishedImmutable step := by\n  intro s r d hPub\n  by_cases hVR : ValidRequest s r\n  \u00b7 have hEq := step_eq_ok_state s r hVR\n    have h1 : (step s r).2.content d = expectedContent s r d := by rw [hEq]\n    rw [h1]\n    unfold expectedContent\n    by_cases hCase : r.kind = .edit \u2227 d = r.doc\n    \u00b7 have hk : r.kind = .edit := hCase.1\n      have heqd : d = r.doc := hCase.2\n      subst heqd\n      have hEdit := hVR.2.2.2 hk\n      have hDraft : s.status r.doc = .draft := hEdit.2\n      rcases hPub with hP | hA\n      \u00b7 rw [hP] at hDraft; cases hDraft\n      \u00b7 rw [hA] at hDraft; cases hDraft\n    \u00b7 simp [hCase]\n  \u00b7 have hEq := step_eq_rejected_state s r hVR\n    rw [hEq]\n\ntheorem req_no_unpublish : NoUnpublish step := by\n  intro s r d\n  constructor\n  \u00b7 intro hPub\n    by_cases hVR : ValidRequest s r\n    \u00b7 have hEq : (step s r).2.status d = expectedStatus s r d := by\n        calc (step s r).2.status d = ({ docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r } : State).status d := by rw [\u2190 step_eq_ok_state s r hVR]\n          _ = expectedStatus s r d := rfl\n      rw [hEq]\n      unfold expectedStatus\n      by_cases hM : r.kind = .move \u2227 d = r.doc\n      \u00b7 have hM1 : r.kind = .move := hM.1\n        have hDEq : d = r.doc := hM.2\n        subst hDEq\n        have hAllowed : allowed (s.role r.actor) (s.status r.doc) r.dst = true := hVR.2.2.1 hM1\n        have hDstArch : r.dst = .archived := by\n          unfold allowed at hAllowed\n          cases hr : s.role r.actor <;> cases hs : s.status r.doc <;> cases hd : r.dst <;> simp_all\n        simp [hM, hDstArch]\n      \u00b7 simp [hM, hPub]\n    \u00b7 have hEq := step_eq_rejected_state s r hVR\n      rw [hEq]; left; exact hPub\n  \u00b7 intro hArch\n    by_cases hVR : ValidRequest s r\n    \u00b7 have hEq : (step s r).2.status d = expectedStatus s r d := by\n        calc (step s r).2.status d = ({ docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r } : State).status d := by rw [\u2190 step_eq_ok_state s r hVR]\n          _ = expectedStatus s r d := rfl\n      rw [hEq]\n      unfold expectedStatus\n      by_cases hM : r.kind = .move \u2227 d = r.doc\n      \u00b7 have hM1 : r.kind = .move := hM.1\n        have hDEq : d = r.doc := hM.2\n        subst hDEq\n        exfalso\n        have hAllowed : allowed (s.role r.actor) (s.status r.doc) r.dst = true := hVR.2.2.1 hM1\n        have hDocArch : s.status r.doc = .archived := hArch\n        unfold allowed at hAllowed\n        cases hr : s.role r.actor <;> cases hs : s.status r.doc <;> cases hd : r.dst <;> simp_all\n      \u00b7 simp [hM, hArch]\n    \u00b7 have hEq := step_eq_rejected_state s r hVR\n      rw [hEq]; exact hArch\n\ntheorem req_effects : Effects step := by\n  intro s r hOk\n  have hVR : ValidRequest s r := (step_ok_iff s r).mp hOk\n  have hEq := step_eq_ok_state s r hVR\n  rw [hEq]\n  exact \u27e8rfl, rfl, rfl, fun _ => rfl, fun _ => rfl, rfl\u27e9\n\ntheorem req_audit_append_only : AuditAppendOnly step := by\n  intro s r\n  by_cases hVR : ValidRequest s r\n  \u00b7 have hEq : (step s r).2.audit = expectedAudit s r := by\n      calc (step s r).2.audit = ({ docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r } : State).audit := by rw [\u2190 step_eq_ok_state s r hVR]\n        _ = expectedAudit s r := rfl\n    rw [hEq]\n    unfold expectedAudit\n    by_cases hM : r.kind = .move\n    \u00b7 simp [hM]\n    \u00b7 simp [hM]\n  \u00b7 have hEq := step_eq_rejected_state s r hVR\n    rw [hEq]\n    exact List.prefix_rfl\n\ntheorem req_audit_consistent : KeepsAuditConsistent step := by\n  intro s r hCons d hMem\n  by_cases hVR : ValidRequest s r\n  \u00b7 have hStepAll : (step s r).2 = { docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r } := step_eq_ok_state s r hVR\n    have hMemS : d \u2208 s.docs := by\n      have : d \u2208 (step s r).2.docs := hMem\n      rw [hStepAll] at this\n      simpa using this\n    have hReplayOrig : replay s.audit d .draft = s.status d := hCons d hMemS\n    have hAuditEq : (step s r).2.audit = expectedAudit s r := by rw [hStepAll]\n    have hStatusEq : (step s r).2.status d = expectedStatus s r d := by rw [hStepAll]\n    rw [hAuditEq, hStatusEq]\n    by_cases hKindMove : r.kind = .move\n    \u00b7 have hAuditExp : expectedAudit s r = s.audit ++ [\u27e8r.doc, r.actor, s.status r.doc, r.dst\u27e9] := by unfold expectedAudit; simp [hKindMove]\n      rw [hAuditExp, replay_append_single]\n      unfold expectedStatus\n      by_cases hDocEq : r.doc = d\n      \u00b7 have hCond : (r.kind = .move \u2227 d = r.doc) := \u27e8hKindMove, hDocEq.symm\u27e9\n        have hIf1 : (if r.kind = .move \u2227 d = r.doc then r.dst else s.status d) = r.dst := if_pos hCond\n        have hIf2 : (if (\u27e8r.doc, r.actor, s.status r.doc, r.dst\u27e9 : Entry).doc = d then r.dst else replay s.audit d .draft) = r.dst := if_pos hDocEq\n        rw [hIf1, hIf2]\n      \u00b7 have hCond : \u00ac (r.kind = .move \u2227 d = r.doc) := fun h => hDocEq h.2.symm\n        have hIf1 : (if r.kind = .move \u2227 d = r.doc then r.dst else s.status d) = s.status d := if_neg hCond\n        have hIf2 : (if (\u27e8r.doc, r.actor, s.status r.doc, r.dst\u27e9 : Entry).doc = d then r.dst else replay s.audit d .draft) = replay s.audit d .draft := if_neg hDocEq\n        rw [hIf1, hIf2, hReplayOrig]\n    \u00b7 have hAuditExp : expectedAudit s r = s.audit := by unfold expectedAudit; simp [hKindMove]\n      have hES : expectedStatus s r d = s.status d := by unfold expectedStatus; simp [hKindMove]\n      rw [hAuditExp, hES, hReplayOrig]\n  \u00b7 have hStep : (step s r).2 = s := step_eq_rejected_state s r hVR\n    rw [hStep] at hMem \u22a2\n    exact hCons d hMem\n\nend Workflow\n",
+  "sha256": "d3c19a05e0c29b6fe7420971b391c60cb6570b7cbaf91054a331113895c342a0",
+  "proved_required": [
+   "req_audit_append_only",
+   "req_audit_consistent",
+   "req_authorization",
+   "req_effects",
+   "req_invalid_noop",
+   "req_no_unpublish",
+   "req_published_immutable",
+   "req_single_doc",
+   "req_valid_succeeds"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_audit_append_only",
+   "req_audit_consistent",
+   "req_authorization",
+   "req_effects",
+   "req_invalid_noop",
+   "req_no_unpublish",
+   "req_published_immutable",
+   "req_single_doc",
+   "req_valid_succeeds"
+  ],
+  "text": "import Workflow.Spec\n\nnamespace Workflow\n\ninstance instDecidableValidRequest (s : State) (r : Request) : Decidable (ValidRequest s r) := by\n  unfold ValidRequest\n  infer_instance\n\ndef step : Impl := fun s r =>\n  if _h : ValidRequest s r then\n    (.ok, { docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r })\n  else\n    (.rejected, s)\n\nprivate theorem step_ok_iff (s : State) (r : Request) : (step s r).1 = .ok \u2194 ValidRequest s r := by\n  unfold step\n  split\n  \u00b7 next h => simp [h]\n  \u00b7 next h => simp [h]\n\nprivate theorem step_eq_ok_state (s : State) (r : Request) (h : ValidRequest s r) :\n    (step s r).2 = { docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r } := by\n  unfold step\n  simp [h]\n\nprivate theorem step_eq_rejected_state (s : State) (r : Request) (h : \u00ac ValidRequest s r) :\n    (step s r).2 = s := by\n  unfold step\n  simp [h]\n\nprivate theorem replay_append_single (l : List Entry) (e : Entry) (d : DocId) (st : Status) :\n    replay (l ++ [e]) d st = if e.doc = d then e.dst else replay l d st := by\n  induction l generalizing st with\n  | nil => simp [replay]\n  | cons hd tl ih => simp [replay, ih]\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s r h\n  exact (step_ok_iff s r).mpr h\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s r h\n  unfold step\n  simp [h]\n\ntheorem req_authorization : Authorized step := by\n  intro s r hOk\n  have hVR : ValidRequest s r := (step_ok_iff s r).mp hOk\n  exact \u27e8fun heq => hVR.2.2.1 heq, fun heq => hVR.2.2.2 heq\u27e9\n\ntheorem req_single_doc : SingleDoc step := by\n  intro s r hOk d hNe\n  have hVR : ValidRequest s r := (step_ok_iff s r).mp hOk\n  have hEq := step_eq_ok_state s r hVR\n  have hCond : \u00ac (r.kind = .move \u2227 d = r.doc) := fun h => hNe h.2\n  have hCond2 : \u00ac (r.kind = .edit \u2227 d = r.doc) := fun h => hNe h.2\n  constructor\n  \u00b7 have h1 : (step s r).2.status d = expectedStatus s r d := by rw [hEq]\n    rw [h1]\n    unfold expectedStatus\n    simp [hCond]\n  \u00b7 have h1 : (step s r).2.content d = expectedContent s r d := by rw [hEq]\n    rw [h1]\n    unfold expectedContent\n    simp [hCond2]\n\ntheorem req_published_immutable : PublishedImmutable step := by\n  intro s r d hPub\n  by_cases hVR : ValidRequest s r\n  \u00b7 have hEq := step_eq_ok_state s r hVR\n    have h1 : (step s r).2.content d = expectedContent s r d := by rw [hEq]\n    rw [h1]\n    unfold expectedContent\n    by_cases hCase : r.kind = .edit \u2227 d = r.doc\n    \u00b7 have hk : r.kind = .edit := hCase.1\n      have heqd : d = r.doc := hCase.2\n      subst heqd\n      have hEdit := hVR.2.2.2 hk\n      have hDraft : s.status r.doc = .draft := hEdit.2\n      rcases hPub with hP | hA\n      \u00b7 rw [hP] at hDraft; cases hDraft\n      \u00b7 rw [hA] at hDraft; cases hDraft\n    \u00b7 simp [hCase]\n  \u00b7 have hEq := step_eq_rejected_state s r hVR\n    rw [hEq]\n\ntheorem req_no_unpublish : NoUnpublish step := by\n  intro s r d\n  constructor\n  \u00b7 intro hPub\n    by_cases hVR : ValidRequest s r\n    \u00b7 have hEq : (step s r).2.status d = expectedStatus s r d := by\n        calc (step s r).2.status d = ({ docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r } : State).status d := by rw [\u2190 step_eq_ok_state s r hVR]\n          _ = expectedStatus s r d := rfl\n      rw [hEq]\n      unfold expectedStatus\n      by_cases hM : r.kind = .move \u2227 d = r.doc\n      \u00b7 have hM1 : r.kind = .move := hM.1\n        have hDEq : d = r.doc := hM.2\n        subst hDEq\n        have hAllowed : allowed (s.role r.actor) (s.status r.doc) r.dst = true := hVR.2.2.1 hM1\n        have hDstArch : r.dst = .archived := by\n          unfold allowed at hAllowed\n          cases hr : s.role r.actor <;> cases hs : s.status r.doc <;> cases hd : r.dst <;> simp_all\n        simp [hM, hDstArch]\n      \u00b7 simp [hM, hPub]\n    \u00b7 have hEq := step_eq_rejected_state s r hVR\n      rw [hEq]; left; exact hPub\n  \u00b7 intro hArch\n    by_cases hVR : ValidRequest s r\n    \u00b7 have hEq : (step s r).2.status d = expectedStatus s r d := by\n        calc (step s r).2.status d = ({ docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r } : State).status d := by rw [\u2190 step_eq_ok_state s r hVR]\n          _ = expectedStatus s r d := rfl\n      rw [hEq]\n      unfold expectedStatus\n      by_cases hM : r.kind = .move \u2227 d = r.doc\n      \u00b7 have hM1 : r.kind = .move := hM.1\n        have hDEq : d = r.doc := hM.2\n        subst hDEq\n        exfalso\n        have hAllowed : allowed (s.role r.actor) (s.status r.doc) r.dst = true := hVR.2.2.1 hM1\n        have hDocArch : s.status r.doc = .archived := hArch\n        unfold allowed at hAllowed\n        cases hr : s.role r.actor <;> cases hs : s.status r.doc <;> cases hd : r.dst <;> simp_all\n      \u00b7 simp [hM, hArch]\n    \u00b7 have hEq := step_eq_rejected_state s r hVR\n      rw [hEq]; exact hArch\n\ntheorem req_effects : Effects step := by\n  intro s r hOk\n  have hVR : ValidRequest s r := (step_ok_iff s r).mp hOk\n  have hEq := step_eq_ok_state s r hVR\n  rw [hEq]\n  exact \u27e8rfl, rfl, rfl, fun _ => rfl, fun _ => rfl, rfl\u27e9\n\ntheorem req_audit_append_only : AuditAppendOnly step := by\n  intro s r\n  by_cases hVR : ValidRequest s r\n  \u00b7 have hEq : (step s r).2.audit = expectedAudit s r := by\n      calc (step s r).2.audit = ({ docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r } : State).audit := by rw [\u2190 step_eq_ok_state s r hVR]\n        _ = expectedAudit s r := rfl\n    rw [hEq]\n    unfold expectedAudit\n    by_cases hM : r.kind = .move\n    \u00b7 simp [hM]\n    \u00b7 simp [hM]\n  \u00b7 have hEq := step_eq_rejected_state s r hVR\n    rw [hEq]\n    exact List.prefix_rfl\n\ntheorem req_audit_consistent : KeepsAuditConsistent step := by\n  intro s r hCons d hMem\n  by_cases hVR : ValidRequest s r\n  \u00b7 have hStepAll : (step s r).2 = { docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r } := step_eq_ok_state s r hVR\n    have hMemS : d \u2208 s.docs := by\n      have : d \u2208 (step s r).2.docs := hMem\n      rw [hStepAll] at this\n      simpa using this\n    have hReplayOrig : replay s.audit d .draft = s.status d := hCons d hMemS\n    have hAuditEq : (step s r).2.audit = expectedAudit s r := by rw [hStepAll]\n    have hStatusEq : (step s r).2.status d = expectedStatus s r d := by rw [hStepAll]\n    rw [hAuditEq, hStatusEq]\n    by_cases hKindMove : r.kind = .move\n    \u00b7 have hAuditExp : expectedAudit s r = s.audit ++ [\u27e8r.doc, r.actor, s.status r.doc, r.dst\u27e9] := by unfold expectedAudit; simp [hKindMove]\n      rw [hAuditExp, replay_append_single]\n      unfold expectedStatus\n      by_cases hDocEq : r.doc = d\n      \u00b7 have hCond : (r.kind = .move \u2227 d = r.doc) := \u27e8hKindMove, hDocEq.symm\u27e9\n        have hIf1 : (if r.kind = .move \u2227 d = r.doc then r.dst else s.status d) = r.dst := if_pos hCond\n        have hIf2 : (if (\u27e8r.doc, r.actor, s.status r.doc, r.dst\u27e9 : Entry).doc = d then r.dst else replay s.audit d .draft) = r.dst := if_pos hDocEq\n        rw [hIf1, hIf2]\n      \u00b7 have hCond : \u00ac (r.kind = .move \u2227 d = r.doc) := fun h => hDocEq h.2.symm\n        have hIf1 : (if r.kind = .move \u2227 d = r.doc then r.dst else s.status d) = s.status d := if_neg hCond\n        have hIf2 : (if (\u27e8r.doc, r.actor, s.status r.doc, r.dst\u27e9 : Entry).doc = d then r.dst else replay s.audit d .draft) = replay s.audit d .draft := if_neg hDocEq\n        rw [hIf1, hIf2, hReplayOrig]\n    \u00b7 have hAuditExp : expectedAudit s r = s.audit := by unfold expectedAudit; simp [hKindMove]\n      have hES : expectedStatus s r d = s.status d := by unfold expectedStatus; simp [hKindMove]\n      rw [hAuditExp, hES, hReplayOrig]\n  \u00b7 have hStep : (step s r).2 = s := step_eq_rejected_state s r hVR\n    rw [hStep] at hMem \u22a2\n    exact hCons d hMem\n\nend Workflow\n"
+ },
+ "proved": [
+  {
+   "name": "req_audit_consistent",
+   "kind": "theorem",
+   "text": "theorem req_audit_consistent : KeepsAuditConsistent step := by\n  intro s r hCons d hMem\n  by_cases hVR : ValidRequest s r\n  \u00b7 have hStepAll : (step s r).2 = { docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r } := step_eq_ok_state s r hVR\n    have hMemS : d \u2208 s.docs := by\n      have : d \u2208 (step s r).2.docs := hMem\n      rw [hStepAll] at this\n      simpa using this\n    have hReplayOrig : replay s.audit d .draft = s.status d := hCons d hMemS\n    have hAuditEq : (step s r).2.audit = expectedAudit s r := by rw [hStepAll]\n    have hStatusEq : (step s r).2.status d = expectedStatus s r d := by rw [hStepAll]\n    rw [hAuditEq, hStatusEq]\n    by_cases hKindMove : r.kind = .move\n    \u00b7 have hAuditExp : expectedAudit s r = s.audit ++ [\u27e8r.doc, r.actor, s.status r.doc, r.dst\u27e9] := by unfold expectedAudit; simp [hKindMove]\n      rw [hAuditExp, replay_append_single]\n      unfold expectedStatus\n      by_cases hDocEq : r.doc = d\n      \u00b7 have hCond : (r.kind = .move \u2227 d = r.doc) := \u27e8hKindMove, hDocEq.symm\u27e9\n        have hIf1 : (if r.kind = .move \u2227 d = r.doc then r.dst else s.status d) = r.dst := if_pos hCond\n        have hIf2 : (if (\u27e8r.doc, r.actor, s.status r.doc, r.dst\u27e9 : Entry).doc = d then r.dst else replay s.audit d .draft) = r.dst := if_pos hDocEq\n        rw [hIf1, hIf2]\n      \u00b7 have hCond : \u00ac (r.kind = .move \u2227 d = r.doc) := fun h => hDocEq h.2.symm\n        have hIf1 : (if r.kind = .move \u2227 d = r.doc then r.dst else s.status d) = s.status d := if_neg hCond\n        have hIf2 : (if (\u27e8r.doc, r.actor, s.status r.doc, r.dst\u27e9 : Entry).doc = d then r.dst else replay s.audit d .draft) = replay s.audit d .draft := if_neg hDocEq\n        rw [hIf1, hIf2, hReplayOrig]\n    \u00b7 have hAuditExp : expectedAudit s r = s.audit := by unfold expectedAudit; simp [hKindMove]\n      have hES : expectedStatus s r d = s.status d := by unfold expectedStatus; simp [hKindMove]\n      rw [hAuditExp, hES, hReplayOrig]\n  \u00b7 have hStep : (step s r).2 = s := step_eq_rejected_state s r hVR\n    rw [hStep] at hMem \u22a2\n    exact hCons d hMem",
+   "deps": [
+    "replay_append_single",
+    "step",
+    "step_eq_ok_state",
+    "step_eq_rejected_state"
+   ],
+   "statement": "theorem req_audit_consistent : KeepsAuditConsistent step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b1",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_audit_append_only",
+   "kind": "theorem",
+   "text": "theorem req_audit_append_only : AuditAppendOnly step := by\n  intro s r\n  by_cases hVR : ValidRequest s r\n  \u00b7 have hEq : (step s r).2.audit = expectedAudit s r := by\n      calc (step s r).2.audit = ({ docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r } : State).audit := by rw [\u2190 step_eq_ok_state s r hVR]\n        _ = expectedAudit s r := rfl\n    rw [hEq]\n    unfold expectedAudit\n    by_cases hM : r.kind = .move\n    \u00b7 simp [hM]\n    \u00b7 simp [hM]\n  \u00b7 have hEq := step_eq_rejected_state s r hVR\n    rw [hEq]\n    exact List.prefix_rfl",
+   "deps": [
+    "step",
+    "step_eq_ok_state",
+    "step_eq_rejected_state"
+   ],
+   "statement": "theorem req_audit_append_only : AuditAppendOnly step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b1",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_effects",
+   "kind": "theorem",
+   "text": "theorem req_effects : Effects step := by\n  intro s r hOk\n  have hVR : ValidRequest s r := (step_ok_iff s r).mp hOk\n  have hEq := step_eq_ok_state s r hVR\n  rw [hEq]\n  exact \u27e8rfl, rfl, rfl, fun _ => rfl, fun _ => rfl, rfl\u27e9",
+   "deps": [
+    "step",
+    "step_eq_ok_state",
+    "step_ok_iff"
+   ],
+   "statement": "theorem req_effects : Effects step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b1",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_no_unpublish",
+   "kind": "theorem",
+   "text": "theorem req_no_unpublish : NoUnpublish step := by\n  intro s r d\n  constructor\n  \u00b7 intro hPub\n    by_cases hVR : ValidRequest s r\n    \u00b7 have hEq : (step s r).2.status d = expectedStatus s r d := by\n        calc (step s r).2.status d = ({ docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r } : State).status d := by rw [\u2190 step_eq_ok_state s r hVR]\n          _ = expectedStatus s r d := rfl\n      rw [hEq]\n      unfold expectedStatus\n      by_cases hM : r.kind = .move \u2227 d = r.doc\n      \u00b7 have hM1 : r.kind = .move := hM.1\n        have hDEq : d = r.doc := hM.2\n        subst hDEq\n        have hAllowed : allowed (s.role r.actor) (s.status r.doc) r.dst = true := hVR.2.2.1 hM1\n        have hDstArch : r.dst = .archived := by\n          unfold allowed at hAllowed\n          cases hr : s.role r.actor <;> cases hs : s.status r.doc <;> cases hd : r.dst <;> simp_all\n        simp [hM, hDstArch]\n      \u00b7 simp [hM, hPub]\n    \u00b7 have hEq := step_eq_rejected_state s r hVR\n      rw [hEq]; left; exact hPub\n  \u00b7 intro hArch\n    by_cases hVR : ValidRequest s r\n    \u00b7 have hEq : (step s r).2.status d = expectedStatus s r d := by\n        calc (step s r).2.status d = ({ docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r } : State).status d := by rw [\u2190 step_eq_ok_state s r hVR]\n          _ = expectedStatus s r d := rfl\n      rw [hEq]\n      unfold expectedStatus\n      by_cases hM : r.kind = .move \u2227 d = r.doc\n      \u00b7 have hM1 : r.kind = .move := hM.1\n        have hDEq : d = r.doc := hM.2\n        subst hDEq\n        exfalso\n        have hAllowed : allowed (s.role r.actor) (s.status r.doc) r.dst = true := hVR.2.2.1 hM1\n        have hDocArch : s.status r.doc = .archived := hArch\n        unfold allowed at hAllowed\n        cases hr : s.role r.actor <;> cases hs : s.status r.doc <;> cases hd : r.dst <;> simp_all\n      \u00b7 simp [hM, hArch]\n    \u00b7 have hEq := step_eq_rejected_state s r hVR\n      rw [hEq]; exact hArch",
+   "deps": [
+    "step",
+    "step_eq_ok_state",
+    "step_eq_rejected_state"
+   ],
+   "statement": "theorem req_no_unpublish : NoUnpublish step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b1",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_published_immutable",
+   "kind": "theorem",
+   "text": "theorem req_published_immutable : PublishedImmutable step := by\n  intro s r d hPub\n  by_cases hVR : ValidRequest s r\n  \u00b7 have hEq := step_eq_ok_state s r hVR\n    have h1 : (step s r).2.content d = expectedContent s r d := by rw [hEq]\n    rw [h1]\n    unfold expectedContent\n    by_cases hCase : r.kind = .edit \u2227 d = r.doc\n    \u00b7 have hk : r.kind = .edit := hCase.1\n      have heqd : d = r.doc := hCase.2\n      subst heqd\n      have hEdit := hVR.2.2.2 hk\n      have hDraft : s.status r.doc = .draft := hEdit.2\n      rcases hPub with hP | hA\n      \u00b7 rw [hP] at hDraft; cases hDraft\n      \u00b7 rw [hA] at hDraft; cases hDraft\n    \u00b7 simp [hCase]\n  \u00b7 have hEq := step_eq_rejected_state s r hVR\n    rw [hEq]",
+   "deps": [
+    "step",
+    "step_eq_ok_state",
+    "step_eq_rejected_state"
+   ],
+   "statement": "theorem req_published_immutable : PublishedImmutable step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b1",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_single_doc",
+   "kind": "theorem",
+   "text": "theorem req_single_doc : SingleDoc step := by\n  intro s r hOk d hNe\n  have hVR : ValidRequest s r := (step_ok_iff s r).mp hOk\n  have hEq := step_eq_ok_state s r hVR\n  have hCond : \u00ac (r.kind = .move \u2227 d = r.doc) := fun h => hNe h.2\n  have hCond2 : \u00ac (r.kind = .edit \u2227 d = r.doc) := fun h => hNe h.2\n  constructor\n  \u00b7 have h1 : (step s r).2.status d = expectedStatus s r d := by rw [hEq]\n    rw [h1]\n    unfold expectedStatus\n    simp [hCond]\n  \u00b7 have h1 : (step s r).2.content d = expectedContent s r d := by rw [hEq]\n    rw [h1]\n    unfold expectedContent\n    simp [hCond2]",
+   "deps": [
+    "step",
+    "step_eq_ok_state",
+    "step_ok_iff"
+   ],
+   "statement": "theorem req_single_doc : SingleDoc step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b1",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_authorization",
+   "kind": "theorem",
+   "text": "theorem req_authorization : Authorized step := by\n  intro s r hOk\n  have hVR : ValidRequest s r := (step_ok_iff s r).mp hOk\n  exact \u27e8fun heq => hVR.2.2.1 heq, fun heq => hVR.2.2.2 heq\u27e9",
+   "deps": [
+    "step",
+    "step_ok_iff"
+   ],
+   "statement": "theorem req_authorization : Authorized step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b1",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_invalid_noop",
+   "kind": "theorem",
+   "text": "theorem req_invalid_noop : InvalidNoop step := by\n  intro s r h\n  unfold step\n  simp [h]",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_invalid_noop : InvalidNoop step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b1",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_valid_succeeds",
+   "kind": "theorem",
+   "text": "theorem req_valid_succeeds : ValidSucceeds step := by\n  intro s r h\n  exact (step_ok_iff s r).mpr h",
+   "deps": [
+    "step",
+    "step_ok_iff"
+   ],
+   "statement": "theorem req_valid_succeeds : ValidSucceeds step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b1",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "replay_append_single",
+   "kind": "theorem",
+   "text": "private theorem replay_append_single (l : List Entry) (e : Entry) (d : DocId) (st : Status) :\n    replay (l ++ [e]) d st = if e.doc = d then e.dst else replay l d st := by\n  induction l generalizing st with\n  | nil => simp [replay]\n  | cons hd tl ih => simp [replay, ih]",
+   "deps": [],
+   "statement": "private theorem replay_append_single (l : List Entry) (e : Entry) (d : DocId) (st : Status) :\n    replay (l ++ [e]) d st = if e.doc = d then e.dst else replay l d st",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-workflow-b1",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "step_eq_rejected_state",
+   "kind": "theorem",
+   "text": "private theorem step_eq_rejected_state (s : State) (r : Request) (h : \u00ac ValidRequest s r) :\n    (step s r).2 = s := by\n  unfold step\n  simp [h]",
+   "deps": [
+    "step"
+   ],
+   "statement": "private theorem step_eq_rejected_state (s : State) (r : Request) (h : \u00ac ValidRequest s r) :\n    (step s r).2 = s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-workflow-b1",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "step_eq_ok_state",
+   "kind": "theorem",
+   "text": "private theorem step_eq_ok_state (s : State) (r : Request) (h : ValidRequest s r) :\n    (step s r).2 = { docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r } := by\n  unfold step\n  simp [h]",
+   "deps": [
+    "step"
+   ],
+   "statement": "private theorem step_eq_ok_state (s : State) (r : Request) (h : ValidRequest s r) :\n    (step s r).2 = { docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r }",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-workflow-b1",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "step_ok_iff",
+   "kind": "theorem",
+   "text": "private theorem step_ok_iff (s : State) (r : Request) : (step s r).1 = .ok \u2194 ValidRequest s r := by\n  unfold step\n  split\n  \u00b7 next h => simp [h]\n  \u00b7 next h => simp [h]",
+   "deps": [
+    "step"
+   ],
+   "statement": "private theorem step_ok_iff (s : State) (r : Request) : (step s r).1 = .ok \u2194 ValidRequest s r",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-workflow-b1",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "step",
+   "kind": "def",
+   "text": "def step : Impl := fun s r =>\n  if _h : ValidRequest s r then\n    (.ok, { docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r })\n  else\n    (.rejected, s)",
+   "deps": [],
+   "statement": "def step : Impl := fun s r =>\n  if _h : ValidRequest s r then\n    (.ok, { docs := s.docs, users := s.users, status := expectedStatus s r, content := expectedContent s r, role := s.role, audit := expectedAudit s r })\n  else\n    (.rejected, s)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "permissions-workflow-b1",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "instDecidableValidRequest",
+   "kind": "instance",
+   "text": "instance instDecidableValidRequest (s : State) (r : Request) : Decidable (ValidRequest s r) := by\n  unfold ValidRequest\n  infer_instance",
+   "deps": [],
+   "statement": "instance instDecidableValidRequest (s : State) (r : Request) : Decidable (ValidRequest s r) := by\n  unfold ValidRequest\n  infer_instance",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-workflow-b1",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [],
+ "budget": {
+  "usd_cap": 3.0,
+  "wall_cap_s": 3600.0,
+  "stop": null,
+  "usd_list": 0.2061,
+  "usd_actual": 0.2061,
+  "elapsed_s": 127.6,
+  "unknown_usage_calls": 0,
+  "lost_attempts": 0,
+  "input_bound_violations": 0,
+  "wall_overrun_s": 0.0,
+  "by_model": {
+   "meta-models/muse-spark-open-1026": {
+    "calls": 9,
+    "prompt": 99466,
+    "cached": 38784,
+    "completion": 29268,
+    "usd_list": 0.2061,
+    "usd_actual": 0.2061
+   }
+  }
+ },
+ "resumed_from": []
+}

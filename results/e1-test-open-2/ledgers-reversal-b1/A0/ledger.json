@@ -1,0 +1,482 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "ledgers-reversal-b1",
+ "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca",
+ "run_dir": "results/e1-test-open-2/ledgers-reversal-b1/A0",
+ "arm": "A0",
+ "loop": null,
+ "model": "meta-models/muse-spark-open-1026",
+ "created": "2026-11-01T18:43:44-0500",
+ "reconstructed": false,
+ "final": {
+  "text": "import Reversal.Spec\nimport Reversal.Lemmas\nnamespace Reversal\n\ninstance instDecidableValidPost (s : State) (e : Entry) : Decidable (ValidPost s e) := by\n  unfold ValidPost; infer_instance\n\ndef step : Impl := fun s c =>\n  match c with\n  | .post e =>\n    if ValidPost s e then\n      (.ok, { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a })\n    else (.rejected, s)\n  | .reverse i =>\n    match findEntry s.journal i with\n    | none => (.rejected, s)\n    | some e =>\n      if i \u2208 s.reversed then (.rejected, s)\n      else (.ok, { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf e.lines a })\n\ntheorem findEntry_none_of_not_mem (j : List Entry) (i : EntryId) (h : i \u2209 ids j) : findEntry j i = none := by\n  induction j with\n  | nil => rfl\n  | cons hd tl ih =>\n    simp only [findEntry]\n    have h1 : hd.id \u2260 i := by\n      intro heq\n      apply h\n      simp [ids, heq]\n    simp [h1]\n    apply ih\n    intro hm\n    apply h\n    simp [ids, hm]\n\ntheorem findEntry_isSome_of_mem (j : List Entry) (i : EntryId) (h : i \u2208 ids j) : (findEntry j i).isSome = true := by\n  induction j with\n  | nil => simp [ids] at h\n  | cons hd tl ih =>\n    simp only [findEntry]\n    by_cases heq : hd.id = i\n    \u00b7 simp [heq]\n    \u00b7 simp [heq]\n      exact ih (by simp [ids, heq] at h \u22a2; exact h)\n\ntheorem findEntry_mem_journal {j i e} (h : findEntry j i = some e) : e \u2208 j := by\n  induction j with\n  | nil => simp [findEntry] at h\n  | cons hd tl ih =>\n    simp only [findEntry] at h\n    by_cases heq : hd.id = i\n    \u00b7 simp [heq] at h\n      rw [h]\n      simp\n    \u00b7 simp [heq] at h\n      exact List.mem_cons_of_mem _ (ih h)\n\ntheorem findEntry_append_of_not_mem {j : List Entry} {e : Entry} (h : e.id \u2209 ids j) :\n    findEntry (j ++ [e]) e.id = some e := by\n  induction j with\n  | nil => simp [findEntry]\n  | cons hd tl ih =>\n    have h1 : hd.id \u2260 e.id := by intro heq; exact h (by simp [ids, heq])\n    have h2 : e.id \u2209 ids tl := by intro hm; exact h (by simp [ids, hm])\n    simp [findEntry, h1, ih h2]\n\ntheorem sumOver_zero (l : List AccountId) : sumOver l (fun _ : AccountId => (0:Int)) = 0 := by\n  induction l with\n  | nil => rfl\n  | cons a t ih => simp [sumOver_cons, ih]\n\ntheorem sumOver_accounts_netOf (accs : List AccountId) (ls : List Line)\n    (hnodup : accs.Nodup) (h : \u2200 l \u2208 ls, l.1 \u2208 accs) :\n    sumOver accs (fun a => netOf ls a) = lineSum ls := by\n  induction ls with\n  | nil =>\n    have hc : \u2200 a \u2208 accs, netOf ([] : List Line) a = 0 := by intro a _; rfl\n    calc sumOver accs (fun a => netOf [] a) = sumOver accs (fun _ => (0:Int)) := sumOver_congr accs _ _ hc\n      _ = 0 := sumOver_zero accs\n      _ = lineSum [] := by rfl\n  | cons hd tl ih =>\n    have hhd : hd.1 \u2208 accs := h hd (by simp)\n    have htl : \u2200 l \u2208 tl, l.1 \u2208 accs := fun l hl => h l (List.mem_cons_of_mem _ hl)\n    have ih' := ih htl\n    have h1 : \u2200 a \u2208 accs, netOf (hd :: tl) a = netOf tl a + if hd.1 = a then hd.2 else 0 := by\n      intro a _; simp [netOf, sumOver_cons]\n    have heq1 : sumOver accs (fun a => netOf (hd :: tl) a) = sumOver accs (fun a => netOf tl a + if hd.1 = a then hd.2 else 0) :=\n      sumOver_congr accs _ _ h1\n    rw [heq1, sumOver_add, ih']\n    have heq2 : (fun a : AccountId => if hd.1 = a then hd.2 else (0:Int)) = (fun a => if a = hd.1 then hd.2 else 0) := by\n      funext a\n      by_cases heq : hd.1 = a\n      \u00b7 rw [heq]; simp [heq]\n      \u00b7 have hne : \u00ac (a = hd.1) := fun hh => heq hh.symm\n        simp [heq, hne]\n    have hsingle : sumOver accs (fun a => if hd.1 = a then hd.2 else (0:Int)) = hd.2 := by\n      rw [heq2, sumOver_ite_eq hnodup _ _, if_pos hhd]\n    rw [hsingle]\n    simp [lineSum, sumOver_cons]\n\ntheorem total_add_netOf {s : State} {e : Entry}\n    (hwf : WellFormed s) (hvalid : ValidPost s e) :\n    sumOver s.accounts (fun a => s.balance a + netOf e.lines a) = total s := by\n  unfold total\n  rw [sumOver_add]\n  have hsum := sumOver_accounts_netOf s.accounts e.lines hwf.1 hvalid.2.1\n  rw [hsum, hvalid.2.2.2.1]\n  omega\n\ntheorem total_sub_netOf {s : State} {e : Entry}\n    (hwf : WellFormed s) (he : e \u2208 s.journal) :\n    sumOver s.accounts (fun a => s.balance a - netOf e.lines a) = total s := by\n  unfold total\n  rw [sumOver_sub]\n  have hsum := sumOver_accounts_netOf s.accounts e.lines hwf.1 (hwf.2.2.2 e he).1\n  rw [hsum, (hwf.2.2.2 e he).2]\n  omega\n\ntheorem activeNet_post {s : State} {e : Entry} {a : AccountId}\n    (h : e.id \u2209 s.reversed) :\n    activeNet { s with journal := s.journal ++ [e] } a = activeNet s a + netOf e.lines a := by\n  unfold activeNet\n  rw [sumOver_append]\n  simp [h]\n\ntheorem activeNet_rev {s : State} {e : Entry} {i : EntryId} {a : AccountId}\n    (hwf : WellFormed s) (hfind : findEntry s.journal i = some e) (hnotrev : i \u2209 s.reversed) :\n    sumOver s.journal (fun ent => if ent.id \u2208 i :: s.reversed then (0:Int) else netOf ent.lines a)\n      = activeNet s a - netOf e.lines a := by\n  unfold activeNet\n  have hnodup : (ids s.journal).Nodup := hwf.2.1\n  have key : \u2200 ent \u2208 s.journal, (if ent.id \u2208 i :: s.reversed then (0:Int) else netOf ent.lines a)\n        = (if ent.id \u2208 s.reversed then (0:Int) else netOf ent.lines a) - if ent.id = i then netOf ent.lines a else 0 := by\n    intro ent _\n    by_cases heq : ent.id = i\n    \u00b7 subst heq; simp [hnotrev]\n    \u00b7 by_cases hin : ent.id \u2208 s.reversed\n      \u00b7 simp [hin, heq]\n      \u00b7 simp [hin, heq]\n  rw [sumOver_congr s.journal _ _ key, sumOver_sub]\n  congr 1\n  induction s.journal with\n  | nil => simp [findEntry] at hfind\n  | cons hd tl ih =>\n    simp only [findEntry] at hfind\n    by_cases heq : hd.id = i\n    \u00b7 simp [heq] at hfind\n      rw [\u2190 hfind]\n      simp only [sumOver_cons, heq]\n      have htlZero : sumOver tl (fun ent => if ent.id = i then netOf ent.lines a else (0:Int)) = 0 := by\n        apply sumOver_congr\n        intro ent hmem\n        have hne : ent.id \u2260 i := by\n          intro heq2\n          have hdup : hd.id \u2208 ids tl := List.mem_map_of_mem (a:=ent) hmem rfl\n          have hnd : hd.id \u2209 ids tl := (List.nodup_cons.mp hnodup).1\n          rw [\u2190 heq2, \u2190 heq] at hdup\n          exact hnd hdup\n        simp [hne]\n      simp [htlZero]\n    \u00b7 simp [heq] at hfind\n      simp [heq]\n      have hnodupTl : (ids tl).Nodup := (List.nodup_cons.mp hnodup).2\n      exact ih hnodupTl hfind\n\ntheorem req_post_succeeds : PostSucceeds step := by\n  intro s e h\n  simp [step, h]\n\ntheorem req_reverse_succeeds : ReverseSucceeds step := by\n  intro s i h\n  have hfind : (findEntry s.journal i).isSome = true := findEntry_isSome_of_mem s.journal i h.1\n  cases hc : findEntry s.journal i with\n  | none => simp [hc] at hfind\n  | some _ => simp [step, hc, h.2]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s c hn\n  cases c with\n  | post e =>\n    simp [Valid] at hn\n    simp [step, hn]\n  | reverse i =>\n    simp [Valid, ValidReverse] at hn\n    by_cases hmem : i \u2208 ids s.journal\n    \u00b7 have hrev : i \u2208 s.reversed := hn hmem\n      have hfind : (findEntry s.journal i).isSome = true := findEntry_isSome_of_mem _ _ hmem\n      cases hc : findEntry s.journal i with\n      | none => simp [hc] at hfind\n      | some _ => simp [step, hc, hrev]\n    \u00b7 simp [step, findEntry_none_of_not_mem _ _ hmem]\n\ntheorem req_post_effects : PostEffects step := by\n  intro s e hok\n  have hvalid : ValidPost s e := by\n    by_cases hv : ValidPost s e\n    \u00b7 exact hv\n    \u00b7 simp [step, hv] at hok\n  simp [step, hvalid]\n\ntheorem req_reverse_effects : ReverseEffects step := by\n  intro s i e hok hfind\n  have hmem : i \u2209 s.reversed := by\n    by_cases hm : i \u2208 s.reversed\n    \u00b7 simp [step, hfind, hm] at hok\n    \u00b7 exact hm\n  simp [step, hfind, hmem]\n  exact \u27e8rfl, rfl, rfl, by intro x; simp, fun _ => rfl\u27e9\n\ntheorem req_reverse_once : ReverseOnce step := by\n  intro s i hok\n  cases hfe : findEntry s.journal i with\n  | none => simp [step, hfe] at hok\n  | some e =>\n    have hnr : i \u2209 s.reversed := by\n      intro hc\n      simp [step, hfe, hc] at hok\n    have hstep : step s (.reverse i) = (.ok, { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf e.lines a }) := by\n      simp [step, hfe, hnr]\n    have h2_eq : (step s (.reverse i)).2 = ({ s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf e.lines a } : State) := by\n      rw [hstep]\n    let s2 : State := { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf e.lines a }\n    have hfe2 : findEntry s2.journal i = some e := by\n      show findEntry s.journal i = some e\n      exact hfe\n    have hmem2 : i \u2208 s2.reversed := by\n      show i \u2208 i :: s.reversed\n      simp\n    have hsecond : step s2 (.reverse i) = (.rejected, s2) := by\n      simp [step, hfe2, hmem2]\n    calc step (step s (.reverse i)).2 (.reverse i)\n        = step s2 (.reverse i) := by rw [h2_eq]\n      _ = (.rejected, s2) := hsecond\n      _ = (.rejected, (step s (.reverse i)).2) := by rw [h2_eq]\n\ntheorem req_roundtrip : RoundTrip step := by\n  intro s e hok\n  have hvalid : ValidPost s e := by\n    by_cases hv : ValidPost s e\n    \u00b7 exact hv\n    \u00b7 simp [step, hv] at hok\n  have h1 : step s (.post e) = (.ok, { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a }) := by\n    simp [step, hvalid]\n  have h2 : (step s (.post e)).2 = ({ accounts := s.accounts, opening := s.opening, balance := fun a => s.balance a + netOf e.lines a, journal := s.journal ++ [e], reversed := s.reversed } : State) := by\n    simp [h1]\n  have hfind : findEntry (s.journal ++ [e]) e.id = some e := findEntry_append_of_not_mem hvalid.2.2.2.2.1\n  rw [h2]\n  constructor\n  \u00b7 simp [step, hfind, hvalid.2.2.2.2.2]\n  \u00b7 simp [step, hfind, hvalid.2.2.2.2.2]\n\ntheorem req_trial_balance : TrialBalance step := by\n  intro s c hwf hok\n  cases c with\n  | post e =>\n    have hvalid : ValidPost s e := by\n      by_cases hv : ValidPost s e\n      \u00b7 exact hv\n      \u00b7 simp [step, hv] at hok\n    have h1 : step s (.post e) = (.ok, { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a }) := by\n      simp [step, hvalid]\n    calc total (step s (.post e)).2\n        = total { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a } := by rw [h1]\n      _ = sumOver s.accounts (fun a => s.balance a + netOf e.lines a) := rfl\n      _ = total s := total_add_netOf hwf hvalid\n  | reverse i =>\n    cases hfe : findEntry s.journal i with\n    | none => simp [step, hfe] at hok\n    | some ee =>\n      by_cases hmem : i \u2208 s.reversed\n      \u00b7 simp [step, hfe, hmem] at hok\n      \u00b7 have hst : step s (.reverse i) = (.ok, { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf ee.lines a }) := by\n          simp [step, hfe, hmem]\n        have heMem : ee \u2208 s.journal := findEntry_mem_journal hfe\n        calc total (step s (.reverse i)).2\n            = total { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf ee.lines a } := by rw [hst]\n          _ = sumOver s.accounts (fun a => s.balance a - netOf ee.lines a) := rfl\n          _ = total s := total_sub_netOf hwf heMem\n\ntheorem req_well_formed : StaysWellFormed step := by\n  intro s c hwf\n  cases c with\n  | post e =>\n    by_cases hvalid : ValidPost s e\n    \u00b7 have h1 : step s (.post e) = (.ok, { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a }) := by\n        simp [step, hvalid]\n      have h_eq : (step s (.post e)).2 = { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a } := by\n        rw [h1]\n      rw [h_eq]\n      have hIdsEq : ids (s.journal ++ [e]) = ids s.journal ++ [e.id] := by simp [ids]\n      have hNodup : (ids (s.journal ++ [e])).Nodup := by\n        rw [hIdsEq, List.nodup_append]\n        refine \u27e8by simpa using hwf.2.1, by simp, ?_\u27e9\n        intro a ha1 ha2\n        simp at ha2\n        subst ha2\n        exact hvalid.2.2.2.2.1 ha1\n      have hSub : \u2200 i \u2208 s.reversed, i \u2208 ids (s.journal ++ [e]) := by\n        intro i hi\n        have hiOld := hwf.2.2.1 i hi\n        rw [hIdsEq]\n        exact List.mem_append_left _ hiOld\n      have hBal : \u2200 ee \u2208 s.journal ++ [e], (\u2200 l \u2208 ee.lines, l.1 \u2208 s.accounts) \u2227 lineSum ee.lines = 0 := by\n        intro ee hee\n        rw [List.mem_append] at hee\n        rcases hee with h1m | h2m\n        \u00b7 exact hwf.2.2.2 ee h1m\n        \u00b7 simp at h2m\n          subst h2m\n          exact \u27e8hvalid.2.1, hvalid.2.2.2.1\u27e9\n      exact \u27e8hwf.1, hNodup, hSub, hBal\u27e9\n    \u00b7 simp [step, hvalid]\n      exact hwf\n  | reverse i =>\n    cases hfe : findEntry s.journal i with\n    | none =>\n      simp [step, hfe]\n      exact hwf\n    | some ee =>\n      by_cases hmem : i \u2208 s.reversed\n      \u00b7 simp [step, hfe, hmem]\n        exact hwf\n      \u00b7 have hst : step s (.reverse i) = (.ok, { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf ee.lines a }) := by\n          simp [step, hfe, hmem]\n        rw [hst]\n        have hfindId : ee.id = i := by\n          induction s.journal with\n          | nil => simp [findEntry] at hfe\n          | cons hd tl ih =>\n            simp [findEntry] at hfe\n            by_cases heq : hd.id = i\n            \u00b7 simp [heq] at hfe\n              rw [\u2190 hfe] at heq\n              exact heq\n            \u00b7 simp [heq] at hfe\n              exact ih hfe\n        refine \u27e8hwf.1, hwf.2.1, ?_, hwf.2.2.2\u27e9\n        intro j hj\n        simp at hj\n        rcases hj with rfl | hj\n        \u00b7 have hm : ee \u2208 s.journal := findEntry_mem_journal hfe\n          have hmemIds : ee.id \u2208 ids s.journal := List.mem_map.mpr \u27e8ee, hm, rfl\u27e9\n          rw [hfindId] at hmemIds\n          exact hmemIds\n        \u00b7 exact hwf.2.2.1 j hj\n\ntheorem req_consistent : StaysConsistent step := by\n  intro s c hwf hcons\n  cases c with\n  | post e =>\n    by_cases hvalid : ValidPost s e\n    \u00b7 have h1 : step s (.post e) = (.ok, { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a }) := by\n        simp [step, hvalid]\n      rw [h1]\n      intro a\n      show s.balance a + netOf e.lines a = s.opening a + activeNet { s with journal := s.journal ++ [e] } a\n      rw [activeNet_post (a:=a) hvalid.2.2.2.2.2, hcons a]\n      omega\n    \u00b7 simp [step, hvalid]\n      exact hcons\n  | reverse i =>\n    cases hfe : findEntry s.journal i with\n    | none =>\n      simp [step, hfe]\n      exact hcons\n    | some ee =>\n      by_cases hmem : i \u2208 s.reversed\n      \u00b7 simp [step, hfe, hmem]\n        exact hcons\n      \u00b7 have hst : step s (.reverse i) = (.ok, { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf ee.lines a }) := by\n          simp [step, hfe, hmem]\n        rw [hst]\n        intro a\n        have hact := activeNet_rev (a:=a) hwf hfe hmem\n        show s.balance a - netOf ee.lines a = s.opening a + activeNet { s with reversed := i :: s.reversed } a\n        have : activeNet { s with reversed := i :: s.reversed } a = sumOver s.journal (fun ent => if ent.id \u2208 i :: s.reversed then (0:Int) else netOf ent.lines a) := rfl\n        rw [this, hact, hcons a]\n        omega\nend Reversal\n",
+  "sha256": "e84d73c1cf7fc25cac64c5e1e153bfa2ae6a5623f14955b590e08035a97f2110",
+  "proved_required": []
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [],
+  "text": "import Reversal.Spec\nimport Reversal.Lemmas\nnamespace Reversal\n\ninstance instDecidableValidPost (s : State) (e : Entry) : Decidable (ValidPost s e) := by\n  unfold ValidPost; infer_instance\n\ndef step : Impl := fun s c =>\n  match c with\n  | .post e =>\n    if ValidPost s e then\n      (.ok, { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a })\n    else (.rejected, s)\n  | .reverse i =>\n    match findEntry s.journal i with\n    | none => (.rejected, s)\n    | some e =>\n      if i \u2208 s.reversed then (.rejected, s)\n      else (.ok, { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf e.lines a })\n\ntheorem findEntry_none_of_not_mem (j : List Entry) (i : EntryId) (h : i \u2209 ids j) : findEntry j i = none := by\n  induction j with\n  | nil => rfl\n  | cons hd tl ih =>\n    simp only [findEntry]\n    have h1 : hd.id \u2260 i := by\n      intro heq\n      apply h\n      simp [ids, heq]\n    simp [h1]\n    apply ih\n    intro hm\n    apply h\n    simp [ids, hm]\n\ntheorem findEntry_isSome_of_mem (j : List Entry) (i : EntryId) (h : i \u2208 ids j) : (findEntry j i).isSome = true := by\n  induction j with\n  | nil => simp [ids] at h\n  | cons hd tl ih =>\n    simp only [findEntry]\n    by_cases heq : hd.id = i\n    \u00b7 simp [heq]\n    \u00b7 simp [heq]\n      exact ih (by simp [ids, heq] at h \u22a2; exact h)\n\ntheorem findEntry_mem_journal {j i e} (h : findEntry j i = some e) : e \u2208 j := by\n  induction j with\n  | nil => simp [findEntry] at h\n  | cons hd tl ih =>\n    simp only [findEntry] at h\n    by_cases heq : hd.id = i\n    \u00b7 simp [heq] at h\n      rw [h]\n      simp\n    \u00b7 simp [heq] at h\n      exact List.mem_cons_of_mem _ (ih h)\n\ntheorem findEntry_append_of_not_mem {j : List Entry} {e : Entry} (h : e.id \u2209 ids j) :\n    findEntry (j ++ [e]) e.id = some e := by\n  induction j with\n  | nil => simp [findEntry]\n  | cons hd tl ih =>\n    have h1 : hd.id \u2260 e.id := by intro heq; exact h (by simp [ids, heq])\n    have h2 : e.id \u2209 ids tl := by intro hm; exact h (by simp [ids, hm])\n    simp [findEntry, h1, ih h2]\n\ntheorem sumOver_zero (l : List AccountId) : sumOver l (fun _ : AccountId => (0:Int)) = 0 := by\n  induction l with\n  | nil => rfl\n  | cons a t ih => simp [sumOver_cons, ih]\n\ntheorem sumOver_accounts_netOf (accs : List AccountId) (ls : List Line)\n    (hnodup : accs.Nodup) (h : \u2200 l \u2208 ls, l.1 \u2208 accs) :\n    sumOver accs (fun a => netOf ls a) = lineSum ls := by\n  induction ls with\n  | nil =>\n    have hc : \u2200 a \u2208 accs, netOf ([] : List Line) a = 0 := by intro a _; rfl\n    calc sumOver accs (fun a => netOf [] a) = sumOver accs (fun _ => (0:Int)) := sumOver_congr accs _ _ hc\n      _ = 0 := sumOver_zero accs\n      _ = lineSum [] := by rfl\n  | cons hd tl ih =>\n    have hhd : hd.1 \u2208 accs := h hd (by simp)\n    have htl : \u2200 l \u2208 tl, l.1 \u2208 accs := fun l hl => h l (List.mem_cons_of_mem _ hl)\n    have ih' := ih htl\n    have h1 : \u2200 a \u2208 accs, netOf (hd :: tl) a = netOf tl a + if hd.1 = a then hd.2 else 0 := by\n      intro a _; simp [netOf, sumOver_cons]\n    have heq1 : sumOver accs (fun a => netOf (hd :: tl) a) = sumOver accs (fun a => netOf tl a + if hd.1 = a then hd.2 else 0) :=\n      sumOver_congr accs _ _ h1\n    rw [heq1, sumOver_add, ih']\n    have heq2 : (fun a : AccountId => if hd.1 = a then hd.2 else (0:Int)) = (fun a => if a = hd.1 then hd.2 else 0) := by\n      funext a\n      by_cases heq : hd.1 = a\n      \u00b7 rw [heq]; simp [heq]\n      \u00b7 have hne : \u00ac (a = hd.1) := fun hh => heq hh.symm\n        simp [heq, hne]\n    have hsingle : sumOver accs (fun a => if hd.1 = a then hd.2 else (0:Int)) = hd.2 := by\n      rw [heq2, sumOver_ite_eq hnodup _ _, if_pos hhd]\n    rw [hsingle]\n    simp [lineSum, sumOver_cons]\n\ntheorem total_add_netOf {s : State} {e : Entry}\n    (hwf : WellFormed s) (hvalid : ValidPost s e) :\n    sumOver s.accounts (fun a => s.balance a + netOf e.lines a) = total s := by\n  unfold total\n  rw [sumOver_add]\n  have hsum := sumOver_accounts_netOf s.accounts e.lines hwf.1 hvalid.2.1\n  rw [hsum, hvalid.2.2.2.1]\n  omega\n\ntheorem total_sub_netOf {s : State} {e : Entry}\n    (hwf : WellFormed s) (he : e \u2208 s.journal) :\n    sumOver s.accounts (fun a => s.balance a - netOf e.lines a) = total s := by\n  unfold total\n  rw [sumOver_sub]\n  have hsum := sumOver_accounts_netOf s.accounts e.lines hwf.1 (hwf.2.2.2 e he).1\n  rw [hsum, (hwf.2.2.2 e he).2]\n  omega\n\ntheorem activeNet_post {s : State} {e : Entry} {a : AccountId}\n    (h : e.id \u2209 s.reversed) :\n    activeNet { s with journal := s.journal ++ [e] } a = activeNet s a + netOf e.lines a := by\n  unfold activeNet\n  rw [sumOver_append]\n  simp [h]\n\ntheorem activeNet_rev {s : State} {e : Entry} {i : EntryId} {a : AccountId}\n    (hwf : WellFormed s) (hfind : findEntry s.journal i = some e) (hnotrev : i \u2209 s.reversed) :\n    sumOver s.journal (fun ent => if ent.id \u2208 i :: s.reversed then (0:Int) else netOf ent.lines a)\n      = activeNet s a - netOf e.lines a := by\n  unfold activeNet\n  have hnodup : (ids s.journal).Nodup := hwf.2.1\n  have key : \u2200 ent \u2208 s.journal, (if ent.id \u2208 i :: s.reversed then (0:Int) else netOf ent.lines a)\n        = (if ent.id \u2208 s.reversed then (0:Int) else netOf ent.lines a) - if ent.id = i then netOf ent.lines a else 0 := by\n    intro ent _\n    by_cases heq : ent.id = i\n    \u00b7 subst heq; simp [hnotrev]\n    \u00b7 by_cases hin : ent.id \u2208 s.reversed\n      \u00b7 simp [hin, heq]\n      \u00b7 simp [hin, heq]\n  rw [sumOver_congr s.journal _ _ key, sumOver_sub]\n  congr 1\n  induction s.journal with\n  | nil => simp [findEntry] at hfind\n  | cons hd tl ih =>\n    simp only [findEntry] at hfind\n    by_cases heq : hd.id = i\n    \u00b7 simp [heq] at hfind\n      rw [\u2190 hfind]\n      simp only [sumOver_cons, heq]\n      have htlZero : sumOver tl (fun ent => if ent.id = i then netOf ent.lines a else (0:Int)) = 0 := by\n        apply sumOver_congr\n        intro ent hmem\n        have hne : ent.id \u2260 i := by\n          intro heq2\n          have hdup : hd.id \u2208 ids tl := List.mem_map_of_mem (a:=ent) hmem rfl\n          have hnd : hd.id \u2209 ids tl := (List.nodup_cons.mp hnodup).1\n          rw [\u2190 heq2, \u2190 heq] at hdup\n          exact hnd hdup\n        simp [hne]\n      simp [htlZero]\n    \u00b7 simp [heq] at hfind\n      simp [heq]\n      have hnodupTl : (ids tl).Nodup := (List.nodup_cons.mp hnodup).2\n      exact ih hnodupTl hfind\n\ntheorem req_post_succeeds : PostSucceeds step := by\n  intro s e h\n  simp [step, h]\n\ntheorem req_reverse_succeeds : ReverseSucceeds step := by\n  intro s i h\n  have hfind : (findEntry s.journal i).isSome = true := findEntry_isSome_of_mem s.journal i h.1\n  cases hc : findEntry s.journal i with\n  | none => simp [hc] at hfind\n  | some _ => simp [step, hc, h.2]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s c hn\n  cases c with\n  | post e =>\n    simp [Valid] at hn\n    simp [step, hn]\n  | reverse i =>\n    simp [Valid, ValidReverse] at hn\n    by_cases hmem : i \u2208 ids s.journal\n    \u00b7 have hrev : i \u2208 s.reversed := hn hmem\n      have hfind : (findEntry s.journal i).isSome = true := findEntry_isSome_of_mem _ _ hmem\n      cases hc : findEntry s.journal i with\n      | none => simp [hc] at hfind\n      | some _ => simp [step, hc, hrev]\n    \u00b7 simp [step, findEntry_none_of_not_mem _ _ hmem]\n\ntheorem req_post_effects : PostEffects step := by\n  intro s e hok\n  have hvalid : ValidPost s e := by\n    by_cases hv : ValidPost s e\n    \u00b7 exact hv\n    \u00b7 simp [step, hv] at hok\n  simp [step, hvalid]\n\ntheorem req_reverse_effects : ReverseEffects step := by\n  intro s i e hok hfind\n  have hmem : i \u2209 s.reversed := by\n    by_cases hm : i \u2208 s.reversed\n    \u00b7 simp [step, hfind, hm] at hok\n    \u00b7 exact hm\n  simp [step, hfind, hmem]\n  exact \u27e8rfl, rfl, rfl, by intro x; simp, fun _ => rfl\u27e9\n\ntheorem req_reverse_once : ReverseOnce step := by\n  intro s i hok\n  cases hfe : findEntry s.journal i with\n  | none => simp [step, hfe] at hok\n  | some e =>\n    have hnr : i \u2209 s.reversed := by\n      intro hc\n      simp [step, hfe, hc] at hok\n    have hstep : step s (.reverse i) = (.ok, { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf e.lines a }) := by\n      simp [step, hfe, hnr]\n    have h2_eq : (step s (.reverse i)).2 = ({ s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf e.lines a } : State) := by\n      rw [hstep]\n    let s2 : State := { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf e.lines a }\n    have hfe2 : findEntry s2.journal i = some e := by\n      show findEntry s.journal i = some e\n      exact hfe\n    have hmem2 : i \u2208 s2.reversed := by\n      show i \u2208 i :: s.reversed\n      simp\n    have hsecond : step s2 (.reverse i) = (.rejected, s2) := by\n      simp [step, hfe2, hmem2]\n    calc step (step s (.reverse i)).2 (.reverse i)\n        = step s2 (.reverse i) := by rw [h2_eq]\n      _ = (.rejected, s2) := hsecond\n      _ = (.rejected, (step s (.reverse i)).2) := by rw [h2_eq]\n\ntheorem req_roundtrip : RoundTrip step := by\n  intro s e hok\n  have hvalid : ValidPost s e := by\n    by_cases hv : ValidPost s e\n    \u00b7 exact hv\n    \u00b7 simp [step, hv] at hok\n  have h1 : step s (.post e) = (.ok, { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a }) := by\n    simp [step, hvalid]\n  have h2 : (step s (.post e)).2 = ({ accounts := s.accounts, opening := s.opening, balance := fun a => s.balance a + netOf e.lines a, journal := s.journal ++ [e], reversed := s.reversed } : State) := by\n    simp [h1]\n  have hfind : findEntry (s.journal ++ [e]) e.id = some e := findEntry_append_of_not_mem hvalid.2.2.2.2.1\n  rw [h2]\n  constructor\n  \u00b7 simp [step, hfind, hvalid.2.2.2.2.2]\n  \u00b7 simp [step, hfind, hvalid.2.2.2.2.2]\n\ntheorem req_trial_balance : TrialBalance step := by\n  intro s c hwf hok\n  cases c with\n  | post e =>\n    have hvalid : ValidPost s e := by\n      by_cases hv : ValidPost s e\n      \u00b7 exact hv\n      \u00b7 simp [step, hv] at hok\n    have h1 : step s (.post e) = (.ok, { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a }) := by\n      simp [step, hvalid]\n    calc total (step s (.post e)).2\n        = total { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a } := by rw [h1]\n      _ = sumOver s.accounts (fun a => s.balance a + netOf e.lines a) := rfl\n      _ = total s := total_add_netOf hwf hvalid\n  | reverse i =>\n    cases hfe : findEntry s.journal i with\n    | none => simp [step, hfe] at hok\n    | some ee =>\n      by_cases hmem : i \u2208 s.reversed\n      \u00b7 simp [step, hfe, hmem] at hok\n      \u00b7 have hst : step s (.reverse i) = (.ok, { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf ee.lines a }) := by\n          simp [step, hfe, hmem]\n        have heMem : ee \u2208 s.journal := findEntry_mem_journal hfe\n        calc total (step s (.reverse i)).2\n            = total { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf ee.lines a } := by rw [hst]\n          _ = sumOver s.accounts (fun a => s.balance a - netOf ee.lines a) := rfl\n          _ = total s := total_sub_netOf hwf heMem\n\ntheorem req_well_formed : StaysWellFormed step := by\n  intro s c hwf\n  cases c with\n  | post e =>\n    by_cases hvalid : ValidPost s e\n    \u00b7 have h1 : step s (.post e) = (.ok, { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a }) := by\n        simp [step, hvalid]\n      have h_eq : (step s (.post e)).2 = { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a } := by\n        rw [h1]\n      rw [h_eq]\n      have hIdsEq : ids (s.journal ++ [e]) = ids s.journal ++ [e.id] := by simp [ids]\n      have hNodup : (ids (s.journal ++ [e])).Nodup := by\n        rw [hIdsEq, List.nodup_append]\n        refine \u27e8by simpa using hwf.2.1, by simp, ?_\u27e9\n        intro a ha1 ha2\n        simp at ha2\n        subst ha2\n        exact hvalid.2.2.2.2.1 ha1\n      have hSub : \u2200 i \u2208 s.reversed, i \u2208 ids (s.journal ++ [e]) := by\n        intro i hi\n        have hiOld := hwf.2.2.1 i hi\n        rw [hIdsEq]\n        exact List.mem_append_left _ hiOld\n      have hBal : \u2200 ee \u2208 s.journal ++ [e], (\u2200 l \u2208 ee.lines, l.1 \u2208 s.accounts) \u2227 lineSum ee.lines = 0 := by\n        intro ee hee\n        rw [List.mem_append] at hee\n        rcases hee with h1m | h2m\n        \u00b7 exact hwf.2.2.2 ee h1m\n        \u00b7 simp at h2m\n          subst h2m\n          exact \u27e8hvalid.2.1, hvalid.2.2.2.1\u27e9\n      exact \u27e8hwf.1, hNodup, hSub, hBal\u27e9\n    \u00b7 simp [step, hvalid]\n      exact hwf\n  | reverse i =>\n    cases hfe : findEntry s.journal i with\n    | none =>\n      simp [step, hfe]\n      exact hwf\n    | some ee =>\n      by_cases hmem : i \u2208 s.reversed\n      \u00b7 simp [step, hfe, hmem]\n        exact hwf\n      \u00b7 have hst : step s (.reverse i) = (.ok, { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf ee.lines a }) := by\n          simp [step, hfe, hmem]\n        rw [hst]\n        have hfindId : ee.id = i := by\n          induction s.journal with\n          | nil => simp [findEntry] at hfe\n          | cons hd tl ih =>\n            simp [findEntry] at hfe\n            by_cases heq : hd.id = i\n            \u00b7 simp [heq] at hfe\n              rw [\u2190 hfe] at heq\n              exact heq\n            \u00b7 simp [heq] at hfe\n              exact ih hfe\n        refine \u27e8hwf.1, hwf.2.1, ?_, hwf.2.2.2\u27e9\n        intro j hj\n        simp at hj\n        rcases hj with rfl | hj\n        \u00b7 have hm : ee \u2208 s.journal := findEntry_mem_journal hfe\n          have hmemIds : ee.id \u2208 ids s.journal := List.mem_map.mpr \u27e8ee, hm, rfl\u27e9\n          rw [hfindId] at hmemIds\n          exact hmemIds\n        \u00b7 exact hwf.2.2.1 j hj\n\ntheorem req_consistent : StaysConsistent step := by\n  intro s c hwf hcons\n  cases c with\n  | post e =>\n    by_cases hvalid : ValidPost s e\n    \u00b7 have h1 : step s (.post e) = (.ok, { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a }) := by\n        simp [step, hvalid]\n      rw [h1]\n      intro a\n      show s.balance a + netOf e.lines a = s.opening a + activeNet { s with journal := s.journal ++ [e] } a\n      rw [activeNet_post (a:=a) hvalid.2.2.2.2.2, hcons a]\n      omega\n    \u00b7 simp [step, hvalid]\n      exact hcons\n  | reverse i =>\n    cases hfe : findEntry s.journal i with\n    | none =>\n      simp [step, hfe]\n      exact hcons\n    | some ee =>\n      by_cases hmem : i \u2208 s.reversed\n      \u00b7 simp [step, hfe, hmem]\n        exact hcons\n      \u00b7 have hst : step s (.reverse i) = (.ok, { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf ee.lines a }) := by\n          simp [step, hfe, hmem]\n        rw [hst]\n        intro a\n        have hact := activeNet_rev (a:=a) hwf hfe hmem\n        show s.balance a - netOf ee.lines a = s.opening a + activeNet { s with reversed := i :: s.reversed } a\n        have : activeNet { s with reversed := i :: s.reversed } a = sumOver s.journal (fun ent => if ent.id \u2208 i :: s.reversed then (0:Int) else netOf ent.lines a) := rfl\n        rw [this, hact, hcons a]\n        omega\nend Reversal\n"
+ },
+ "proved": [
+  {
+   "name": "req_consistent",
+   "kind": "theorem",
+   "text": "theorem req_consistent : StaysConsistent step := by\n  intro s c hwf hcons\n  cases c with\n  | post e =>\n    by_cases hvalid : ValidPost s e\n    \u00b7 have h1 : step s (.post e) = (.ok, { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a }) := by\n        simp [step, hvalid]\n      rw [h1]\n      intro a\n      show s.balance a + netOf e.lines a = s.opening a + activeNet { s with journal := s.journal ++ [e] } a\n      rw [activeNet_post (a:=a) hvalid.2.2.2.2.2, hcons a]\n      omega\n    \u00b7 simp [step, hvalid]\n      exact hcons\n  | reverse i =>\n    cases hfe : findEntry s.journal i with\n    | none =>\n      simp [step, hfe]\n      exact hcons\n    | some ee =>\n      by_cases hmem : i \u2208 s.reversed\n      \u00b7 simp [step, hfe, hmem]\n        exact hcons\n      \u00b7 have hst : step s (.reverse i) = (.ok, { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf ee.lines a }) := by\n          simp [step, hfe, hmem]\n        rw [hst]\n        intro a\n        have hact := activeNet_rev (a:=a) hwf hfe hmem\n        show s.balance a - netOf ee.lines a = s.opening a + activeNet { s with reversed := i :: s.reversed } a\n        have : activeNet { s with reversed := i :: s.reversed } a = sumOver s.journal (fun ent => if ent.id \u2208 i :: s.reversed then (0:Int) else netOf ent.lines a) := rfl\n        rw [this, hact, hcons a]\n        omega",
+   "deps": [
+    "activeNet_post",
+    "activeNet_rev",
+    "step"
+   ],
+   "statement": "theorem req_consistent : StaysConsistent step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "req_well_formed",
+   "kind": "theorem",
+   "text": "theorem req_well_formed : StaysWellFormed step := by\n  intro s c hwf\n  cases c with\n  | post e =>\n    by_cases hvalid : ValidPost s e\n    \u00b7 have h1 : step s (.post e) = (.ok, { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a }) := by\n        simp [step, hvalid]\n      have h_eq : (step s (.post e)).2 = { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a } := by\n        rw [h1]\n      rw [h_eq]\n      have hIdsEq : ids (s.journal ++ [e]) = ids s.journal ++ [e.id] := by simp [ids]\n      have hNodup : (ids (s.journal ++ [e])).Nodup := by\n        rw [hIdsEq, List.nodup_append]\n        refine \u27e8by simpa using hwf.2.1, by simp, ?_\u27e9\n        intro a ha1 ha2\n        simp at ha2\n        subst ha2\n        exact hvalid.2.2.2.2.1 ha1\n      have hSub : \u2200 i \u2208 s.reversed, i \u2208 ids (s.journal ++ [e]) := by\n        intro i hi\n        have hiOld := hwf.2.2.1 i hi\n        rw [hIdsEq]\n        exact List.mem_append_left _ hiOld\n      have hBal : \u2200 ee \u2208 s.journal ++ [e], (\u2200 l \u2208 ee.lines, l.1 \u2208 s.accounts) \u2227 lineSum ee.lines = 0 := by\n        intro ee hee\n        rw [List.mem_append] at hee\n        rcases hee with h1m | h2m\n        \u00b7 exact hwf.2.2.2 ee h1m\n        \u00b7 simp at h2m\n          subst h2m\n          exact \u27e8hvalid.2.1, hvalid.2.2.2.1\u27e9\n      exact \u27e8hwf.1, hNodup, hSub, hBal\u27e9\n    \u00b7 simp [step, hvalid]\n      exact hwf\n  | reverse i =>\n    cases hfe : findEntry s.journal i with\n    | none =>\n      simp [step, hfe]\n      exact hwf\n    | some ee =>\n      by_cases hmem : i \u2208 s.reversed\n      \u00b7 simp [step, hfe, hmem]\n        exact hwf\n      \u00b7 have hst : step s (.reverse i) = (.ok, { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf ee.lines a }) := by\n          simp [step, hfe, hmem]\n        rw [hst]\n        have hfindId : ee.id = i := by\n          induction s.journal with\n          | nil => simp [findEntry] at hfe\n          | cons hd tl ih =>\n            simp [findEntry] at hfe\n            by_cases heq : hd.id = i\n            \u00b7 simp [heq] at hfe\n              rw [\u2190 hfe] at heq\n              exact heq\n            \u00b7 simp [heq] at hfe\n              exact ih hfe\n        refine \u27e8hwf.1, hwf.2.1, ?_, hwf.2.2.2\u27e9\n        intro j hj\n        simp at hj\n        rcases hj with rfl | hj\n        \u00b7 have hm : ee \u2208 s.journal := findEntry_mem_journal hfe\n          have hmemIds : ee.id \u2208 ids s.journal := List.mem_map.mpr \u27e8ee, hm, rfl\u27e9\n          rw [hfindId] at hmemIds\n          exact hmemIds\n        \u00b7 exact hwf.2.2.1 j hj",
+   "deps": [
+    "findEntry_mem_journal",
+    "step"
+   ],
+   "statement": "theorem req_well_formed : StaysWellFormed step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "req_trial_balance",
+   "kind": "theorem",
+   "text": "theorem req_trial_balance : TrialBalance step := by\n  intro s c hwf hok\n  cases c with\n  | post e =>\n    have hvalid : ValidPost s e := by\n      by_cases hv : ValidPost s e\n      \u00b7 exact hv\n      \u00b7 simp [step, hv] at hok\n    have h1 : step s (.post e) = (.ok, { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a }) := by\n      simp [step, hvalid]\n    calc total (step s (.post e)).2\n        = total { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a } := by rw [h1]\n      _ = sumOver s.accounts (fun a => s.balance a + netOf e.lines a) := rfl\n      _ = total s := total_add_netOf hwf hvalid\n  | reverse i =>\n    cases hfe : findEntry s.journal i with\n    | none => simp [step, hfe] at hok\n    | some ee =>\n      by_cases hmem : i \u2208 s.reversed\n      \u00b7 simp [step, hfe, hmem] at hok\n      \u00b7 have hst : step s (.reverse i) = (.ok, { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf ee.lines a }) := by\n          simp [step, hfe, hmem]\n        have heMem : ee \u2208 s.journal := findEntry_mem_journal hfe\n        calc total (step s (.reverse i)).2\n            = total { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf ee.lines a } := by rw [hst]\n          _ = sumOver s.accounts (fun a => s.balance a - netOf ee.lines a) := rfl\n          _ = total s := total_sub_netOf hwf heMem",
+   "deps": [
+    "findEntry_mem_journal",
+    "step",
+    "sumOver_accounts_netOf",
+    "sumOver_zero",
+    "total_add_netOf",
+    "total_sub_netOf"
+   ],
+   "statement": "theorem req_trial_balance : TrialBalance step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "req_roundtrip",
+   "kind": "theorem",
+   "text": "theorem req_roundtrip : RoundTrip step := by\n  intro s e hok\n  have hvalid : ValidPost s e := by\n    by_cases hv : ValidPost s e\n    \u00b7 exact hv\n    \u00b7 simp [step, hv] at hok\n  have h1 : step s (.post e) = (.ok, { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a }) := by\n    simp [step, hvalid]\n  have h2 : (step s (.post e)).2 = ({ accounts := s.accounts, opening := s.opening, balance := fun a => s.balance a + netOf e.lines a, journal := s.journal ++ [e], reversed := s.reversed } : State) := by\n    simp [h1]\n  have hfind : findEntry (s.journal ++ [e]) e.id = some e := findEntry_append_of_not_mem hvalid.2.2.2.2.1\n  rw [h2]\n  constructor\n  \u00b7 simp [step, hfind, hvalid.2.2.2.2.2]\n  \u00b7 simp [step, hfind, hvalid.2.2.2.2.2]",
+   "deps": [
+    "findEntry_append_of_not_mem",
+    "step"
+   ],
+   "statement": "theorem req_roundtrip : RoundTrip step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "req_reverse_once",
+   "kind": "theorem",
+   "text": "theorem req_reverse_once : ReverseOnce step := by\n  intro s i hok\n  cases hfe : findEntry s.journal i with\n  | none => simp [step, hfe] at hok\n  | some e =>\n    have hnr : i \u2209 s.reversed := by\n      intro hc\n      simp [step, hfe, hc] at hok\n    have hstep : step s (.reverse i) = (.ok, { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf e.lines a }) := by\n      simp [step, hfe, hnr]\n    have h2_eq : (step s (.reverse i)).2 = ({ s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf e.lines a } : State) := by\n      rw [hstep]\n    let s2 : State := { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf e.lines a }\n    have hfe2 : findEntry s2.journal i = some e := by\n      show findEntry s.journal i = some e\n      exact hfe\n    have hmem2 : i \u2208 s2.reversed := by\n      show i \u2208 i :: s.reversed\n      simp\n    have hsecond : step s2 (.reverse i) = (.rejected, s2) := by\n      simp [step, hfe2, hmem2]\n    calc step (step s (.reverse i)).2 (.reverse i)\n        = step s2 (.reverse i) := by rw [h2_eq]\n      _ = (.rejected, s2) := hsecond\n      _ = (.rejected, (step s (.reverse i)).2) := by rw [h2_eq]",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_reverse_once : ReverseOnce step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "req_reverse_effects",
+   "kind": "theorem",
+   "text": "theorem req_reverse_effects : ReverseEffects step := by\n  intro s i e hok hfind\n  have hmem : i \u2209 s.reversed := by\n    by_cases hm : i \u2208 s.reversed\n    \u00b7 simp [step, hfind, hm] at hok\n    \u00b7 exact hm\n  simp [step, hfind, hmem]\n  exact \u27e8rfl, rfl, rfl, by intro x; simp, fun _ => rfl\u27e9",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_reverse_effects : ReverseEffects step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "req_post_effects",
+   "kind": "theorem",
+   "text": "theorem req_post_effects : PostEffects step := by\n  intro s e hok\n  have hvalid : ValidPost s e := by\n    by_cases hv : ValidPost s e\n    \u00b7 exact hv\n    \u00b7 simp [step, hv] at hok\n  simp [step, hvalid]",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_post_effects : PostEffects step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "req_invalid_noop",
+   "kind": "theorem",
+   "text": "theorem req_invalid_noop : InvalidNoop step := by\n  intro s c hn\n  cases c with\n  | post e =>\n    simp [Valid] at hn\n    simp [step, hn]\n  | reverse i =>\n    simp [Valid, ValidReverse] at hn\n    by_cases hmem : i \u2208 ids s.journal\n    \u00b7 have hrev : i \u2208 s.reversed := hn hmem\n      have hfind : (findEntry s.journal i).isSome = true := findEntry_isSome_of_mem _ _ hmem\n      cases hc : findEntry s.journal i with\n      | none => simp [hc] at hfind\n      | some _ => simp [step, hc, hrev]\n    \u00b7 simp [step, findEntry_none_of_not_mem _ _ hmem]",
+   "deps": [
+    "findEntry_isSome_of_mem",
+    "findEntry_none_of_not_mem",
+    "step"
+   ],
+   "statement": "theorem req_invalid_noop : InvalidNoop step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "req_reverse_succeeds",
+   "kind": "theorem",
+   "text": "theorem req_reverse_succeeds : ReverseSucceeds step := by\n  intro s i h\n  have hfind : (findEntry s.journal i).isSome = true := findEntry_isSome_of_mem s.journal i h.1\n  cases hc : findEntry s.journal i with\n  | none => simp [hc] at hfind\n  | some _ => simp [step, hc, h.2]",
+   "deps": [
+    "findEntry_isSome_of_mem",
+    "step"
+   ],
+   "statement": "theorem req_reverse_succeeds : ReverseSucceeds step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "req_post_succeeds",
+   "kind": "theorem",
+   "text": "theorem req_post_succeeds : PostSucceeds step := by\n  intro s e h\n  simp [step, h]",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_post_succeeds : PostSucceeds step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "activeNet_rev",
+   "kind": "theorem",
+   "text": "theorem activeNet_rev {s : State} {e : Entry} {i : EntryId} {a : AccountId}\n    (hwf : WellFormed s) (hfind : findEntry s.journal i = some e) (hnotrev : i \u2209 s.reversed) :\n    sumOver s.journal (fun ent => if ent.id \u2208 i :: s.reversed then (0:Int) else netOf ent.lines a)\n      = activeNet s a - netOf e.lines a := by\n  unfold activeNet\n  have hnodup : (ids s.journal).Nodup := hwf.2.1\n  have key : \u2200 ent \u2208 s.journal, (if ent.id \u2208 i :: s.reversed then (0:Int) else netOf ent.lines a)\n        = (if ent.id \u2208 s.reversed then (0:Int) else netOf ent.lines a) - if ent.id = i then netOf ent.lines a else 0 := by\n    intro ent _\n    by_cases heq : ent.id = i\n    \u00b7 subst heq; simp [hnotrev]\n    \u00b7 by_cases hin : ent.id \u2208 s.reversed\n      \u00b7 simp [hin, heq]\n      \u00b7 simp [hin, heq]\n  rw [sumOver_congr s.journal _ _ key, sumOver_sub]\n  congr 1\n  induction s.journal with\n  | nil => simp [findEntry] at hfind\n  | cons hd tl ih =>\n    simp only [findEntry] at hfind\n    by_cases heq : hd.id = i\n    \u00b7 simp [heq] at hfind\n      rw [\u2190 hfind]\n      simp only [sumOver_cons, heq]\n      have htlZero : sumOver tl (fun ent => if ent.id = i then netOf ent.lines a else (0:Int)) = 0 := by\n        apply sumOver_congr\n        intro ent hmem\n        have hne : ent.id \u2260 i := by\n          intro heq2\n          have hdup : hd.id \u2208 ids tl := List.mem_map_of_mem (a:=ent) hmem rfl\n          have hnd : hd.id \u2209 ids tl := (List.nodup_cons.mp hnodup).1\n          rw [\u2190 heq2, \u2190 heq] at hdup\n          exact hnd hdup\n        simp [hne]\n      simp [htlZero]\n    \u00b7 simp [heq] at hfind\n      simp [heq]\n      have hnodupTl : (ids tl).Nodup := (List.nodup_cons.mp hnodup).2\n      exact ih hnodupTl hfind",
+   "deps": [],
+   "statement": "theorem activeNet_rev {s : State} {e : Entry} {i : EntryId} {a : AccountId}\n    (hwf : WellFormed s) (hfind : findEntry s.journal i = some e) (hnotrev : i \u2209 s.reversed) :\n    sumOver s.journal (fun ent => if ent.id \u2208 i :: s.reversed then (0:Int) else netOf ent.lines a)\n      = activeNet s a - netOf e.lines a",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "activeNet_post",
+   "kind": "theorem",
+   "text": "theorem activeNet_post {s : State} {e : Entry} {a : AccountId}\n    (h : e.id \u2209 s.reversed) :\n    activeNet { s with journal := s.journal ++ [e] } a = activeNet s a + netOf e.lines a := by\n  unfold activeNet\n  rw [sumOver_append]\n  simp [h]",
+   "deps": [],
+   "statement": "theorem activeNet_post {s : State} {e : Entry} {a : AccountId}\n    (h : e.id \u2209 s.reversed) :\n    activeNet { s with journal := s.journal ++ [e] } a = activeNet s a + netOf e.lines a",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "total_sub_netOf",
+   "kind": "theorem",
+   "text": "theorem total_sub_netOf {s : State} {e : Entry}\n    (hwf : WellFormed s) (he : e \u2208 s.journal) :\n    sumOver s.accounts (fun a => s.balance a - netOf e.lines a) = total s := by\n  unfold total\n  rw [sumOver_sub]\n  have hsum := sumOver_accounts_netOf s.accounts e.lines hwf.1 (hwf.2.2.2 e he).1\n  rw [hsum, (hwf.2.2.2 e he).2]\n  omega",
+   "deps": [
+    "sumOver_accounts_netOf",
+    "sumOver_zero"
+   ],
+   "statement": "theorem total_sub_netOf {s : State} {e : Entry}\n    (hwf : WellFormed s) (he : e \u2208 s.journal) :\n    sumOver s.accounts (fun a => s.balance a - netOf e.lines a) = total s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "total_add_netOf",
+   "kind": "theorem",
+   "text": "theorem total_add_netOf {s : State} {e : Entry}\n    (hwf : WellFormed s) (hvalid : ValidPost s e) :\n    sumOver s.accounts (fun a => s.balance a + netOf e.lines a) = total s := by\n  unfold total\n  rw [sumOver_add]\n  have hsum := sumOver_accounts_netOf s.accounts e.lines hwf.1 hvalid.2.1\n  rw [hsum, hvalid.2.2.2.1]\n  omega",
+   "deps": [
+    "sumOver_accounts_netOf",
+    "sumOver_zero"
+   ],
+   "statement": "theorem total_add_netOf {s : State} {e : Entry}\n    (hwf : WellFormed s) (hvalid : ValidPost s e) :\n    sumOver s.accounts (fun a => s.balance a + netOf e.lines a) = total s",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "sumOver_accounts_netOf",
+   "kind": "theorem",
+   "text": "theorem sumOver_accounts_netOf (accs : List AccountId) (ls : List Line)\n    (hnodup : accs.Nodup) (h : \u2200 l \u2208 ls, l.1 \u2208 accs) :\n    sumOver accs (fun a => netOf ls a) = lineSum ls := by\n  induction ls with\n  | nil =>\n    have hc : \u2200 a \u2208 accs, netOf ([] : List Line) a = 0 := by intro a _; rfl\n    calc sumOver accs (fun a => netOf [] a) = sumOver accs (fun _ => (0:Int)) := sumOver_congr accs _ _ hc\n      _ = 0 := sumOver_zero accs\n      _ = lineSum [] := by rfl\n  | cons hd tl ih =>\n    have hhd : hd.1 \u2208 accs := h hd (by simp)\n    have htl : \u2200 l \u2208 tl, l.1 \u2208 accs := fun l hl => h l (List.mem_cons_of_mem _ hl)\n    have ih' := ih htl\n    have h1 : \u2200 a \u2208 accs, netOf (hd :: tl) a = netOf tl a + if hd.1 = a then hd.2 else 0 := by\n      intro a _; simp [netOf, sumOver_cons]\n    have heq1 : sumOver accs (fun a => netOf (hd :: tl) a) = sumOver accs (fun a => netOf tl a + if hd.1 = a then hd.2 else 0) :=\n      sumOver_congr accs _ _ h1\n    rw [heq1, sumOver_add, ih']\n    have heq2 : (fun a : AccountId => if hd.1 = a then hd.2 else (0:Int)) = (fun a => if a = hd.1 then hd.2 else 0) := by\n      funext a\n      by_cases heq : hd.1 = a\n      \u00b7 rw [heq]; simp [heq]\n      \u00b7 have hne : \u00ac (a = hd.1) := fun hh => heq hh.symm\n        simp [heq, hne]\n    have hsingle : sumOver accs (fun a => if hd.1 = a then hd.2 else (0:Int)) = hd.2 := by\n      rw [heq2, sumOver_ite_eq hnodup _ _, if_pos hhd]\n    rw [hsingle]\n    simp [lineSum, sumOver_cons]",
+   "deps": [
+    "sumOver_zero"
+   ],
+   "statement": "theorem sumOver_accounts_netOf (accs : List AccountId) (ls : List Line)\n    (hnodup : accs.Nodup) (h : \u2200 l \u2208 ls, l.1 \u2208 accs) :\n    sumOver accs (fun a => netOf ls a) = lineSum ls",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "sumOver_zero",
+   "kind": "theorem",
+   "text": "theorem sumOver_zero (l : List AccountId) : sumOver l (fun _ : AccountId => (0:Int)) = 0 := by\n  induction l with\n  | nil => rfl\n  | cons a t ih => simp [sumOver_cons, ih]",
+   "deps": [],
+   "statement": "theorem sumOver_zero (l : List AccountId) : sumOver l (fun _ : AccountId => (0:Int)) = 0",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "findEntry_append_of_not_mem",
+   "kind": "theorem",
+   "text": "theorem findEntry_append_of_not_mem {j : List Entry} {e : Entry} (h : e.id \u2209 ids j) :\n    findEntry (j ++ [e]) e.id = some e := by\n  induction j with\n  | nil => simp [findEntry]\n  | cons hd tl ih =>\n    have h1 : hd.id \u2260 e.id := by intro heq; exact h (by simp [ids, heq])\n    have h2 : e.id \u2209 ids tl := by intro hm; exact h (by simp [ids, hm])\n    simp [findEntry, h1, ih h2]",
+   "deps": [],
+   "statement": "theorem findEntry_append_of_not_mem {j : List Entry} {e : Entry} (h : e.id \u2209 ids j) :\n    findEntry (j ++ [e]) e.id = some e",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "findEntry_mem_journal",
+   "kind": "theorem",
+   "text": "theorem findEntry_mem_journal {j i e} (h : findEntry j i = some e) : e \u2208 j := by\n  induction j with\n  | nil => simp [findEntry] at h\n  | cons hd tl ih =>\n    simp only [findEntry] at h\n    by_cases heq : hd.id = i\n    \u00b7 simp [heq] at h\n      rw [h]\n      simp\n    \u00b7 simp [heq] at h\n      exact List.mem_cons_of_mem _ (ih h)",
+   "deps": [],
+   "statement": "theorem findEntry_mem_journal {j i e} (h : findEntry j i = some e) : e \u2208 j",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "findEntry_isSome_of_mem",
+   "kind": "theorem",
+   "text": "theorem findEntry_isSome_of_mem (j : List Entry) (i : EntryId) (h : i \u2208 ids j) : (findEntry j i).isSome = true := by\n  induction j with\n  | nil => simp [ids] at h\n  | cons hd tl ih =>\n    simp only [findEntry]\n    by_cases heq : hd.id = i\n    \u00b7 simp [heq]\n    \u00b7 simp [heq]\n      exact ih (by simp [ids, heq] at h \u22a2; exact h)",
+   "deps": [],
+   "statement": "theorem findEntry_isSome_of_mem (j : List Entry) (i : EntryId) (h : i \u2208 ids j) : (findEntry j i).isSome = true",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "findEntry_none_of_not_mem",
+   "kind": "theorem",
+   "text": "theorem findEntry_none_of_not_mem (j : List Entry) (i : EntryId) (h : i \u2209 ids j) : findEntry j i = none := by\n  induction j with\n  | nil => rfl\n  | cons hd tl ih =>\n    simp only [findEntry]\n    have h1 : hd.id \u2260 i := by\n      intro heq\n      apply h\n      simp [ids, heq]\n    simp [h1]\n    apply ih\n    intro hm\n    apply h\n    simp [ids, hm]",
+   "deps": [],
+   "statement": "theorem findEntry_none_of_not_mem (j : List Entry) (i : EntryId) (h : i \u2209 ids j) : findEntry j i = none",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "step",
+   "kind": "def",
+   "text": "def step : Impl := fun s c =>\n  match c with\n  | .post e =>\n    if ValidPost s e then\n      (.ok, { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a })\n    else (.rejected, s)\n  | .reverse i =>\n    match findEntry s.journal i with\n    | none => (.rejected, s)\n    | some e =>\n      if i \u2208 s.reversed then (.rejected, s)\n      else (.ok, { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf e.lines a })",
+   "deps": [],
+   "statement": "def step : Impl := fun s c =>\n  match c with\n  | .post e =>\n    if ValidPost s e then\n      (.ok, { s with journal := s.journal ++ [e], balance := fun a => s.balance a + netOf e.lines a })\n    else (.rejected, s)\n  | .reverse i =>\n    match findEntry s.journal i with\n    | none => (.rejected, s)\n    | some e =>\n      if i \u2208 s.reversed then (.rejected, s)\n      else (.ok, { s with reversed := i :: s.reversed, balance := fun a => s.balance a - netOf e.lines a })",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  },
+  {
+   "name": "instDecidableValidPost",
+   "kind": "instance",
+   "text": "instance instDecidableValidPost (s : State) (e : Entry) : Decidable (ValidPost s e) := by\n  unfold ValidPost; infer_instance",
+   "deps": [],
+   "statement": "instance instDecidableValidPost (s : State) (e : Entry) : Decidable (ValidPost s e) := by\n  unfold ValidPost; infer_instance",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-reversal-b1",
+   "spec_sha256": "307ab4a11c8a5261459df3d2ff59ad30e502495121b2619e4a5519f17d5b57ca"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [
+  {
+   "name": "req_post_succeeds",
+   "required": true,
+   "statement": "theorem req_post_succeeds : PostSucceeds step",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 52,
+   "usd_list": 2.731,
+   "tried": [],
+   "last_lean": "snd else 0) =\n    (sumOver tl fun l => if l.fst = a then l.snd else 0) + if hd.fst = a then hd.snd else 0\nerror: candidate/Solution.lean:93:18: No goals to be solved\n\n  i\u0335f\u0335_\u0335p\u0335o\u0335s\u0335i\u0332t\u0332e\u0332_\u0332e\u0332q\u0332_\u0332l\u0332e\u0332f\u0332t\u0332\nerror: candidate/Solution.lean:81:18: unsolved goals\ncase cons\naccs : List AccountId\nhnodup : accs.Nodup\nhd : Line\ntl : List Line\nih : (\u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs) \u2192 (sumOver accs fun a => netOf tl a) = lineSum tl\nh : \u2200 (l : Line), l \u2208 hd :: tl \u2192 l.fst \u2208 accs\nhhd : hd.fst \u2208 accs\nhtl : \u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs\nih' : (sumOver accs fun a => netOf tl a) = lineSum tl\nh1 : \u2200 (a : AccountId), a \u2208 accs \u2192 netOf (hd :: tl) a = netOf tl a + if hd.fst = a then hd.snd else 0\nheq1 : (sumOver accs fun a => netOf (hd :: tl) a) = sumOver accs fun a => netOf tl a + if hd.fst = a then hd.snd else 0\nheq2 : (fun a => if hd.fst = a then hd.snd else 0) = fun a => if a = hd.fst then hd.snd else 0\nhsingle : (sumOver accs fun a => if hd.fst = a then hd.snd else 0) = hd.snd\n\u22a2 (sumOver tl fun x => x.snd) + hd.snd = hd.snd + sumOver tl fun x => x.snd\nerror: candidate/Solution.lean:143:11: `simp` made no progress\nerror: candidate/Solution.lean:145:4: `simp` made no progress\nerror: candidate/Solution.lean:208:2: No goals to be solved\nerror: candidate/Solution.lean:295:8: `simp` made no progress\nerror: candidate/Solution.lean:328:19: `simp` made no progress\nerror: candidate/Solution.lean:330:12: `simp` made no progress\nSome required targets logged failures:\n- Solution\nerror: build failed",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_reverse_succeeds",
+   "required": true,
+   "statement": "theorem req_reverse_succeeds : ReverseSucceeds step",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 52,
+   "usd_list": 2.731,
+   "tried": [],
+   "last_lean": "snd else 0) =\n    (sumOver tl fun l => if l.fst = a then l.snd else 0) + if hd.fst = a then hd.snd else 0\nerror: candidate/Solution.lean:93:18: No goals to be solved\n\n  i\u0335f\u0335_\u0335p\u0335o\u0335s\u0335i\u0332t\u0332e\u0332_\u0332e\u0332q\u0332_\u0332l\u0332e\u0332f\u0332t\u0332\nerror: candidate/Solution.lean:81:18: unsolved goals\ncase cons\naccs : List AccountId\nhnodup : accs.Nodup\nhd : Line\ntl : List Line\nih : (\u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs) \u2192 (sumOver accs fun a => netOf tl a) = lineSum tl\nh : \u2200 (l : Line), l \u2208 hd :: tl \u2192 l.fst \u2208 accs\nhhd : hd.fst \u2208 accs\nhtl : \u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs\nih' : (sumOver accs fun a => netOf tl a) = lineSum tl\nh1 : \u2200 (a : AccountId), a \u2208 accs \u2192 netOf (hd :: tl) a = netOf tl a + if hd.fst = a then hd.snd else 0\nheq1 : (sumOver accs fun a => netOf (hd :: tl) a) = sumOver accs fun a => netOf tl a + if hd.fst = a then hd.snd else 0\nheq2 : (fun a => if hd.fst = a then hd.snd else 0) = fun a => if a = hd.fst then hd.snd else 0\nhsingle : (sumOver accs fun a => if hd.fst = a then hd.snd else 0) = hd.snd\n\u22a2 (sumOver tl fun x => x.snd) + hd.snd = hd.snd + sumOver tl fun x => x.snd\nerror: candidate/Solution.lean:143:11: `simp` made no progress\nerror: candidate/Solution.lean:145:4: `simp` made no progress\nerror: candidate/Solution.lean:208:2: No goals to be solved\nerror: candidate/Solution.lean:295:8: `simp` made no progress\nerror: candidate/Solution.lean:328:19: `simp` made no progress\nerror: candidate/Solution.lean:330:12: `simp` made no progress\nSome required targets logged failures:\n- Solution\nerror: build failed",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_invalid_noop",
+   "required": true,
+   "statement": "theorem req_invalid_noop : InvalidNoop step",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 52,
+   "usd_list": 2.731,
+   "tried": [],
+   "last_lean": "snd else 0) =\n    (sumOver tl fun l => if l.fst = a then l.snd else 0) + if hd.fst = a then hd.snd else 0\nerror: candidate/Solution.lean:93:18: No goals to be solved\n\n  i\u0335f\u0335_\u0335p\u0335o\u0335s\u0335i\u0332t\u0332e\u0332_\u0332e\u0332q\u0332_\u0332l\u0332e\u0332f\u0332t\u0332\nerror: candidate/Solution.lean:81:18: unsolved goals\ncase cons\naccs : List AccountId\nhnodup : accs.Nodup\nhd : Line\ntl : List Line\nih : (\u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs) \u2192 (sumOver accs fun a => netOf tl a) = lineSum tl\nh : \u2200 (l : Line), l \u2208 hd :: tl \u2192 l.fst \u2208 accs\nhhd : hd.fst \u2208 accs\nhtl : \u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs\nih' : (sumOver accs fun a => netOf tl a) = lineSum tl\nh1 : \u2200 (a : AccountId), a \u2208 accs \u2192 netOf (hd :: tl) a = netOf tl a + if hd.fst = a then hd.snd else 0\nheq1 : (sumOver accs fun a => netOf (hd :: tl) a) = sumOver accs fun a => netOf tl a + if hd.fst = a then hd.snd else 0\nheq2 : (fun a => if hd.fst = a then hd.snd else 0) = fun a => if a = hd.fst then hd.snd else 0\nhsingle : (sumOver accs fun a => if hd.fst = a then hd.snd else 0) = hd.snd\n\u22a2 (sumOver tl fun x => x.snd) + hd.snd = hd.snd + sumOver tl fun x => x.snd\nerror: candidate/Solution.lean:143:11: `simp` made no progress\nerror: candidate/Solution.lean:145:4: `simp` made no progress\nerror: candidate/Solution.lean:208:2: No goals to be solved\nerror: candidate/Solution.lean:295:8: `simp` made no progress\nerror: candidate/Solution.lean:328:19: `simp` made no progress\nerror: candidate/Solution.lean:330:12: `simp` made no progress\nSome required targets logged failures:\n- Solution\nerror: build failed",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_post_effects",
+   "required": true,
+   "statement": "theorem req_post_effects : PostEffects step",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 52,
+   "usd_list": 2.731,
+   "tried": [],
+   "last_lean": "snd else 0) =\n    (sumOver tl fun l => if l.fst = a then l.snd else 0) + if hd.fst = a then hd.snd else 0\nerror: candidate/Solution.lean:93:18: No goals to be solved\n\n  i\u0335f\u0335_\u0335p\u0335o\u0335s\u0335i\u0332t\u0332e\u0332_\u0332e\u0332q\u0332_\u0332l\u0332e\u0332f\u0332t\u0332\nerror: candidate/Solution.lean:81:18: unsolved goals\ncase cons\naccs : List AccountId\nhnodup : accs.Nodup\nhd : Line\ntl : List Line\nih : (\u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs) \u2192 (sumOver accs fun a => netOf tl a) = lineSum tl\nh : \u2200 (l : Line), l \u2208 hd :: tl \u2192 l.fst \u2208 accs\nhhd : hd.fst \u2208 accs\nhtl : \u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs\nih' : (sumOver accs fun a => netOf tl a) = lineSum tl\nh1 : \u2200 (a : AccountId), a \u2208 accs \u2192 netOf (hd :: tl) a = netOf tl a + if hd.fst = a then hd.snd else 0\nheq1 : (sumOver accs fun a => netOf (hd :: tl) a) = sumOver accs fun a => netOf tl a + if hd.fst = a then hd.snd else 0\nheq2 : (fun a => if hd.fst = a then hd.snd else 0) = fun a => if a = hd.fst then hd.snd else 0\nhsingle : (sumOver accs fun a => if hd.fst = a then hd.snd else 0) = hd.snd\n\u22a2 (sumOver tl fun x => x.snd) + hd.snd = hd.snd + sumOver tl fun x => x.snd\nerror: candidate/Solution.lean:143:11: `simp` made no progress\nerror: candidate/Solution.lean:145:4: `simp` made no progress\nerror: candidate/Solution.lean:208:2: No goals to be solved\nerror: candidate/Solution.lean:295:8: `simp` made no progress\nerror: candidate/Solution.lean:328:19: `simp` made no progress\nerror: candidate/Solution.lean:330:12: `simp` made no progress\nSome required targets logged failures:\n- Solution\nerror: build failed",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_reverse_effects",
+   "required": true,
+   "statement": "theorem req_reverse_effects : ReverseEffects step",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 52,
+   "usd_list": 2.731,
+   "tried": [],
+   "last_lean": "snd else 0) =\n    (sumOver tl fun l => if l.fst = a then l.snd else 0) + if hd.fst = a then hd.snd else 0\nerror: candidate/Solution.lean:93:18: No goals to be solved\n\n  i\u0335f\u0335_\u0335p\u0335o\u0335s\u0335i\u0332t\u0332e\u0332_\u0332e\u0332q\u0332_\u0332l\u0332e\u0332f\u0332t\u0332\nerror: candidate/Solution.lean:81:18: unsolved goals\ncase cons\naccs : List AccountId\nhnodup : accs.Nodup\nhd : Line\ntl : List Line\nih : (\u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs) \u2192 (sumOver accs fun a => netOf tl a) = lineSum tl\nh : \u2200 (l : Line), l \u2208 hd :: tl \u2192 l.fst \u2208 accs\nhhd : hd.fst \u2208 accs\nhtl : \u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs\nih' : (sumOver accs fun a => netOf tl a) = lineSum tl\nh1 : \u2200 (a : AccountId), a \u2208 accs \u2192 netOf (hd :: tl) a = netOf tl a + if hd.fst = a then hd.snd else 0\nheq1 : (sumOver accs fun a => netOf (hd :: tl) a) = sumOver accs fun a => netOf tl a + if hd.fst = a then hd.snd else 0\nheq2 : (fun a => if hd.fst = a then hd.snd else 0) = fun a => if a = hd.fst then hd.snd else 0\nhsingle : (sumOver accs fun a => if hd.fst = a then hd.snd else 0) = hd.snd\n\u22a2 (sumOver tl fun x => x.snd) + hd.snd = hd.snd + sumOver tl fun x => x.snd\nerror: candidate/Solution.lean:143:11: `simp` made no progress\nerror: candidate/Solution.lean:145:4: `simp` made no progress\nerror: candidate/Solution.lean:208:2: No goals to be solved\nerror: candidate/Solution.lean:295:8: `simp` made no progress\nerror: candidate/Solution.lean:328:19: `simp` made no progress\nerror: candidate/Solution.lean:330:12: `simp` made no progress\nSome required targets logged failures:\n- Solution\nerror: build failed",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_reverse_once",
+   "required": true,
+   "statement": "theorem req_reverse_once : ReverseOnce step",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 52,
+   "usd_list": 2.731,
+   "tried": [],
+   "last_lean": "snd else 0) =\n    (sumOver tl fun l => if l.fst = a then l.snd else 0) + if hd.fst = a then hd.snd else 0\nerror: candidate/Solution.lean:93:18: No goals to be solved\n\n  i\u0335f\u0335_\u0335p\u0335o\u0335s\u0335i\u0332t\u0332e\u0332_\u0332e\u0332q\u0332_\u0332l\u0332e\u0332f\u0332t\u0332\nerror: candidate/Solution.lean:81:18: unsolved goals\ncase cons\naccs : List AccountId\nhnodup : accs.Nodup\nhd : Line\ntl : List Line\nih : (\u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs) \u2192 (sumOver accs fun a => netOf tl a) = lineSum tl\nh : \u2200 (l : Line), l \u2208 hd :: tl \u2192 l.fst \u2208 accs\nhhd : hd.fst \u2208 accs\nhtl : \u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs\nih' : (sumOver accs fun a => netOf tl a) = lineSum tl\nh1 : \u2200 (a : AccountId), a \u2208 accs \u2192 netOf (hd :: tl) a = netOf tl a + if hd.fst = a then hd.snd else 0\nheq1 : (sumOver accs fun a => netOf (hd :: tl) a) = sumOver accs fun a => netOf tl a + if hd.fst = a then hd.snd else 0\nheq2 : (fun a => if hd.fst = a then hd.snd else 0) = fun a => if a = hd.fst then hd.snd else 0\nhsingle : (sumOver accs fun a => if hd.fst = a then hd.snd else 0) = hd.snd\n\u22a2 (sumOver tl fun x => x.snd) + hd.snd = hd.snd + sumOver tl fun x => x.snd\nerror: candidate/Solution.lean:143:11: `simp` made no progress\nerror: candidate/Solution.lean:145:4: `simp` made no progress\nerror: candidate/Solution.lean:208:2: No goals to be solved\nerror: candidate/Solution.lean:295:8: `simp` made no progress\nerror: candidate/Solution.lean:328:19: `simp` made no progress\nerror: candidate/Solution.lean:330:12: `simp` made no progress\nSome required targets logged failures:\n- Solution\nerror: build failed",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_roundtrip",
+   "required": true,
+   "statement": "theorem req_roundtrip : RoundTrip step",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 52,
+   "usd_list": 2.731,
+   "tried": [],
+   "last_lean": "snd else 0) =\n    (sumOver tl fun l => if l.fst = a then l.snd else 0) + if hd.fst = a then hd.snd else 0\nerror: candidate/Solution.lean:93:18: No goals to be solved\n\n  i\u0335f\u0335_\u0335p\u0335o\u0335s\u0335i\u0332t\u0332e\u0332_\u0332e\u0332q\u0332_\u0332l\u0332e\u0332f\u0332t\u0332\nerror: candidate/Solution.lean:81:18: unsolved goals\ncase cons\naccs : List AccountId\nhnodup : accs.Nodup\nhd : Line\ntl : List Line\nih : (\u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs) \u2192 (sumOver accs fun a => netOf tl a) = lineSum tl\nh : \u2200 (l : Line), l \u2208 hd :: tl \u2192 l.fst \u2208 accs\nhhd : hd.fst \u2208 accs\nhtl : \u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs\nih' : (sumOver accs fun a => netOf tl a) = lineSum tl\nh1 : \u2200 (a : AccountId), a \u2208 accs \u2192 netOf (hd :: tl) a = netOf tl a + if hd.fst = a then hd.snd else 0\nheq1 : (sumOver accs fun a => netOf (hd :: tl) a) = sumOver accs fun a => netOf tl a + if hd.fst = a then hd.snd else 0\nheq2 : (fun a => if hd.fst = a then hd.snd else 0) = fun a => if a = hd.fst then hd.snd else 0\nhsingle : (sumOver accs fun a => if hd.fst = a then hd.snd else 0) = hd.snd\n\u22a2 (sumOver tl fun x => x.snd) + hd.snd = hd.snd + sumOver tl fun x => x.snd\nerror: candidate/Solution.lean:143:11: `simp` made no progress\nerror: candidate/Solution.lean:145:4: `simp` made no progress\nerror: candidate/Solution.lean:208:2: No goals to be solved\nerror: candidate/Solution.lean:295:8: `simp` made no progress\nerror: candidate/Solution.lean:328:19: `simp` made no progress\nerror: candidate/Solution.lean:330:12: `simp` made no progress\nSome required targets logged failures:\n- Solution\nerror: build failed",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_trial_balance",
+   "required": true,
+   "statement": "theorem req_trial_balance : TrialBalance step",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 52,
+   "usd_list": 2.731,
+   "tried": [],
+   "last_lean": "snd else 0) =\n    (sumOver tl fun l => if l.fst = a then l.snd else 0) + if hd.fst = a then hd.snd else 0\nerror: candidate/Solution.lean:93:18: No goals to be solved\n\n  i\u0335f\u0335_\u0335p\u0335o\u0335s\u0335i\u0332t\u0332e\u0332_\u0332e\u0332q\u0332_\u0332l\u0332e\u0332f\u0332t\u0332\nerror: candidate/Solution.lean:81:18: unsolved goals\ncase cons\naccs : List AccountId\nhnodup : accs.Nodup\nhd : Line\ntl : List Line\nih : (\u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs) \u2192 (sumOver accs fun a => netOf tl a) = lineSum tl\nh : \u2200 (l : Line), l \u2208 hd :: tl \u2192 l.fst \u2208 accs\nhhd : hd.fst \u2208 accs\nhtl : \u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs\nih' : (sumOver accs fun a => netOf tl a) = lineSum tl\nh1 : \u2200 (a : AccountId), a \u2208 accs \u2192 netOf (hd :: tl) a = netOf tl a + if hd.fst = a then hd.snd else 0\nheq1 : (sumOver accs fun a => netOf (hd :: tl) a) = sumOver accs fun a => netOf tl a + if hd.fst = a then hd.snd else 0\nheq2 : (fun a => if hd.fst = a then hd.snd else 0) = fun a => if a = hd.fst then hd.snd else 0\nhsingle : (sumOver accs fun a => if hd.fst = a then hd.snd else 0) = hd.snd\n\u22a2 (sumOver tl fun x => x.snd) + hd.snd = hd.snd + sumOver tl fun x => x.snd\nerror: candidate/Solution.lean:143:11: `simp` made no progress\nerror: candidate/Solution.lean:145:4: `simp` made no progress\nerror: candidate/Solution.lean:208:2: No goals to be solved\nerror: candidate/Solution.lean:295:8: `simp` made no progress\nerror: candidate/Solution.lean:328:19: `simp` made no progress\nerror: candidate/Solution.lean:330:12: `simp` made no progress\nSome required targets logged failures:\n- Solution\nerror: build failed",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_well_formed",
+   "required": true,
+   "statement": "theorem req_well_formed : StaysWellFormed step",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 52,
+   "usd_list": 2.731,
+   "tried": [],
+   "last_lean": "snd else 0) =\n    (sumOver tl fun l => if l.fst = a then l.snd else 0) + if hd.fst = a then hd.snd else 0\nerror: candidate/Solution.lean:93:18: No goals to be solved\n\n  i\u0335f\u0335_\u0335p\u0335o\u0335s\u0335i\u0332t\u0332e\u0332_\u0332e\u0332q\u0332_\u0332l\u0332e\u0332f\u0332t\u0332\nerror: candidate/Solution.lean:81:18: unsolved goals\ncase cons\naccs : List AccountId\nhnodup : accs.Nodup\nhd : Line\ntl : List Line\nih : (\u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs) \u2192 (sumOver accs fun a => netOf tl a) = lineSum tl\nh : \u2200 (l : Line), l \u2208 hd :: tl \u2192 l.fst \u2208 accs\nhhd : hd.fst \u2208 accs\nhtl : \u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs\nih' : (sumOver accs fun a => netOf tl a) = lineSum tl\nh1 : \u2200 (a : AccountId), a \u2208 accs \u2192 netOf (hd :: tl) a = netOf tl a + if hd.fst = a then hd.snd else 0\nheq1 : (sumOver accs fun a => netOf (hd :: tl) a) = sumOver accs fun a => netOf tl a + if hd.fst = a then hd.snd else 0\nheq2 : (fun a => if hd.fst = a then hd.snd else 0) = fun a => if a = hd.fst then hd.snd else 0\nhsingle : (sumOver accs fun a => if hd.fst = a then hd.snd else 0) = hd.snd\n\u22a2 (sumOver tl fun x => x.snd) + hd.snd = hd.snd + sumOver tl fun x => x.snd\nerror: candidate/Solution.lean:143:11: `simp` made no progress\nerror: candidate/Solution.lean:145:4: `simp` made no progress\nerror: candidate/Solution.lean:208:2: No goals to be solved\nerror: candidate/Solution.lean:295:8: `simp` made no progress\nerror: candidate/Solution.lean:328:19: `simp` made no progress\nerror: candidate/Solution.lean:330:12: `simp` made no progress\nSome required targets logged failures:\n- Solution\nerror: build failed",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  },
+  {
+   "name": "req_consistent",
+   "required": true,
+   "statement": "theorem req_consistent : StaysConsistent step",
+   "scope": "run",
+   "dialogs": 0,
+   "turns": 52,
+   "usd_list": 2.731,
+   "tried": [],
+   "last_lean": "snd else 0) =\n    (sumOver tl fun l => if l.fst = a then l.snd else 0) + if hd.fst = a then hd.snd else 0\nerror: candidate/Solution.lean:93:18: No goals to be solved\n\n  i\u0335f\u0335_\u0335p\u0335o\u0335s\u0335i\u0332t\u0332e\u0332_\u0332e\u0332q\u0332_\u0332l\u0332e\u0332f\u0332t\u0332\nerror: candidate/Solution.lean:81:18: unsolved goals\ncase cons\naccs : List AccountId\nhnodup : accs.Nodup\nhd : Line\ntl : List Line\nih : (\u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs) \u2192 (sumOver accs fun a => netOf tl a) = lineSum tl\nh : \u2200 (l : Line), l \u2208 hd :: tl \u2192 l.fst \u2208 accs\nhhd : hd.fst \u2208 accs\nhtl : \u2200 (l : Line), l \u2208 tl \u2192 l.fst \u2208 accs\nih' : (sumOver accs fun a => netOf tl a) = lineSum tl\nh1 : \u2200 (a : AccountId), a \u2208 accs \u2192 netOf (hd :: tl) a = netOf tl a + if hd.fst = a then hd.snd else 0\nheq1 : (sumOver accs fun a => netOf (hd :: tl) a) = sumOver accs fun a => netOf tl a + if hd.fst = a then hd.snd else 0\nheq2 : (fun a => if hd.fst = a then hd.snd else 0) = fun a => if a = hd.fst then hd.snd else 0\nhsingle : (sumOver accs fun a => if hd.fst = a then hd.snd else 0) = hd.snd\n\u22a2 (sumOver tl fun x => x.snd) + hd.snd = hd.snd + sumOver tl fun x => x.snd\nerror: candidate/Solution.lean:143:11: `simp` made no progress\nerror: candidate/Solution.lean:145:4: `simp` made no progress\nerror: candidate/Solution.lean:208:2: No goals to be solved\nerror: candidate/Solution.lean:295:8: `simp` made no progress\nerror: candidate/Solution.lean:328:19: `simp` made no progress\nerror: candidate/Solution.lean:330:12: `simp` made no progress\nSome required targets logged failures:\n- Solution\nerror: build failed",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [],
+   "refuted": false
+  }
+ ],
+ "budget": {
+  "usd_cap": 3.0,
+  "wall_cap_s": 3600.0,
+  "stop": "usd",
+  "usd_list": 2.731,
+  "usd_actual": 2.731,
+  "elapsed_s": 1002.7,
+  "unknown_usage_calls": 0,
+  "lost_attempts": 0,
+  "input_bound_violations": 0,
+  "wall_overrun_s": 0.0,
+  "by_model": {
+   "meta-models/muse-spark-open-1026": {
+    "calls": 53,
+    "prompt": 2296954,
+    "cached": 1310080,
+    "completion": 306101,
+    "usd_list": 2.731,
+    "usd_actual": 2.731
+   }
+  }
+ },
+ "resumed_from": []
+}

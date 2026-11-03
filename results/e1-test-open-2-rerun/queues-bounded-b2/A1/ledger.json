@@ -1,0 +1,152 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "queues-bounded-b2",
+ "spec_sha256": "9bae05f38db3ab5841783c6fb7e68010e6f5427281d8b8f4e954341c5892f4b5",
+ "run_dir": "results/e1-test-open-2-rerun/queues-bounded-b2/A1",
+ "arm": "A1",
+ "loop": "orchestrated",
+ "model": "meta-models/muse-spark-open",
+ "created": "2026-11-02T23:23:09-0500",
+ "reconstructed": false,
+ "final": {
+  "text": "import BoundedQueue.Spec\nnamespace BoundedQueue\n\ndef step : Impl := fun s op =>\n  match op with\n  | .enqueue x =>\n    if s.items.length < s.capacity then (.ok, { s with items := s.items ++ [x] })\n    else (.rejected, s)\n  | .dequeue =>\n    match s.items with\n    | [] => (.rejected, s)\n    | x :: rest => (.got x, { s with items := rest, served := s.served + 1 })\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s op hValid\n  cases op with\n  | enqueue x =>\n    unfold Valid at hValid\n    unfold step\n    simp [hValid]\n  | dequeue =>\n    unfold Valid at hValid\n    unfold step\n    cases h : s.items with\n    | nil => simp [h] at hValid\n    | cons x rest => simp [h]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s op h\n  cases op with\n  | enqueue x =>\n    unfold Valid at h\n    unfold step\n    simp [h]\n  | dequeue =>\n    unfold Valid at h\n    unfold step\n    cases hitems : s.items with\n    | nil => simp [hitems]\n    | cons y ys =>\n      have hValid : s.items \u2260 [] := by simp [hitems]\n      exact False.elim (h hValid)\n\ntheorem req_capacity : CapacityBound step := by\n  intro s op hle\n  unfold step\n  cases op with\n  | enqueue x =>\n    simp only\n    by_cases hc : s.items.length < s.capacity\n    \u00b7 simp [hc]; omega\n    \u00b7 simp [hc]; exact hle\n  | dequeue =>\n    simp only\n    cases h : s.items with\n    | nil => simp [h]\n    | cons y ys =>\n      simp [h]\n      have hlen : (y :: ys).length = ys.length + 1 := by simp\n      have hitems_len : s.items.length = (y :: ys).length := by rw [h]\n      omega\n\ntheorem req_enqueue_effects : EnqueueEffects step := by\n  intro s x h\n  unfold step at h \u22a2\n  simp only at h \u22a2\n  by_cases hc : s.items.length < s.capacity\n  \u00b7 simp [hc]\n  \u00b7 simp [hc] at h\n\ntheorem req_dequeue_effects : DequeueEffects step := by\n  intro s h\n  cases s with\n  | mk cap items served =>\n    cases items with\n    | nil =>\n      unfold step at h\n      simp at h\n    | cons hd tl =>\n      simp at h \u22a2\n      exists hd\n      exists tl\n\ntheorem req_fifo : Fifo step := by\n  intro s ops\n  induction ops generalizing s with\n  | nil => simp [run, inflow, outflow]\n  | cons op ops ih =>\n    cases op with\n    | enqueue x =>\n      by_cases hc : s.items.length < s.capacity\n      \u00b7 have h1 : run step s (Op.enqueue x :: ops) = ((Op.enqueue x, Outcome.ok) :: (run step { s with items := s.items ++ [x] } ops).1, (run step { s with items := s.items ++ [x] } ops).2) := by\n          simp [run, step, hc]\n        have h1fst : (run step s (Op.enqueue x :: ops)).1 = (Op.enqueue x, Outcome.ok) :: (run step { s with items := s.items ++ [x] } ops).1 := by rw [h1]\n        have h2snd : (run step s (Op.enqueue x :: ops)).2 = (run step { s with items := s.items ++ [x] } ops).2 := by rw [h1]\n        rw [h1fst, h2snd]\n        have hexpI : inflow ((Op.enqueue x, Outcome.ok) :: (run step { s with items := s.items ++ [x] } ops).1) = [x] ++ inflow (run step { s with items := s.items ++ [x] } ops).1 := by\n          simp [inflow, inflowOf]\n        have hexpO : outflow ((Op.enqueue x, Outcome.ok) :: (run step { s with items := s.items ++ [x] } ops).1) = outflow (run step { s with items := s.items ++ [x] } ops).1 := by\n          simp [outflow, outflowOf]\n        rw [hexpI, hexpO]\n        have ih' := ih { s with items := s.items ++ [x] }\n        simp at ih'\n        simp [List.append_assoc, ih']\n      \u00b7 have h1 : run step s (Op.enqueue x :: ops) = ((Op.enqueue x, Outcome.rejected) :: (run step s ops).1, (run step s ops).2) := by\n          simp [run, step, hc]\n        have h1fst : (run step s (Op.enqueue x :: ops)).1 = (Op.enqueue x, Outcome.rejected) :: (run step s ops).1 := by rw [h1]\n        have h2snd : (run step s (Op.enqueue x :: ops)).2 = (run step s ops).2 := by rw [h1]\n        rw [h1fst, h2snd]\n        have hexpI : inflow ((Op.enqueue x, Outcome.rejected) :: (run step s ops).1) = inflow (run step s ops).1 := by\n          simp [inflow, inflowOf]\n        have hexpO : outflow ((Op.enqueue x, Outcome.rejected) :: (run step s ops).1) = outflow (run step s ops).1 := by\n          simp [outflow, outflowOf]\n        rw [hexpI, hexpO]\n        exact ih s\n    | dequeue =>\n      by_cases hnil : s.items = []\n      \u00b7 have h1 : run step s (Op.dequeue :: ops) = ((Op.dequeue, Outcome.rejected) :: (run step s ops).1, (run step s ops).2) := by\n          simp [run, step, hnil]\n        have h1fst : (run step s (Op.dequeue :: ops)).1 = (Op.dequeue, Outcome.rejected) :: (run step s ops).1 := by rw [h1]\n        have h2snd : (run step s (Op.dequeue :: ops)).2 = (run step s ops).2 := by rw [h1]\n        rw [h1fst, h2snd]\n        have hexpI : inflow ((Op.dequeue, Outcome.rejected) :: (run step s ops).1) = inflow (run step s ops).1 := by\n          simp [inflow, inflowOf]\n        have hexpO : outflow ((Op.dequeue, Outcome.rejected) :: (run step s ops).1) = outflow (run step s ops).1 := by\n          simp [outflow, outflowOf]\n        rw [hexpI, hexpO, hnil]\n        have ihs := ih s\n        rw [hnil] at ihs\n        exact ihs\n      \u00b7 have hcons : \u2203 y ys, s.items = y :: ys := by\n          cases hs : s.items with\n          | nil => exact False.elim (hnil hs)\n          | cons y ys => exact \u27e8y, ys, rfl\u27e9\n        obtain \u27e8y, ys, h\u27e9 := hcons\n        have h1 : run step s (Op.dequeue :: ops) = ((Op.dequeue, Outcome.got y) :: (run step { s with items := ys, served := s.served + 1 } ops).1, (run step { s with items := ys, served := s.served + 1 } ops).2) := by\n          simp [run, step, h]\n        have h1fst : (run step s (Op.dequeue :: ops)).1 = (Op.dequeue, Outcome.got y) :: (run step { s with items := ys, served := s.served + 1 } ops).1 := by rw [h1]\n        have h2snd : (run step s (Op.dequeue :: ops)).2 = (run step { s with items := ys, served := s.served + 1 } ops).2 := by rw [h1]\n        rw [h1fst, h2snd]\n        have hexpI : inflow ((Op.dequeue, Outcome.got y) :: (run step { s with items := ys, served := s.served + 1 } ops).1) = inflow (run step { s with items := ys, served := s.served + 1 } ops).1 := by\n          simp [inflow, inflowOf]\n        have hexpO : outflow ((Op.dequeue, Outcome.got y) :: (run step { s with items := ys, served := s.served + 1 } ops).1) = [y] ++ outflow (run step { s with items := ys, served := s.served + 1 } ops).1 := by\n          simp [outflow, outflowOf]\n        rw [hexpI, hexpO, h]\n        have ih' := ih { s with items := ys, served := s.served + 1 }\n        simp at ih'\n        simp [ih']\n\nend BoundedQueue\n",
+  "sha256": "a8292a0c4e4e3898f8a9928cfedbbf5563db793ba1c885a333a021d1b0817445",
+  "proved_required": [
+   "req_capacity",
+   "req_dequeue_effects",
+   "req_enqueue_effects",
+   "req_fifo",
+   "req_invalid_noop",
+   "req_valid_succeeds"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_capacity",
+   "req_dequeue_effects",
+   "req_enqueue_effects",
+   "req_fifo",
+   "req_invalid_noop",
+   "req_valid_succeeds"
+  ],
+  "text": "import BoundedQueue.Spec\nnamespace BoundedQueue\n\ndef step : Impl := fun s op =>\n  match op with\n  | .enqueue x =>\n    if s.items.length < s.capacity then (.ok, { s with items := s.items ++ [x] })\n    else (.rejected, s)\n  | .dequeue =>\n    match s.items with\n    | [] => (.rejected, s)\n    | x :: rest => (.got x, { s with items := rest, served := s.served + 1 })\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s op hValid\n  cases op with\n  | enqueue x =>\n    unfold Valid at hValid\n    unfold step\n    simp [hValid]\n  | dequeue =>\n    unfold Valid at hValid\n    unfold step\n    cases h : s.items with\n    | nil => simp [h] at hValid\n    | cons x rest => simp [h]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s op h\n  cases op with\n  | enqueue x =>\n    unfold Valid at h\n    unfold step\n    simp [h]\n  | dequeue =>\n    unfold Valid at h\n    unfold step\n    cases hitems : s.items with\n    | nil => simp [hitems]\n    | cons y ys =>\n      have hValid : s.items \u2260 [] := by simp [hitems]\n      exact False.elim (h hValid)\n\ntheorem req_capacity : CapacityBound step := by\n  intro s op hle\n  unfold step\n  cases op with\n  | enqueue x =>\n    simp only\n    by_cases hc : s.items.length < s.capacity\n    \u00b7 simp [hc]; omega\n    \u00b7 simp [hc]; exact hle\n  | dequeue =>\n    simp only\n    cases h : s.items with\n    | nil => simp [h]\n    | cons y ys =>\n      simp [h]\n      have hlen : (y :: ys).length = ys.length + 1 := by simp\n      have hitems_len : s.items.length = (y :: ys).length := by rw [h]\n      omega\n\ntheorem req_enqueue_effects : EnqueueEffects step := by\n  intro s x h\n  unfold step at h \u22a2\n  simp only at h \u22a2\n  by_cases hc : s.items.length < s.capacity\n  \u00b7 simp [hc]\n  \u00b7 simp [hc] at h\n\ntheorem req_dequeue_effects : DequeueEffects step := by\n  intro s h\n  cases s with\n  | mk cap items served =>\n    cases items with\n    | nil =>\n      unfold step at h\n      simp at h\n    | cons hd tl =>\n      simp at h \u22a2\n      exists hd\n      exists tl\n\ntheorem req_fifo : Fifo step := by\n  intro s ops\n  induction ops generalizing s with\n  | nil => simp [run, inflow, outflow]\n  | cons op ops ih =>\n    cases op with\n    | enqueue x =>\n      by_cases hc : s.items.length < s.capacity\n      \u00b7 have h1 : run step s (Op.enqueue x :: ops) = ((Op.enqueue x, Outcome.ok) :: (run step { s with items := s.items ++ [x] } ops).1, (run step { s with items := s.items ++ [x] } ops).2) := by\n          simp [run, step, hc]\n        have h1fst : (run step s (Op.enqueue x :: ops)).1 = (Op.enqueue x, Outcome.ok) :: (run step { s with items := s.items ++ [x] } ops).1 := by rw [h1]\n        have h2snd : (run step s (Op.enqueue x :: ops)).2 = (run step { s with items := s.items ++ [x] } ops).2 := by rw [h1]\n        rw [h1fst, h2snd]\n        have hexpI : inflow ((Op.enqueue x, Outcome.ok) :: (run step { s with items := s.items ++ [x] } ops).1) = [x] ++ inflow (run step { s with items := s.items ++ [x] } ops).1 := by\n          simp [inflow, inflowOf]\n        have hexpO : outflow ((Op.enqueue x, Outcome.ok) :: (run step { s with items := s.items ++ [x] } ops).1) = outflow (run step { s with items := s.items ++ [x] } ops).1 := by\n          simp [outflow, outflowOf]\n        rw [hexpI, hexpO]\n        have ih' := ih { s with items := s.items ++ [x] }\n        simp at ih'\n        simp [List.append_assoc, ih']\n      \u00b7 have h1 : run step s (Op.enqueue x :: ops) = ((Op.enqueue x, Outcome.rejected) :: (run step s ops).1, (run step s ops).2) := by\n          simp [run, step, hc]\n        have h1fst : (run step s (Op.enqueue x :: ops)).1 = (Op.enqueue x, Outcome.rejected) :: (run step s ops).1 := by rw [h1]\n        have h2snd : (run step s (Op.enqueue x :: ops)).2 = (run step s ops).2 := by rw [h1]\n        rw [h1fst, h2snd]\n        have hexpI : inflow ((Op.enqueue x, Outcome.rejected) :: (run step s ops).1) = inflow (run step s ops).1 := by\n          simp [inflow, inflowOf]\n        have hexpO : outflow ((Op.enqueue x, Outcome.rejected) :: (run step s ops).1) = outflow (run step s ops).1 := by\n          simp [outflow, outflowOf]\n        rw [hexpI, hexpO]\n        exact ih s\n    | dequeue =>\n      by_cases hnil : s.items = []\n      \u00b7 have h1 : run step s (Op.dequeue :: ops) = ((Op.dequeue, Outcome.rejected) :: (run step s ops).1, (run step s ops).2) := by\n          simp [run, step, hnil]\n        have h1fst : (run step s (Op.dequeue :: ops)).1 = (Op.dequeue, Outcome.rejected) :: (run step s ops).1 := by rw [h1]\n        have h2snd : (run step s (Op.dequeue :: ops)).2 = (run step s ops).2 := by rw [h1]\n        rw [h1fst, h2snd]\n        have hexpI : inflow ((Op.dequeue, Outcome.rejected) :: (run step s ops).1) = inflow (run step s ops).1 := by\n          simp [inflow, inflowOf]\n        have hexpO : outflow ((Op.dequeue, Outcome.rejected) :: (run step s ops).1) = outflow (run step s ops).1 := by\n          simp [outflow, outflowOf]\n        rw [hexpI, hexpO, hnil]\n        have ihs := ih s\n        rw [hnil] at ihs\n        exact ihs\n      \u00b7 have hcons : \u2203 y ys, s.items = y :: ys := by\n          cases hs : s.items with\n          | nil => exact False.elim (hnil hs)\n          | cons y ys => exact \u27e8y, ys, rfl\u27e9\n        obtain \u27e8y, ys, h\u27e9 := hcons\n        have h1 : run step s (Op.dequeue :: ops) = ((Op.dequeue, Outcome.got y) :: (run step { s with items := ys, served := s.served + 1 } ops).1, (run step { s with items := ys, served := s.served + 1 } ops).2) := by\n          simp [run, step, h]\n        have h1fst : (run step s (Op.dequeue :: ops)).1 = (Op.dequeue, Outcome.got y) :: (run step { s with items := ys, served := s.served + 1 } ops).1 := by rw [h1]\n        have h2snd : (run step s (Op.dequeue :: ops)).2 = (run step { s with items := ys, served := s.served + 1 } ops).2 := by rw [h1]\n        rw [h1fst, h2snd]\n        have hexpI : inflow ((Op.dequeue, Outcome.got y) :: (run step { s with items := ys, served := s.served + 1 } ops).1) = inflow (run step { s with items := ys, served := s.served + 1 } ops).1 := by\n          simp [inflow, inflowOf]\n        have hexpO : outflow ((Op.dequeue, Outcome.got y) :: (run step { s with items := ys, served := s.served + 1 } ops).1) = [y] ++ outflow (run step { s with items := ys, served := s.served + 1 } ops).1 := by\n          simp [outflow, outflowOf]\n        rw [hexpI, hexpO, h]\n        have ih' := ih { s with items := ys, served := s.served + 1 }\n        simp at ih'\n        simp [ih']\n\nend BoundedQueue\n"
+ },
+ "proved": [
+  {
+   "name": "step",
+   "kind": "def",
+   "text": "def step : Impl := fun s op =>\n  match op with\n  | .enqueue x =>\n    if s.items.length < s.capacity then (.ok, { s with items := s.items ++ [x] })\n    else (.rejected, s)\n  | .dequeue =>\n    match s.items with\n    | [] => (.rejected, s)\n    | x :: rest => (.got x, { s with items := rest, served := s.served + 1 })",
+   "deps": [],
+   "statement": "def step : Impl := fun s op =>\n  match op with\n  | .enqueue x =>\n    if s.items.length < s.capacity then (.ok, { s with items := s.items ++ [x] })\n    else (.rejected, s)\n  | .dequeue =>\n    match s.items with\n    | [] => (.rejected, s)\n    | x :: rest => (.got x, { s with items := rest, served := s.served + 1 })",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "queues-bounded-b2",
+   "spec_sha256": "9bae05f38db3ab5841783c6fb7e68010e6f5427281d8b8f4e954341c5892f4b5"
+  },
+  {
+   "name": "req_valid_succeeds",
+   "kind": "theorem",
+   "text": "theorem req_valid_succeeds : ValidSucceeds step := by\n  intro s op hValid\n  cases op with\n  | enqueue x =>\n    unfold Valid at hValid\n    unfold step\n    simp [hValid]\n  | dequeue =>\n    unfold Valid at hValid\n    unfold step\n    cases h : s.items with\n    | nil => simp [h] at hValid\n    | cons x rest => simp [h]",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_valid_succeeds : ValidSucceeds step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-bounded-b2",
+   "spec_sha256": "9bae05f38db3ab5841783c6fb7e68010e6f5427281d8b8f4e954341c5892f4b5"
+  },
+  {
+   "name": "req_invalid_noop",
+   "kind": "theorem",
+   "text": "theorem req_invalid_noop : InvalidNoop step := by\n  intro s op h\n  cases op with\n  | enqueue x =>\n    unfold Valid at h\n    unfold step\n    simp [h]\n  | dequeue =>\n    unfold Valid at h\n    unfold step\n    cases hitems : s.items with\n    | nil => simp [hitems]\n    | cons y ys =>\n      have hValid : s.items \u2260 [] := by simp [hitems]\n      exact False.elim (h hValid)",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_invalid_noop : InvalidNoop step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-bounded-b2",
+   "spec_sha256": "9bae05f38db3ab5841783c6fb7e68010e6f5427281d8b8f4e954341c5892f4b5"
+  },
+  {
+   "name": "req_enqueue_effects",
+   "kind": "theorem",
+   "text": "theorem req_enqueue_effects : EnqueueEffects step := by\n  intro s x h\n  unfold step at h \u22a2\n  simp only at h \u22a2\n  by_cases hc : s.items.length < s.capacity\n  \u00b7 simp [hc]\n  \u00b7 simp [hc] at h",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_enqueue_effects : EnqueueEffects step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-bounded-b2",
+   "spec_sha256": "9bae05f38db3ab5841783c6fb7e68010e6f5427281d8b8f4e954341c5892f4b5"
+  },
+  {
+   "name": "req_dequeue_effects",
+   "kind": "theorem",
+   "text": "theorem req_dequeue_effects : DequeueEffects step := by\n  intro s h\n  cases s with\n  | mk cap items served =>\n    cases items with\n    | nil =>\n      unfold step at h\n      simp at h\n    | cons hd tl =>\n      simp at h \u22a2\n      exists hd\n      exists tl",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_dequeue_effects : DequeueEffects step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-bounded-b2",
+   "spec_sha256": "9bae05f38db3ab5841783c6fb7e68010e6f5427281d8b8f4e954341c5892f4b5"
+  },
+  {
+   "name": "req_capacity",
+   "kind": "theorem",
+   "text": "theorem req_capacity : CapacityBound step := by\n  intro s op hle\n  unfold step\n  cases op with\n  | enqueue x =>\n    simp only\n    by_cases hc : s.items.length < s.capacity\n    \u00b7 simp [hc]; omega\n    \u00b7 simp [hc]; exact hle\n  | dequeue =>\n    simp only\n    cases h : s.items with\n    | nil => simp [h]\n    | cons y ys =>\n      simp [h]\n      have hlen : (y :: ys).length = ys.length + 1 := by simp\n      have hitems_len : s.items.length = (y :: ys).length := by rw [h]\n      omega",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_capacity : CapacityBound step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-bounded-b2",
+   "spec_sha256": "9bae05f38db3ab5841783c6fb7e68010e6f5427281d8b8f4e954341c5892f4b5"
+  },
+  {
+   "name": "req_fifo",
+   "kind": "theorem",
+   "text": "theorem req_fifo : Fifo step := by\n  intro s ops\n  induction ops generalizing s with\n  | nil => simp [run, inflow, outflow]\n  | cons op ops ih =>\n    cases op with\n    | enqueue x =>\n      by_cases hc : s.items.length < s.capacity\n      \u00b7 have h1 : run step s (Op.enqueue x :: ops) = ((Op.enqueue x, Outcome.ok) :: (run step { s with items := s.items ++ [x] } ops).1, (run step { s with items := s.items ++ [x] } ops).2) := by\n          simp [run, step, hc]\n        have h1fst : (run step s (Op.enqueue x :: ops)).1 = (Op.enqueue x, Outcome.ok) :: (run step { s with items := s.items ++ [x] } ops).1 := by rw [h1]\n        have h2snd : (run step s (Op.enqueue x :: ops)).2 = (run step { s with items := s.items ++ [x] } ops).2 := by rw [h1]\n        rw [h1fst, h2snd]\n        have hexpI : inflow ((Op.enqueue x, Outcome.ok) :: (run step { s with items := s.items ++ [x] } ops).1) = [x] ++ inflow (run step { s with items := s.items ++ [x] } ops).1 := by\n          simp [inflow, inflowOf]\n        have hexpO : outflow ((Op.enqueue x, Outcome.ok) :: (run step { s with items := s.items ++ [x] } ops).1) = outflow (run step { s with items := s.items ++ [x] } ops).1 := by\n          simp [outflow, outflowOf]\n        rw [hexpI, hexpO]\n        have ih' := ih { s with items := s.items ++ [x] }\n        simp at ih'\n        simp [List.append_assoc, ih']\n      \u00b7 have h1 : run step s (Op.enqueue x :: ops) = ((Op.enqueue x, Outcome.rejected) :: (run step s ops).1, (run step s ops).2) := by\n          simp [run, step, hc]\n        have h1fst : (run step s (Op.enqueue x :: ops)).1 = (Op.enqueue x, Outcome.rejected) :: (run step s ops).1 := by rw [h1]\n        have h2snd : (run step s (Op.enqueue x :: ops)).2 = (run step s ops).2 := by rw [h1]\n        rw [h1fst, h2snd]\n        have hexpI : inflow ((Op.enqueue x, Outcome.rejected) :: (run step s ops).1) = inflow (run step s ops).1 := by\n          simp [inflow, inflowOf]\n        have hexpO : outflow ((Op.enqueue x, Outcome.rejected) :: (run step s ops).1) = outflow (run step s ops).1 := by\n          simp [outflow, outflowOf]\n        rw [hexpI, hexpO]\n        exact ih s\n    | dequeue =>\n      by_cases hnil : s.items = []\n      \u00b7 have h1 : run step s (Op.dequeue :: ops) = ((Op.dequeue, Outcome.rejected) :: (run step s ops).1, (run step s ops).2) := by\n          simp [run, step, hnil]\n        have h1fst : (run step s (Op.dequeue :: ops)).1 = (Op.dequeue, Outcome.rejected) :: (run step s ops).1 := by rw [h1]\n        have h2snd : (run step s (Op.dequeue :: ops)).2 = (run step s ops).2 := by rw [h1]\n        rw [h1fst, h2snd]\n        have hexpI : inflow ((Op.dequeue, Outcome.rejected) :: (run step s ops).1) = inflow (run step s ops).1 := by\n          simp [inflow, inflowOf]\n        have hexpO : outflow ((Op.dequeue, Outcome.rejected) :: (run step s ops).1) = outflow (run step s ops).1 := by\n          simp [outflow, outflowOf]\n        rw [hexpI, hexpO, hnil]\n        have ihs := ih s\n        rw [hnil] at ihs\n        exact ihs\n      \u00b7 have hcons : \u2203 y ys, s.items = y :: ys := by\n          cases hs : s.items with\n          | nil => exact False.elim (hnil hs)\n          | cons y ys => exact \u27e8y, ys, rfl\u27e9\n        obtain \u27e8y, ys, h\u27e9 := hcons\n        have h1 : run step s (Op.dequeue :: ops) = ((Op.dequeue, Outcome.got y) :: (run step { s with items := ys, served := s.served + 1 } ops).1, (run step { s with items := ys, served := s.served + 1 } ops).2) := by\n          simp [run, step, h]\n        have h1fst : (run step s (Op.dequeue :: ops)).1 = (Op.dequeue, Outcome.got y) :: (run step { s with items := ys, served := s.served + 1 } ops).1 := by rw [h1]\n        have h2snd : (run step s (Op.dequeue :: ops)).2 = (run step { s with items := ys, served := s.served + 1 } ops).2 := by rw [h1]\n        rw [h1fst, h2snd]\n        have hexpI : inflow ((Op.dequeue, Outcome.got y) :: (run step { s with items := ys, served := s.served + 1 } ops).1) = inflow (run step { s with items := ys, served := s.served + 1 } ops).1 := by\n          simp [inflow, inflowOf]\n        have hexpO : outflow ((Op.dequeue, Outcome.got y) :: (run step { s with items := ys, served := s.served + 1 } ops).1) = [y] ++ outflow (run step { s with items := ys, served := s.served + 1 } ops).1 := by\n          simp [outflow, outflowOf]\n        rw [hexpI, hexpO, h]\n        have ih' := ih { s with items := ys, served := s.served + 1 }\n        simp at ih'\n        simp [ih']",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_fifo : Fifo step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-bounded-b2",
+   "spec_sha256": "9bae05f38db3ab5841783c6fb7e68010e6f5427281d8b8f4e954341c5892f4b5"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [],
+ "budget": {
+  "usd_cap": 3.0,
+  "wall_cap_s": 3600.0,
+  "stop": null,
+  "usd_list": 0.5747,
+  "usd_actual": 0.5747,
+  "elapsed_s": 616.0,
+  "unknown_usage_calls": 0,
+  "lost_attempts": 0,
+  "input_bound_violations": 0,
+  "wall_overrun_s": 0.0,
+  "by_model": {
+   "meta-models/muse-spark-open": {
+    "calls": 76,
+    "prompt": 1025908,
+    "cached": 865920,
+    "completion": 57608,
+    "usd_list": 0.5747,
+    "usd_actual": 0.5747
+   }
+  }
+ },
+ "resumed_from": []
+}

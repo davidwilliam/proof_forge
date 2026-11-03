@@ -1,0 +1,245 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "permissions-grants-b4",
+ "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885",
+ "run_dir": "results/e1-test-open-2/permissions-grants-b4/A0",
+ "arm": "A0",
+ "loop": null,
+ "model": "meta-models/muse-spark-open-1026",
+ "created": "2026-11-01T20:03:17-0500",
+ "reconstructed": false,
+ "final": {
+  "text": "import Grants.Spec\nnamespace Grants\n\ninstance instDecidableValidCommand (s : State) (r : Request) : Decidable (ValidCommand s r) := by\n  unfold ValidCommand OtherAdmin; infer_instance\n\ndef step : Impl := fun s r =>\n  if _h : ValidCommand s r then\n    (.ok, { users := s.users, has := expectedHas s r })\n  else\n    (.rejected, s)\n\nprivate theorem step_ok_iff (s : State) (r : Request) : (step s r).1 = .ok \u2194 ValidCommand s r := by\n  unfold step\n  by_cases h : ValidCommand s r <;> simp [h]\n\nprivate theorem step_eq_ok_branch (s : State) (r : Request) (h : ValidCommand s r) :\n    step s r = (.ok, { users := s.users, has := expectedHas s r }) := by\n  unfold step; simp [h]\n\nprivate theorem step_eq_rejected_branch (s : State) (r : Request) (h : \u00acValidCommand s r) :\n    step s r = (.rejected, s) := by\n  unfold step; simp [h]\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s r hv\n  have := step_eq_ok_branch s r hv\n  simp [this]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s r hn\n  exact step_eq_rejected_branch s r hn\n\ntheorem req_authorization : AdminOnly step := by\n  intro s r hok\n  have hv : ValidCommand s r := (step_ok_iff s r).mp hok\n  unfold ValidCommand at hv\n  rcases hv with \u27e8h1, h2, h3, h4, h5\u27e9\n  exact \u27e8h1, h3\u27e9\n\ntheorem req_no_self_grant : NoSelfGrant step := by\n  intro s r hok hgrant\n  have hv : ValidCommand s r := (step_ok_iff s r).mp hok\n  unfold ValidCommand at hv\n  rcases hv with \u27e8h1, h2, h3, h4, h5\u27e9\n  exact (h4 hgrant).1\n\ntheorem req_others_unchanged : OthersUnchanged step := by\n  intro s r hok u q hneq\n  have hv : ValidCommand s r := (step_ok_iff s r).mp hok\n  have heq := step_eq_ok_branch s r hv\n  have husers : (step s r).2 = ({ users := s.users, has := expectedHas s r } : State) := by\n    simp [heq]\n  have hhas : (step s r).2.has u q = (expectedHas s r u q) := by\n    simp [husers]\n  rw [hhas]\n  unfold expectedHas\n  have hcond : \u00ac(u = r.target \u2227 q = r.role) := by\n    intro h\n    rcases h with \u27e8hu, hq\u27e9\n    rcases hneq with h1 | h1\n    \u00b7 exact h1 hu\n    \u00b7 exact h1 hq\n  simp [hcond]\n\ntheorem req_effects : Effects step := by\n  intro s r hok\n  have hv : ValidCommand s r := (step_ok_iff s r).mp hok\n  have heq := step_eq_ok_branch s r hv\n  constructor\n  \u00b7 simp [heq]\n  \u00b7 intro u q\n    have hhas : (step s r).2.has u q = expectedHas s r u q := by\n      simp [heq]\n    exact hhas\n\ntheorem req_idempotency : Idempotent step := by\n  intro s r hok\n  have hv : ValidCommand s r := (step_ok_iff s r).mp hok\n  have heq := step_eq_ok_branch s r hv\n  have hs' : (step s r).2 = ({ users := s.users, has := expectedHas s r } : State) := by\n    simp [heq]\n  have hnot : \u00acValidCommand ({ users := s.users, has := expectedHas s r } : State) r := by\n    intro h\n    unfold ValidCommand at hv h\n    rcases hv with \u27e8hA1, hT1, hadm1, hg1, hr1\u27e9\n    rcases h with \u27e8hA2, hT2, hadm2, hg2, hr2\u27e9\n    cases hop : r.op with\n    | grant =>\n      have hg2' := hg2 hop\n      have h_has : (expectedHas s r r.target r.role) = true := by\n        unfold expectedHas; simp [hop]\n      have h1 : (expectedHas s r r.target r.role) = false := hg2'.2\n      rw [h_has] at h1\n      contradiction\n    | revoke =>\n      have h_has : (expectedHas s r r.target r.role) = false := by\n        unfold expectedHas; simp [hop]\n      have h1 : (expectedHas s r r.target r.role) = true := (hr2 hop).1\n      rw [h_has] at h1\n      contradiction\n  have hstep' : step ({ users := s.users, has := expectedHas s r } : State) r = (.rejected, ({ users := s.users, has := expectedHas s r } : State)) :=\n    step_eq_rejected_branch _ r hnot\n  rw [hs', hstep']\n\ntheorem req_last_admin : KeepsAdmin step := by\n  intro s r hex\n  by_cases hv : ValidCommand s r\n  \u00b7 have heq := step_eq_ok_branch s r hv\n    have husers : (step s r).2.users = s.users := by simp [heq]\n    cases hop : r.op with\n    | grant =>\n      rcases hex with \u27e8u, hu, hadm\u27e9\n      refine \u27e8u, ?_, ?_\u27e9\n      \u00b7 rw [husers]; exact hu\n      \u00b7 have hhas : (step s r).2.has u .admin = expectedHas s r u .admin := by simp [heq]\n        rw [hhas]\n        unfold expectedHas\n        by_cases hcond : u = r.target \u2227 (Role.admin = r.role)\n        \u00b7 have _hrole_eq : Role.admin = r.role := hcond.2\n          simp [hcond, hop]\n        \u00b7 simp [hcond, hadm]\n    | revoke =>\n      by_cases hrole : r.role = .admin\n      \u00b7 unfold ValidCommand at hv\n        rcases hv with \u27e8h1, h2, h3, h4, h5\u27e9\n        have hother : OtherAdmin s r.target := (h5 hop).2 hrole\n        rcases hother with \u27e8v, hv_mem, hv_neq, hv_adm\u27e9\n        refine \u27e8v, ?_, ?_\u27e9\n        \u00b7 rw [husers]; exact hv_mem\n        \u00b7 have hhas : (step s r).2.has v .admin = expectedHas s r v .admin := by simp [heq]\n          rw [hhas]\n          unfold expectedHas\n          have hcond : \u00ac(v = r.target \u2227 Role.admin = r.role) := by\n            intro h\n            exact hv_neq h.1\n          simp [hcond, hv_adm]\n      \u00b7 rcases hex with \u27e8u, hu, hadm\u27e9\n        refine \u27e8u, ?_, ?_\u27e9\n        \u00b7 rw [husers]; exact hu\n        \u00b7 have hhas : (step s r).2.has u .admin = expectedHas s r u .admin := by simp [heq]\n          rw [hhas]\n          unfold expectedHas\n          by_cases hcond : u = r.target \u2227 Role.admin = r.role\n          \u00b7 exfalso; exact hrole hcond.2.symm\n          \u00b7 simp [hcond, hadm]\n  \u00b7 have heq := step_eq_rejected_branch s r hv\n    rcases hex with \u27e8u, hu, hadm\u27e9\n    refine \u27e8u, ?_, ?_\u27e9\n    \u00b7 simp [heq, hu]\n    \u00b7 simp [heq, hadm]\n\nend Grants\n",
+  "sha256": "b91c4e426f0aecce3ab979e283c4106b2c49f9d4fbfbf02c9f0cc69bb451ae85",
+  "proved_required": [
+   "req_authorization",
+   "req_effects",
+   "req_idempotency",
+   "req_invalid_noop",
+   "req_last_admin",
+   "req_no_self_grant",
+   "req_others_unchanged",
+   "req_valid_succeeds"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_authorization",
+   "req_effects",
+   "req_idempotency",
+   "req_invalid_noop",
+   "req_last_admin",
+   "req_no_self_grant",
+   "req_others_unchanged",
+   "req_valid_succeeds"
+  ],
+  "text": "import Grants.Spec\nnamespace Grants\n\ninstance instDecidableValidCommand (s : State) (r : Request) : Decidable (ValidCommand s r) := by\n  unfold ValidCommand OtherAdmin; infer_instance\n\ndef step : Impl := fun s r =>\n  if _h : ValidCommand s r then\n    (.ok, { users := s.users, has := expectedHas s r })\n  else\n    (.rejected, s)\n\nprivate theorem step_ok_iff (s : State) (r : Request) : (step s r).1 = .ok \u2194 ValidCommand s r := by\n  unfold step\n  by_cases h : ValidCommand s r <;> simp [h]\n\nprivate theorem step_eq_ok_branch (s : State) (r : Request) (h : ValidCommand s r) :\n    step s r = (.ok, { users := s.users, has := expectedHas s r }) := by\n  unfold step; simp [h]\n\nprivate theorem step_eq_rejected_branch (s : State) (r : Request) (h : \u00acValidCommand s r) :\n    step s r = (.rejected, s) := by\n  unfold step; simp [h]\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s r hv\n  have := step_eq_ok_branch s r hv\n  simp [this]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s r hn\n  exact step_eq_rejected_branch s r hn\n\ntheorem req_authorization : AdminOnly step := by\n  intro s r hok\n  have hv : ValidCommand s r := (step_ok_iff s r).mp hok\n  unfold ValidCommand at hv\n  rcases hv with \u27e8h1, h2, h3, h4, h5\u27e9\n  exact \u27e8h1, h3\u27e9\n\ntheorem req_no_self_grant : NoSelfGrant step := by\n  intro s r hok hgrant\n  have hv : ValidCommand s r := (step_ok_iff s r).mp hok\n  unfold ValidCommand at hv\n  rcases hv with \u27e8h1, h2, h3, h4, h5\u27e9\n  exact (h4 hgrant).1\n\ntheorem req_others_unchanged : OthersUnchanged step := by\n  intro s r hok u q hneq\n  have hv : ValidCommand s r := (step_ok_iff s r).mp hok\n  have heq := step_eq_ok_branch s r hv\n  have husers : (step s r).2 = ({ users := s.users, has := expectedHas s r } : State) := by\n    simp [heq]\n  have hhas : (step s r).2.has u q = (expectedHas s r u q) := by\n    simp [husers]\n  rw [hhas]\n  unfold expectedHas\n  have hcond : \u00ac(u = r.target \u2227 q = r.role) := by\n    intro h\n    rcases h with \u27e8hu, hq\u27e9\n    rcases hneq with h1 | h1\n    \u00b7 exact h1 hu\n    \u00b7 exact h1 hq\n  simp [hcond]\n\ntheorem req_effects : Effects step := by\n  intro s r hok\n  have hv : ValidCommand s r := (step_ok_iff s r).mp hok\n  have heq := step_eq_ok_branch s r hv\n  constructor\n  \u00b7 simp [heq]\n  \u00b7 intro u q\n    have hhas : (step s r).2.has u q = expectedHas s r u q := by\n      simp [heq]\n    exact hhas\n\ntheorem req_idempotency : Idempotent step := by\n  intro s r hok\n  have hv : ValidCommand s r := (step_ok_iff s r).mp hok\n  have heq := step_eq_ok_branch s r hv\n  have hs' : (step s r).2 = ({ users := s.users, has := expectedHas s r } : State) := by\n    simp [heq]\n  have hnot : \u00acValidCommand ({ users := s.users, has := expectedHas s r } : State) r := by\n    intro h\n    unfold ValidCommand at hv h\n    rcases hv with \u27e8hA1, hT1, hadm1, hg1, hr1\u27e9\n    rcases h with \u27e8hA2, hT2, hadm2, hg2, hr2\u27e9\n    cases hop : r.op with\n    | grant =>\n      have hg2' := hg2 hop\n      have h_has : (expectedHas s r r.target r.role) = true := by\n        unfold expectedHas; simp [hop]\n      have h1 : (expectedHas s r r.target r.role) = false := hg2'.2\n      rw [h_has] at h1\n      contradiction\n    | revoke =>\n      have h_has : (expectedHas s r r.target r.role) = false := by\n        unfold expectedHas; simp [hop]\n      have h1 : (expectedHas s r r.target r.role) = true := (hr2 hop).1\n      rw [h_has] at h1\n      contradiction\n  have hstep' : step ({ users := s.users, has := expectedHas s r } : State) r = (.rejected, ({ users := s.users, has := expectedHas s r } : State)) :=\n    step_eq_rejected_branch _ r hnot\n  rw [hs', hstep']\n\ntheorem req_last_admin : KeepsAdmin step := by\n  intro s r hex\n  by_cases hv : ValidCommand s r\n  \u00b7 have heq := step_eq_ok_branch s r hv\n    have husers : (step s r).2.users = s.users := by simp [heq]\n    cases hop : r.op with\n    | grant =>\n      rcases hex with \u27e8u, hu, hadm\u27e9\n      refine \u27e8u, ?_, ?_\u27e9\n      \u00b7 rw [husers]; exact hu\n      \u00b7 have hhas : (step s r).2.has u .admin = expectedHas s r u .admin := by simp [heq]\n        rw [hhas]\n        unfold expectedHas\n        by_cases hcond : u = r.target \u2227 (Role.admin = r.role)\n        \u00b7 have _hrole_eq : Role.admin = r.role := hcond.2\n          simp [hcond, hop]\n        \u00b7 simp [hcond, hadm]\n    | revoke =>\n      by_cases hrole : r.role = .admin\n      \u00b7 unfold ValidCommand at hv\n        rcases hv with \u27e8h1, h2, h3, h4, h5\u27e9\n        have hother : OtherAdmin s r.target := (h5 hop).2 hrole\n        rcases hother with \u27e8v, hv_mem, hv_neq, hv_adm\u27e9\n        refine \u27e8v, ?_, ?_\u27e9\n        \u00b7 rw [husers]; exact hv_mem\n        \u00b7 have hhas : (step s r).2.has v .admin = expectedHas s r v .admin := by simp [heq]\n          rw [hhas]\n          unfold expectedHas\n          have hcond : \u00ac(v = r.target \u2227 Role.admin = r.role) := by\n            intro h\n            exact hv_neq h.1\n          simp [hcond, hv_adm]\n      \u00b7 rcases hex with \u27e8u, hu, hadm\u27e9\n        refine \u27e8u, ?_, ?_\u27e9\n        \u00b7 rw [husers]; exact hu\n        \u00b7 have hhas : (step s r).2.has u .admin = expectedHas s r u .admin := by simp [heq]\n          rw [hhas]\n          unfold expectedHas\n          by_cases hcond : u = r.target \u2227 Role.admin = r.role\n          \u00b7 exfalso; exact hrole hcond.2.symm\n          \u00b7 simp [hcond, hadm]\n  \u00b7 have heq := step_eq_rejected_branch s r hv\n    rcases hex with \u27e8u, hu, hadm\u27e9\n    refine \u27e8u, ?_, ?_\u27e9\n    \u00b7 simp [heq, hu]\n    \u00b7 simp [heq, hadm]\n\nend Grants\n"
+ },
+ "proved": [
+  {
+   "name": "req_last_admin",
+   "kind": "theorem",
+   "text": "theorem req_last_admin : KeepsAdmin step := by\n  intro s r hex\n  by_cases hv : ValidCommand s r\n  \u00b7 have heq := step_eq_ok_branch s r hv\n    have husers : (step s r).2.users = s.users := by simp [heq]\n    cases hop : r.op with\n    | grant =>\n      rcases hex with \u27e8u, hu, hadm\u27e9\n      refine \u27e8u, ?_, ?_\u27e9\n      \u00b7 rw [husers]; exact hu\n      \u00b7 have hhas : (step s r).2.has u .admin = expectedHas s r u .admin := by simp [heq]\n        rw [hhas]\n        unfold expectedHas\n        by_cases hcond : u = r.target \u2227 (Role.admin = r.role)\n        \u00b7 have _hrole_eq : Role.admin = r.role := hcond.2\n          simp [hcond, hop]\n        \u00b7 simp [hcond, hadm]\n    | revoke =>\n      by_cases hrole : r.role = .admin\n      \u00b7 unfold ValidCommand at hv\n        rcases hv with \u27e8h1, h2, h3, h4, h5\u27e9\n        have hother : OtherAdmin s r.target := (h5 hop).2 hrole\n        rcases hother with \u27e8v, hv_mem, hv_neq, hv_adm\u27e9\n        refine \u27e8v, ?_, ?_\u27e9\n        \u00b7 rw [husers]; exact hv_mem\n        \u00b7 have hhas : (step s r).2.has v .admin = expectedHas s r v .admin := by simp [heq]\n          rw [hhas]\n          unfold expectedHas\n          have hcond : \u00ac(v = r.target \u2227 Role.admin = r.role) := by\n            intro h\n            exact hv_neq h.1\n          simp [hcond, hv_adm]\n      \u00b7 rcases hex with \u27e8u, hu, hadm\u27e9\n        refine \u27e8u, ?_, ?_\u27e9\n        \u00b7 rw [husers]; exact hu\n        \u00b7 have hhas : (step s r).2.has u .admin = expectedHas s r u .admin := by simp [heq]\n          rw [hhas]\n          unfold expectedHas\n          by_cases hcond : u = r.target \u2227 Role.admin = r.role\n          \u00b7 exfalso; exact hrole hcond.2.symm\n          \u00b7 simp [hcond, hadm]\n  \u00b7 have heq := step_eq_rejected_branch s r hv\n    rcases hex with \u27e8u, hu, hadm\u27e9\n    refine \u27e8u, ?_, ?_\u27e9\n    \u00b7 simp [heq, hu]\n    \u00b7 simp [heq, hadm]",
+   "deps": [
+    "step",
+    "step_eq_ok_branch",
+    "step_eq_rejected_branch"
+   ],
+   "statement": "theorem req_last_admin : KeepsAdmin step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-grants-b4",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "req_idempotency",
+   "kind": "theorem",
+   "text": "theorem req_idempotency : Idempotent step := by\n  intro s r hok\n  have hv : ValidCommand s r := (step_ok_iff s r).mp hok\n  have heq := step_eq_ok_branch s r hv\n  have hs' : (step s r).2 = ({ users := s.users, has := expectedHas s r } : State) := by\n    simp [heq]\n  have hnot : \u00acValidCommand ({ users := s.users, has := expectedHas s r } : State) r := by\n    intro h\n    unfold ValidCommand at hv h\n    rcases hv with \u27e8hA1, hT1, hadm1, hg1, hr1\u27e9\n    rcases h with \u27e8hA2, hT2, hadm2, hg2, hr2\u27e9\n    cases hop : r.op with\n    | grant =>\n      have hg2' := hg2 hop\n      have h_has : (expectedHas s r r.target r.role) = true := by\n        unfold expectedHas; simp [hop]\n      have h1 : (expectedHas s r r.target r.role) = false := hg2'.2\n      rw [h_has] at h1\n      contradiction\n    | revoke =>\n      have h_has : (expectedHas s r r.target r.role) = false := by\n        unfold expectedHas; simp [hop]\n      have h1 : (expectedHas s r r.target r.role) = true := (hr2 hop).1\n      rw [h_has] at h1\n      contradiction\n  have hstep' : step ({ users := s.users, has := expectedHas s r } : State) r = (.rejected, ({ users := s.users, has := expectedHas s r } : State)) :=\n    step_eq_rejected_branch _ r hnot\n  rw [hs', hstep']",
+   "deps": [
+    "step",
+    "step_eq_ok_branch",
+    "step_eq_rejected_branch",
+    "step_ok_iff"
+   ],
+   "statement": "theorem req_idempotency : Idempotent step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-grants-b4",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "req_effects",
+   "kind": "theorem",
+   "text": "theorem req_effects : Effects step := by\n  intro s r hok\n  have hv : ValidCommand s r := (step_ok_iff s r).mp hok\n  have heq := step_eq_ok_branch s r hv\n  constructor\n  \u00b7 simp [heq]\n  \u00b7 intro u q\n    have hhas : (step s r).2.has u q = expectedHas s r u q := by\n      simp [heq]\n    exact hhas",
+   "deps": [
+    "step",
+    "step_eq_ok_branch",
+    "step_ok_iff"
+   ],
+   "statement": "theorem req_effects : Effects step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-grants-b4",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "req_others_unchanged",
+   "kind": "theorem",
+   "text": "theorem req_others_unchanged : OthersUnchanged step := by\n  intro s r hok u q hneq\n  have hv : ValidCommand s r := (step_ok_iff s r).mp hok\n  have heq := step_eq_ok_branch s r hv\n  have husers : (step s r).2 = ({ users := s.users, has := expectedHas s r } : State) := by\n    simp [heq]\n  have hhas : (step s r).2.has u q = (expectedHas s r u q) := by\n    simp [husers]\n  rw [hhas]\n  unfold expectedHas\n  have hcond : \u00ac(u = r.target \u2227 q = r.role) := by\n    intro h\n    rcases h with \u27e8hu, hq\u27e9\n    rcases hneq with h1 | h1\n    \u00b7 exact h1 hu\n    \u00b7 exact h1 hq\n  simp [hcond]",
+   "deps": [
+    "step",
+    "step_eq_ok_branch",
+    "step_ok_iff"
+   ],
+   "statement": "theorem req_others_unchanged : OthersUnchanged step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-grants-b4",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "req_no_self_grant",
+   "kind": "theorem",
+   "text": "theorem req_no_self_grant : NoSelfGrant step := by\n  intro s r hok hgrant\n  have hv : ValidCommand s r := (step_ok_iff s r).mp hok\n  unfold ValidCommand at hv\n  rcases hv with \u27e8h1, h2, h3, h4, h5\u27e9\n  exact (h4 hgrant).1",
+   "deps": [
+    "step",
+    "step_ok_iff"
+   ],
+   "statement": "theorem req_no_self_grant : NoSelfGrant step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-grants-b4",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "req_authorization",
+   "kind": "theorem",
+   "text": "theorem req_authorization : AdminOnly step := by\n  intro s r hok\n  have hv : ValidCommand s r := (step_ok_iff s r).mp hok\n  unfold ValidCommand at hv\n  rcases hv with \u27e8h1, h2, h3, h4, h5\u27e9\n  exact \u27e8h1, h3\u27e9",
+   "deps": [
+    "step",
+    "step_ok_iff"
+   ],
+   "statement": "theorem req_authorization : AdminOnly step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-grants-b4",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "req_invalid_noop",
+   "kind": "theorem",
+   "text": "theorem req_invalid_noop : InvalidNoop step := by\n  intro s r hn\n  exact step_eq_rejected_branch s r hn",
+   "deps": [
+    "step",
+    "step_eq_rejected_branch"
+   ],
+   "statement": "theorem req_invalid_noop : InvalidNoop step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-grants-b4",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "req_valid_succeeds",
+   "kind": "theorem",
+   "text": "theorem req_valid_succeeds : ValidSucceeds step := by\n  intro s r hv\n  have := step_eq_ok_branch s r hv\n  simp [this]",
+   "deps": [
+    "step",
+    "step_eq_ok_branch"
+   ],
+   "statement": "theorem req_valid_succeeds : ValidSucceeds step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-grants-b4",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "step_eq_rejected_branch",
+   "kind": "theorem",
+   "text": "private theorem step_eq_rejected_branch (s : State) (r : Request) (h : \u00acValidCommand s r) :\n    step s r = (.rejected, s) := by\n  unfold step; simp [h]",
+   "deps": [
+    "step"
+   ],
+   "statement": "private theorem step_eq_rejected_branch (s : State) (r : Request) (h : \u00acValidCommand s r) :\n    step s r = (.rejected, s)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-grants-b4",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "step_eq_ok_branch",
+   "kind": "theorem",
+   "text": "private theorem step_eq_ok_branch (s : State) (r : Request) (h : ValidCommand s r) :\n    step s r = (.ok, { users := s.users, has := expectedHas s r }) := by\n  unfold step; simp [h]",
+   "deps": [
+    "step"
+   ],
+   "statement": "private theorem step_eq_ok_branch (s : State) (r : Request) (h : ValidCommand s r) :\n    step s r = (.ok, { users := s.users, has := expectedHas s r })",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-grants-b4",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "step_ok_iff",
+   "kind": "theorem",
+   "text": "private theorem step_ok_iff (s : State) (r : Request) : (step s r).1 = .ok \u2194 ValidCommand s r := by\n  unfold step\n  by_cases h : ValidCommand s r <;> simp [h]",
+   "deps": [
+    "step"
+   ],
+   "statement": "private theorem step_ok_iff (s : State) (r : Request) : (step s r).1 = .ok \u2194 ValidCommand s r",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-grants-b4",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "step",
+   "kind": "def",
+   "text": "def step : Impl := fun s r =>\n  if _h : ValidCommand s r then\n    (.ok, { users := s.users, has := expectedHas s r })\n  else\n    (.rejected, s)",
+   "deps": [],
+   "statement": "def step : Impl := fun s r =>\n  if _h : ValidCommand s r then\n    (.ok, { users := s.users, has := expectedHas s r })\n  else\n    (.rejected, s)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "permissions-grants-b4",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "instDecidableValidCommand",
+   "kind": "instance",
+   "text": "instance instDecidableValidCommand (s : State) (r : Request) : Decidable (ValidCommand s r) := by\n  unfold ValidCommand OtherAdmin; infer_instance",
+   "deps": [],
+   "statement": "instance instDecidableValidCommand (s : State) (r : Request) : Decidable (ValidCommand s r) := by\n  unfold ValidCommand OtherAdmin; infer_instance",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-grants-b4",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [],
+ "budget": {
+  "usd_cap": 3.0,
+  "wall_cap_s": 3600.0,
+  "stop": null,
+  "usd_list": 0.0626,
+  "usd_actual": 0.0626,
+  "elapsed_s": 47.0,
+  "unknown_usage_calls": 0,
+  "lost_attempts": 0,
+  "input_bound_violations": 0,
+  "wall_overrun_s": 0.0,
+  "by_model": {
+   "meta-models/muse-spark-open-1026": {
+    "calls": 4,
+    "prompt": 21978,
+    "cached": 12928,
+    "completion": 11600,
+    "usd_list": 0.0626,
+    "usd_actual": 0.0626
+   }
+  }
+ },
+ "resumed_from": []
+}

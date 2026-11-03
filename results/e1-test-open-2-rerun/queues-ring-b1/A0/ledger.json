@@ -1,0 +1,231 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "queues-ring-b1",
+ "spec_sha256": "35cfe3f669ba5e1131a15ace70bf8c4869db60f3522e9abe33cf689327ca6598",
+ "run_dir": "results/e1-test-open-2-rerun/queues-ring-b1/A0",
+ "arm": "A0",
+ "loop": null,
+ "model": "meta-models/muse-spark-open",
+ "created": "2026-11-03T00:32:02-0500",
+ "reconstructed": false,
+ "final": {
+  "text": "import RingBuffer.Spec\nnamespace RingBuffer\n\ndef step : Impl := fun s op =>\n  match op with\n  | .enqueue x =>\n    if 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity then\n      (.ok, { s with buf := fun i => if i = (s.head + s.count) % s.capacity then x else s.buf i, count := s.count + 1 })\n    else (.rejected, s)\n  | .dequeue =>\n    if 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count then\n      (.got (s.buf s.head), { s with head := (s.head + 1) % s.capacity, count := s.count - 1 })\n    else (.rejected, s)\n\ntheorem mod_two_aux (a n : Nat) (_h1 : 0 < n) (h2 : a < 2 * n) : a % n = if a < n then a else a - n := by\n  by_cases ha : a < n\n  \u00b7 simp [ha, Nat.mod_eq_of_lt ha]\n  \u00b7 have hsub : a - n < n := by omega\n    have : a % n = (a - n + n) % n := by\n      have : (a - n) + n = a := by omega\n      rw [this]\n    rw [this, Nat.add_mod_right, Nat.mod_eq_of_lt hsub]\n    simp [ha]\n\ntheorem slot_ne_aux (s : State) (i : Nat) (hi : i < s.count) (hv : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity) : (s.head + i) % s.capacity \u2260 (s.head + s.count) % s.capacity := by\n  have hpos := hv.1\n  have hAi : s.head + i < 2 * s.capacity := by omega\n  have hAc : s.head + s.count < 2 * s.capacity := by omega\n  rw [mod_two_aux _ _ hpos hAi, mod_two_aux _ _ hpos hAc]\n  intro heq\n  by_cases hi_lt : s.head + i < s.capacity <;> by_cases hc_lt : s.head + s.count < s.capacity <;> simp [hi_lt, hc_lt] at heq <;> omega\n\ntheorem slot_shift_aux (s : State) (i : Nat) : ((s.head + 1) % s.capacity + i) % s.capacity = (s.head + 1 + i) % s.capacity := by\n  have h1 : ((s.head + 1) % s.capacity + i) % s.capacity = (((s.head + 1) % s.capacity % s.capacity + i % s.capacity) % s.capacity) := by rw [\u2190 Nat.add_mod]\n  have h2 : (((s.head + 1) % s.capacity % s.capacity + i % s.capacity) % s.capacity) = (((s.head + 1) % s.capacity + i % s.capacity) % s.capacity) := by rw [Nat.mod_mod_of_dvd _ (Nat.dvd_refl _)]\n  have h3 : (((s.head + 1) % s.capacity + i % s.capacity) % s.capacity) = (s.head + 1 + i) % s.capacity := by rw [\u2190 Nat.add_mod]\n  rw [h1, h2, h3]\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s op hv\n  cases op with\n  | enqueue x =>\n    simp [Valid] at hv\n    obtain \u27e8hw, hlt\u27e9 := hv\n    show (step s (Op.enqueue x)).1 \u2260 .rejected\n    simp [step, hw.1, hw.2.1, hlt]\n  | dequeue =>\n    simp [Valid] at hv\n    obtain \u27e8hw, hlt\u27e9 := hv\n    show (step s Op.dequeue).1 \u2260 .rejected\n    simp [step, hw.1, hw.2.1, hw.2.2, hlt]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s op hv\n  cases op with\n  | enqueue x =>\n    have hc : \u00ac(0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity) := by\n      intro h; apply hv; exact \u27e8\u27e8h.1, h.2.1, Nat.le_of_lt h.2.2\u27e9, h.2.2\u27e9\n    show step s (Op.enqueue x) = (.rejected, s)\n    simp [step, hc]\n  | dequeue =>\n    have hc : \u00ac(0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count) := by\n      intro h; apply hv; exact \u27e8\u27e8h.1, h.2.1, h.2.2.1\u27e9, h.2.2.2\u27e9\n    show step s Op.dequeue = (.rejected, s)\n    simp [step, hc]\n\ntheorem req_well_formed : KeepsWellFormed step := by\n  intro s op hw\n  cases op with\n  | enqueue x =>\n    show WellFormed (step s (Op.enqueue x)).2\n    simp only [step]\n    split\n    \u00b7 simp [WellFormed] at hw \u22a2; omega\n    \u00b7 exact hw\n  | dequeue =>\n    show WellFormed (step s Op.dequeue).2\n    simp only [step]\n    split\n    \u00b7 simp [WellFormed] at hw \u22a2; constructor; exact hw.1; constructor; exact Nat.mod_lt _ hw.1; omega\n    \u00b7 exact hw\n\ntheorem req_enqueue_effects : EnqueueEffects step := by\n  intro s x h\n  have hc : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity := by\n    by_cases hc' : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity\n    \u00b7 exact hc'\n    \u00b7 exfalso; apply h; simp [step, hc']\n  -- step reduces to ok-branch and slot definition matches\n  have hstep : step s (Op.enqueue x) = (Outcome.ok, { s with buf := fun i => if i = (s.head + s.count) % s.capacity then x else s.buf i, count := s.count + 1 }) := by simp [step, hc]\n  have hslot : (s.head + s.count) % s.capacity = slot s s.count := rfl\n  rw [hslot] at hstep\n  exact hstep\n\ntheorem req_dequeue_effects : DequeueEffects step := by\n  intro s h\n  have hc : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count := by\n    by_cases hc' : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count\n    \u00b7 exact hc'\n    \u00b7 exfalso; apply h; simp [step, hc']\n  simp [step, hc]\n\ntheorem req_enqueue_contents : EnqueueContents step := by\n  intro s x h\n  have hv : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity := by\n    by_cases hc' : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity\n    \u00b7 exact hc'\n    \u00b7 exfalso; apply h; simp [step, hc']\n  have he := req_enqueue_effects (s:=s) (x:=x) h\n  rw [he]\n  unfold contents slot; simp only\n  have key : \u2200 n (s' : State), s'.count = n \u2192 0 < s'.capacity \u2227 s'.head < s'.capacity \u2227 n < s'.capacity \u2192\n    List.map (fun i => if (s'.head + i) % s'.capacity = (s'.head + n) % s'.capacity then x else s'.buf ((s'.head + i) % s'.capacity)) (List.range (n+1))\n    = List.map (fun i => s'.buf ((s'.head + i) % s'.capacity)) (List.range n) ++ [x] := by\n    intro n s' hn1 hv'\n    have hr : List.range (n+1) = List.range n ++ [n] := by simp [List.range_succ]\n    rw [hr, List.map_append]\n    have h1m : List.map (fun i => if (s'.head + i) % s'.capacity = (s'.head + n) % s'.capacity then x else s'.buf ((s'.head + i) % s'.capacity)) [n] = [x] := by simp\n    rw [h1m]\n    have hmap : List.map (fun i => if (s'.head + i) % s'.capacity = (s'.head + n) % s'.capacity then x else s'.buf ((s'.head + i) % s'.capacity)) (List.range n)\n      = List.map (fun i => s'.buf ((s'.head + i) % s'.capacity)) (List.range n) := by\n      apply List.map_congr_left; intro i hi; have hi2 : i < n := by simp at hi; omega\n      have hne : (s'.head + i) % s'.capacity \u2260 (s'.head + n) % s'.capacity := by have := slot_ne_aux (s:={s' with count := n}) i hi2 (by simpa using hv'); simpa using this\n      simp [hne]\n    rw [hmap]\n  exact key s.count s rfl hv\n\ntheorem req_dequeue_contents : DequeueContents step := by\n  intro s h\n  have hv : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count := by\n    by_cases hc' : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count\n    \u00b7 exact hc'\n    \u00b7 exfalso; apply h; simp [step, hc']\n  have he := req_dequeue_effects (s:=s) h\n  rw [he]\n  refine \u27e8s.buf s.head, rfl, ?_\u27e9\n  unfold contents slot; simp only\n  have hhead := hv.2.1\n  obtain \u27e8n, hn\u27e9 : \u2203 n, s.count = n + 1 := \u27e8s.count - 1, by omega\u27e9\n  rw [hn]\n  have hshift_all : \u2200 i, s.buf (((s.head + 1) % s.capacity + i) % s.capacity) = s.buf ((s.head + (i + 1)) % s.capacity) := by\n    intro i\n    have h1 := slot_shift_aux s i\n    have h3 : s.head + 1 + i = s.head + (i + 1) := by omega\n    rw [h3] at h1\n    rw [h1]\n  have lhs_eq : List.map (fun i => s.buf ((s.head + i) % s.capacity)) (List.range (n + 1))\n      = s.buf ((s.head + 0) % s.capacity) :: List.map (fun i => s.buf ((s.head + (i + 1)) % s.capacity)) (List.range n) := by\n    rw [List.range_succ_eq_map]; simp\n  have h0eq : s.buf ((s.head + 0) % s.capacity) = s.buf s.head := by simp [Nat.mod_eq_of_lt hhead]\n  rw [lhs_eq, h0eq]\n  have rhs_eq : List.map (fun i => s.buf (((s.head + 1) % s.capacity + i) % s.capacity)) (List.range n)\n      = List.map (fun i => s.buf ((s.head + (i + 1)) % s.capacity)) (List.range n) := by\n    apply List.map_congr_left; intro i _; exact hshift_all i\n  have hcount_eq : n + 1 - 1 = n := by omega\n  change s.buf s.head :: List.map (fun i => s.buf ((s.head + (i + 1)) % s.capacity)) (List.range n) =\n    s.buf s.head :: List.map (fun i => s.buf (((s.head + 1) % s.capacity + i) % s.capacity)) (List.range (n + 1 - 1))\n  rw [hcount_eq, rhs_eq]\n\ntheorem req_fifo : Fifo step := by\n  intro s ops\n  induction ops generalizing s with\n  | nil => simp [run, inflow, outflow]\n  | cons op ops ih =>\n    have hrun1 : run step s (op :: ops) = ((op, (step s op).1) :: (run step (step s op).2 ops).1, (run step (step s op).2 ops).2) := by simp [run]\n    simp only [hrun1, inflow, outflow, List.flatMap_cons]\n    by_cases hv : Valid s op\n    \u00b7 cases op with\n      | enqueue x =>\n        have hnr : (step s (Op.enqueue x)).1 \u2260 .rejected := by intro hrej; have := req_valid_succeeds (s:=s) (op:=Op.enqueue x) hv; contradiction\n        have hec := req_enqueue_contents (s:=s) (x:=x) hnr\n        have ih' := ih (step s (Op.enqueue x)).2\n        have hin : inflowOf (Op.enqueue x, (step s (Op.enqueue x)).1) = [x] := by have he := req_enqueue_effects (s:=s) (x:=x) hnr; rw [he]; simp [inflowOf]\n        have hout : outflowOf (Op.enqueue x, (step s (Op.enqueue x)).1) = [] := by have he := req_enqueue_effects (s:=s) (x:=x) hnr; rw [he]; simp [outflowOf]\n        simp only [hin, hout, List.nil_append]\n        calc contents s ++ ([x] ++ inflow (run step (step s (Op.enqueue x)).2 ops).1)\n            = (contents s ++ [x]) ++ inflow (run step (step s (Op.enqueue x)).2 ops).1 := by rw [List.append_assoc]\n          _ = contents (step s (Op.enqueue x)).2 ++ inflow (run step (step s (Op.enqueue x)).2 ops).1 := by rw [hec]\n          _ = outflow (run step (step s (Op.enqueue x)).2 ops).1 ++ contents (run step (step s (Op.enqueue x)).2 ops).2 := ih'\n      | dequeue =>\n        have hnr : (step s Op.dequeue).1 \u2260 .rejected := by intro hrej; have := req_valid_succeeds (s:=s) (op:=Op.dequeue) hv; contradiction\n        obtain \u27e8y, hy1, hy2\u27e9 := req_dequeue_contents (s:=s) hnr\n        have hout : outflowOf (Op.dequeue, (step s Op.dequeue).1) = [y] := by simp [outflowOf, hy1]\n        have hin : inflowOf (Op.dequeue, (step s Op.dequeue).1) = [] := by simp [inflowOf]\n        simp only [hin, hout, List.nil_append]\n        have ih' := ih (step s Op.dequeue).2\n        calc contents s ++ inflow (run step (step s Op.dequeue).2 ops).1\n            = (y :: contents (step s Op.dequeue).2) ++ inflow (run step (step s Op.dequeue).2 ops).1 := by rw [hy2]\n          _ = y :: (contents (step s Op.dequeue).2 ++ inflow (run step (step s Op.dequeue).2 ops).1) := rfl\n          _ = y :: (outflow (run step (step s Op.dequeue).2 ops).1 ++ contents (run step (step s Op.dequeue).2 ops).2) := by rw [ih']\n          _ = ([y] ++ outflow (run step (step s Op.dequeue).2 ops).1) ++ contents (run step (step s Op.dequeue).2 ops).2 := rfl\n    \u00b7 have hnoop := req_invalid_noop (s:=s) (op:=op) hv\n      have h1 : (step s op).1 = .rejected := by rw [hnoop]\n      have h2 : (step s op).2 = s := by rw [hnoop]\n      have hin : inflowOf (op, (step s op).1) = [] := by rw [h1]; cases op <;> simp [inflowOf]\n      have hout : outflowOf (op, (step s op).1) = [] := by rw [h1]; simp [outflowOf]\n      simp only [hin, hout, h2, List.nil_append]; exact ih s\n\nend RingBuffer\n",
+  "sha256": "77154a10001b45016fed69a154d4277d20563e491319660b4370f2a3b1a7f357",
+  "proved_required": [
+   "req_dequeue_contents",
+   "req_dequeue_effects",
+   "req_enqueue_contents",
+   "req_enqueue_effects",
+   "req_fifo",
+   "req_invalid_noop",
+   "req_valid_succeeds",
+   "req_well_formed"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_dequeue_contents",
+   "req_dequeue_effects",
+   "req_enqueue_contents",
+   "req_enqueue_effects",
+   "req_fifo",
+   "req_invalid_noop",
+   "req_valid_succeeds",
+   "req_well_formed"
+  ],
+  "text": "import RingBuffer.Spec\nnamespace RingBuffer\n\ndef step : Impl := fun s op =>\n  match op with\n  | .enqueue x =>\n    if 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity then\n      (.ok, { s with buf := fun i => if i = (s.head + s.count) % s.capacity then x else s.buf i, count := s.count + 1 })\n    else (.rejected, s)\n  | .dequeue =>\n    if 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count then\n      (.got (s.buf s.head), { s with head := (s.head + 1) % s.capacity, count := s.count - 1 })\n    else (.rejected, s)\n\ntheorem mod_two_aux (a n : Nat) (_h1 : 0 < n) (h2 : a < 2 * n) : a % n = if a < n then a else a - n := by\n  by_cases ha : a < n\n  \u00b7 simp [ha, Nat.mod_eq_of_lt ha]\n  \u00b7 have hsub : a - n < n := by omega\n    have : a % n = (a - n + n) % n := by\n      have : (a - n) + n = a := by omega\n      rw [this]\n    rw [this, Nat.add_mod_right, Nat.mod_eq_of_lt hsub]\n    simp [ha]\n\ntheorem slot_ne_aux (s : State) (i : Nat) (hi : i < s.count) (hv : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity) : (s.head + i) % s.capacity \u2260 (s.head + s.count) % s.capacity := by\n  have hpos := hv.1\n  have hAi : s.head + i < 2 * s.capacity := by omega\n  have hAc : s.head + s.count < 2 * s.capacity := by omega\n  rw [mod_two_aux _ _ hpos hAi, mod_two_aux _ _ hpos hAc]\n  intro heq\n  by_cases hi_lt : s.head + i < s.capacity <;> by_cases hc_lt : s.head + s.count < s.capacity <;> simp [hi_lt, hc_lt] at heq <;> omega\n\ntheorem slot_shift_aux (s : State) (i : Nat) : ((s.head + 1) % s.capacity + i) % s.capacity = (s.head + 1 + i) % s.capacity := by\n  have h1 : ((s.head + 1) % s.capacity + i) % s.capacity = (((s.head + 1) % s.capacity % s.capacity + i % s.capacity) % s.capacity) := by rw [\u2190 Nat.add_mod]\n  have h2 : (((s.head + 1) % s.capacity % s.capacity + i % s.capacity) % s.capacity) = (((s.head + 1) % s.capacity + i % s.capacity) % s.capacity) := by rw [Nat.mod_mod_of_dvd _ (Nat.dvd_refl _)]\n  have h3 : (((s.head + 1) % s.capacity + i % s.capacity) % s.capacity) = (s.head + 1 + i) % s.capacity := by rw [\u2190 Nat.add_mod]\n  rw [h1, h2, h3]\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s op hv\n  cases op with\n  | enqueue x =>\n    simp [Valid] at hv\n    obtain \u27e8hw, hlt\u27e9 := hv\n    show (step s (Op.enqueue x)).1 \u2260 .rejected\n    simp [step, hw.1, hw.2.1, hlt]\n  | dequeue =>\n    simp [Valid] at hv\n    obtain \u27e8hw, hlt\u27e9 := hv\n    show (step s Op.dequeue).1 \u2260 .rejected\n    simp [step, hw.1, hw.2.1, hw.2.2, hlt]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s op hv\n  cases op with\n  | enqueue x =>\n    have hc : \u00ac(0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity) := by\n      intro h; apply hv; exact \u27e8\u27e8h.1, h.2.1, Nat.le_of_lt h.2.2\u27e9, h.2.2\u27e9\n    show step s (Op.enqueue x) = (.rejected, s)\n    simp [step, hc]\n  | dequeue =>\n    have hc : \u00ac(0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count) := by\n      intro h; apply hv; exact \u27e8\u27e8h.1, h.2.1, h.2.2.1\u27e9, h.2.2.2\u27e9\n    show step s Op.dequeue = (.rejected, s)\n    simp [step, hc]\n\ntheorem req_well_formed : KeepsWellFormed step := by\n  intro s op hw\n  cases op with\n  | enqueue x =>\n    show WellFormed (step s (Op.enqueue x)).2\n    simp only [step]\n    split\n    \u00b7 simp [WellFormed] at hw \u22a2; omega\n    \u00b7 exact hw\n  | dequeue =>\n    show WellFormed (step s Op.dequeue).2\n    simp only [step]\n    split\n    \u00b7 simp [WellFormed] at hw \u22a2; constructor; exact hw.1; constructor; exact Nat.mod_lt _ hw.1; omega\n    \u00b7 exact hw\n\ntheorem req_enqueue_effects : EnqueueEffects step := by\n  intro s x h\n  have hc : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity := by\n    by_cases hc' : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity\n    \u00b7 exact hc'\n    \u00b7 exfalso; apply h; simp [step, hc']\n  -- step reduces to ok-branch and slot definition matches\n  have hstep : step s (Op.enqueue x) = (Outcome.ok, { s with buf := fun i => if i = (s.head + s.count) % s.capacity then x else s.buf i, count := s.count + 1 }) := by simp [step, hc]\n  have hslot : (s.head + s.count) % s.capacity = slot s s.count := rfl\n  rw [hslot] at hstep\n  exact hstep\n\ntheorem req_dequeue_effects : DequeueEffects step := by\n  intro s h\n  have hc : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count := by\n    by_cases hc' : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count\n    \u00b7 exact hc'\n    \u00b7 exfalso; apply h; simp [step, hc']\n  simp [step, hc]\n\ntheorem req_enqueue_contents : EnqueueContents step := by\n  intro s x h\n  have hv : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity := by\n    by_cases hc' : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity\n    \u00b7 exact hc'\n    \u00b7 exfalso; apply h; simp [step, hc']\n  have he := req_enqueue_effects (s:=s) (x:=x) h\n  rw [he]\n  unfold contents slot; simp only\n  have key : \u2200 n (s' : State), s'.count = n \u2192 0 < s'.capacity \u2227 s'.head < s'.capacity \u2227 n < s'.capacity \u2192\n    List.map (fun i => if (s'.head + i) % s'.capacity = (s'.head + n) % s'.capacity then x else s'.buf ((s'.head + i) % s'.capacity)) (List.range (n+1))\n    = List.map (fun i => s'.buf ((s'.head + i) % s'.capacity)) (List.range n) ++ [x] := by\n    intro n s' hn1 hv'\n    have hr : List.range (n+1) = List.range n ++ [n] := by simp [List.range_succ]\n    rw [hr, List.map_append]\n    have h1m : List.map (fun i => if (s'.head + i) % s'.capacity = (s'.head + n) % s'.capacity then x else s'.buf ((s'.head + i) % s'.capacity)) [n] = [x] := by simp\n    rw [h1m]\n    have hmap : List.map (fun i => if (s'.head + i) % s'.capacity = (s'.head + n) % s'.capacity then x else s'.buf ((s'.head + i) % s'.capacity)) (List.range n)\n      = List.map (fun i => s'.buf ((s'.head + i) % s'.capacity)) (List.range n) := by\n      apply List.map_congr_left; intro i hi; have hi2 : i < n := by simp at hi; omega\n      have hne : (s'.head + i) % s'.capacity \u2260 (s'.head + n) % s'.capacity := by have := slot_ne_aux (s:={s' with count := n}) i hi2 (by simpa using hv'); simpa using this\n      simp [hne]\n    rw [hmap]\n  exact key s.count s rfl hv\n\ntheorem req_dequeue_contents : DequeueContents step := by\n  intro s h\n  have hv : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count := by\n    by_cases hc' : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count\n    \u00b7 exact hc'\n    \u00b7 exfalso; apply h; simp [step, hc']\n  have he := req_dequeue_effects (s:=s) h\n  rw [he]\n  refine \u27e8s.buf s.head, rfl, ?_\u27e9\n  unfold contents slot; simp only\n  have hhead := hv.2.1\n  obtain \u27e8n, hn\u27e9 : \u2203 n, s.count = n + 1 := \u27e8s.count - 1, by omega\u27e9\n  rw [hn]\n  have hshift_all : \u2200 i, s.buf (((s.head + 1) % s.capacity + i) % s.capacity) = s.buf ((s.head + (i + 1)) % s.capacity) := by\n    intro i\n    have h1 := slot_shift_aux s i\n    have h3 : s.head + 1 + i = s.head + (i + 1) := by omega\n    rw [h3] at h1\n    rw [h1]\n  have lhs_eq : List.map (fun i => s.buf ((s.head + i) % s.capacity)) (List.range (n + 1))\n      = s.buf ((s.head + 0) % s.capacity) :: List.map (fun i => s.buf ((s.head + (i + 1)) % s.capacity)) (List.range n) := by\n    rw [List.range_succ_eq_map]; simp\n  have h0eq : s.buf ((s.head + 0) % s.capacity) = s.buf s.head := by simp [Nat.mod_eq_of_lt hhead]\n  rw [lhs_eq, h0eq]\n  have rhs_eq : List.map (fun i => s.buf (((s.head + 1) % s.capacity + i) % s.capacity)) (List.range n)\n      = List.map (fun i => s.buf ((s.head + (i + 1)) % s.capacity)) (List.range n) := by\n    apply List.map_congr_left; intro i _; exact hshift_all i\n  have hcount_eq : n + 1 - 1 = n := by omega\n  change s.buf s.head :: List.map (fun i => s.buf ((s.head + (i + 1)) % s.capacity)) (List.range n) =\n    s.buf s.head :: List.map (fun i => s.buf (((s.head + 1) % s.capacity + i) % s.capacity)) (List.range (n + 1 - 1))\n  rw [hcount_eq, rhs_eq]\n\ntheorem req_fifo : Fifo step := by\n  intro s ops\n  induction ops generalizing s with\n  | nil => simp [run, inflow, outflow]\n  | cons op ops ih =>\n    have hrun1 : run step s (op :: ops) = ((op, (step s op).1) :: (run step (step s op).2 ops).1, (run step (step s op).2 ops).2) := by simp [run]\n    simp only [hrun1, inflow, outflow, List.flatMap_cons]\n    by_cases hv : Valid s op\n    \u00b7 cases op with\n      | enqueue x =>\n        have hnr : (step s (Op.enqueue x)).1 \u2260 .rejected := by intro hrej; have := req_valid_succeeds (s:=s) (op:=Op.enqueue x) hv; contradiction\n        have hec := req_enqueue_contents (s:=s) (x:=x) hnr\n        have ih' := ih (step s (Op.enqueue x)).2\n        have hin : inflowOf (Op.enqueue x, (step s (Op.enqueue x)).1) = [x] := by have he := req_enqueue_effects (s:=s) (x:=x) hnr; rw [he]; simp [inflowOf]\n        have hout : outflowOf (Op.enqueue x, (step s (Op.enqueue x)).1) = [] := by have he := req_enqueue_effects (s:=s) (x:=x) hnr; rw [he]; simp [outflowOf]\n        simp only [hin, hout, List.nil_append]\n        calc contents s ++ ([x] ++ inflow (run step (step s (Op.enqueue x)).2 ops).1)\n            = (contents s ++ [x]) ++ inflow (run step (step s (Op.enqueue x)).2 ops).1 := by rw [List.append_assoc]\n          _ = contents (step s (Op.enqueue x)).2 ++ inflow (run step (step s (Op.enqueue x)).2 ops).1 := by rw [hec]\n          _ = outflow (run step (step s (Op.enqueue x)).2 ops).1 ++ contents (run step (step s (Op.enqueue x)).2 ops).2 := ih'\n      | dequeue =>\n        have hnr : (step s Op.dequeue).1 \u2260 .rejected := by intro hrej; have := req_valid_succeeds (s:=s) (op:=Op.dequeue) hv; contradiction\n        obtain \u27e8y, hy1, hy2\u27e9 := req_dequeue_contents (s:=s) hnr\n        have hout : outflowOf (Op.dequeue, (step s Op.dequeue).1) = [y] := by simp [outflowOf, hy1]\n        have hin : inflowOf (Op.dequeue, (step s Op.dequeue).1) = [] := by simp [inflowOf]\n        simp only [hin, hout, List.nil_append]\n        have ih' := ih (step s Op.dequeue).2\n        calc contents s ++ inflow (run step (step s Op.dequeue).2 ops).1\n            = (y :: contents (step s Op.dequeue).2) ++ inflow (run step (step s Op.dequeue).2 ops).1 := by rw [hy2]\n          _ = y :: (contents (step s Op.dequeue).2 ++ inflow (run step (step s Op.dequeue).2 ops).1) := rfl\n          _ = y :: (outflow (run step (step s Op.dequeue).2 ops).1 ++ contents (run step (step s Op.dequeue).2 ops).2) := by rw [ih']\n          _ = ([y] ++ outflow (run step (step s Op.dequeue).2 ops).1) ++ contents (run step (step s Op.dequeue).2 ops).2 := rfl\n    \u00b7 have hnoop := req_invalid_noop (s:=s) (op:=op) hv\n      have h1 : (step s op).1 = .rejected := by rw [hnoop]\n      have h2 : (step s op).2 = s := by rw [hnoop]\n      have hin : inflowOf (op, (step s op).1) = [] := by rw [h1]; cases op <;> simp [inflowOf]\n      have hout : outflowOf (op, (step s op).1) = [] := by rw [h1]; simp [outflowOf]\n      simp only [hin, hout, h2, List.nil_append]; exact ih s\n\nend RingBuffer\n"
+ },
+ "proved": [
+  {
+   "name": "req_fifo",
+   "kind": "theorem",
+   "text": "theorem req_fifo : Fifo step := by\n  intro s ops\n  induction ops generalizing s with\n  | nil => simp [run, inflow, outflow]\n  | cons op ops ih =>\n    have hrun1 : run step s (op :: ops) = ((op, (step s op).1) :: (run step (step s op).2 ops).1, (run step (step s op).2 ops).2) := by simp [run]\n    simp only [hrun1, inflow, outflow, List.flatMap_cons]\n    by_cases hv : Valid s op\n    \u00b7 cases op with\n      | enqueue x =>\n        have hnr : (step s (Op.enqueue x)).1 \u2260 .rejected := by intro hrej; have := req_valid_succeeds (s:=s) (op:=Op.enqueue x) hv; contradiction\n        have hec := req_enqueue_contents (s:=s) (x:=x) hnr\n        have ih' := ih (step s (Op.enqueue x)).2\n        have hin : inflowOf (Op.enqueue x, (step s (Op.enqueue x)).1) = [x] := by have he := req_enqueue_effects (s:=s) (x:=x) hnr; rw [he]; simp [inflowOf]\n        have hout : outflowOf (Op.enqueue x, (step s (Op.enqueue x)).1) = [] := by have he := req_enqueue_effects (s:=s) (x:=x) hnr; rw [he]; simp [outflowOf]\n        simp only [hin, hout, List.nil_append]\n        calc contents s ++ ([x] ++ inflow (run step (step s (Op.enqueue x)).2 ops).1)\n            = (contents s ++ [x]) ++ inflow (run step (step s (Op.enqueue x)).2 ops).1 := by rw [List.append_assoc]\n          _ = contents (step s (Op.enqueue x)).2 ++ inflow (run step (step s (Op.enqueue x)).2 ops).1 := by rw [hec]\n          _ = outflow (run step (step s (Op.enqueue x)).2 ops).1 ++ contents (run step (step s (Op.enqueue x)).2 ops).2 := ih'\n      | dequeue =>\n        have hnr : (step s Op.dequeue).1 \u2260 .rejected := by intro hrej; have := req_valid_succeeds (s:=s) (op:=Op.dequeue) hv; contradiction\n        obtain \u27e8y, hy1, hy2\u27e9 := req_dequeue_contents (s:=s) hnr\n        have hout : outflowOf (Op.dequeue, (step s Op.dequeue).1) = [y] := by simp [outflowOf, hy1]\n        have hin : inflowOf (Op.dequeue, (step s Op.dequeue).1) = [] := by simp [inflowOf]\n        simp only [hin, hout, List.nil_append]\n        have ih' := ih (step s Op.dequeue).2\n        calc contents s ++ inflow (run step (step s Op.dequeue).2 ops).1\n            = (y :: contents (step s Op.dequeue).2) ++ inflow (run step (step s Op.dequeue).2 ops).1 := by rw [hy2]\n          _ = y :: (contents (step s Op.dequeue).2 ++ inflow (run step (step s Op.dequeue).2 ops).1) := rfl\n          _ = y :: (outflow (run step (step s Op.dequeue).2 ops).1 ++ contents (run step (step s Op.dequeue).2 ops).2) := by rw [ih']\n          _ = ([y] ++ outflow (run step (step s Op.dequeue).2 ops).1) ++ contents (run step (step s Op.dequeue).2 ops).2 := rfl\n    \u00b7 have hnoop := req_invalid_noop (s:=s) (op:=op) hv\n      have h1 : (step s op).1 = .rejected := by rw [hnoop]\n      have h2 : (step s op).2 = s := by rw [hnoop]\n      have hin : inflowOf (op, (step s op).1) = [] := by rw [h1]; cases op <;> simp [inflowOf]\n      have hout : outflowOf (op, (step s op).1) = [] := by rw [h1]; simp [outflowOf]\n      simp only [hin, hout, h2, List.nil_append]; exact ih s",
+   "deps": [
+    "mod_two_aux",
+    "req_dequeue_contents",
+    "req_dequeue_effects",
+    "req_enqueue_contents",
+    "req_enqueue_effects",
+    "req_invalid_noop",
+    "req_valid_succeeds",
+    "slot_ne_aux",
+    "slot_shift_aux",
+    "step"
+   ],
+   "statement": "theorem req_fifo : Fifo step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-ring-b1",
+   "spec_sha256": "35cfe3f669ba5e1131a15ace70bf8c4869db60f3522e9abe33cf689327ca6598"
+  },
+  {
+   "name": "req_dequeue_contents",
+   "kind": "theorem",
+   "text": "theorem req_dequeue_contents : DequeueContents step := by\n  intro s h\n  have hv : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count := by\n    by_cases hc' : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count\n    \u00b7 exact hc'\n    \u00b7 exfalso; apply h; simp [step, hc']\n  have he := req_dequeue_effects (s:=s) h\n  rw [he]\n  refine \u27e8s.buf s.head, rfl, ?_\u27e9\n  unfold contents slot; simp only\n  have hhead := hv.2.1\n  obtain \u27e8n, hn\u27e9 : \u2203 n, s.count = n + 1 := \u27e8s.count - 1, by omega\u27e9\n  rw [hn]\n  have hshift_all : \u2200 i, s.buf (((s.head + 1) % s.capacity + i) % s.capacity) = s.buf ((s.head + (i + 1)) % s.capacity) := by\n    intro i\n    have h1 := slot_shift_aux s i\n    have h3 : s.head + 1 + i = s.head + (i + 1) := by omega\n    rw [h3] at h1\n    rw [h1]\n  have lhs_eq : List.map (fun i => s.buf ((s.head + i) % s.capacity)) (List.range (n + 1))\n      = s.buf ((s.head + 0) % s.capacity) :: List.map (fun i => s.buf ((s.head + (i + 1)) % s.capacity)) (List.range n) := by\n    rw [List.range_succ_eq_map]; simp\n  have h0eq : s.buf ((s.head + 0) % s.capacity) = s.buf s.head := by simp [Nat.mod_eq_of_lt hhead]\n  rw [lhs_eq, h0eq]\n  have rhs_eq : List.map (fun i => s.buf (((s.head + 1) % s.capacity + i) % s.capacity)) (List.range n)\n      = List.map (fun i => s.buf ((s.head + (i + 1)) % s.capacity)) (List.range n) := by\n    apply List.map_congr_left; intro i _; exact hshift_all i\n  have hcount_eq : n + 1 - 1 = n := by omega\n  change s.buf s.head :: List.map (fun i => s.buf ((s.head + (i + 1)) % s.capacity)) (List.range n) =\n    s.buf s.head :: List.map (fun i => s.buf (((s.head + 1) % s.capacity + i) % s.capacity)) (List.range (n + 1 - 1))\n  rw [hcount_eq, rhs_eq]",
+   "deps": [
+    "req_dequeue_effects",
+    "slot_shift_aux",
+    "step"
+   ],
+   "statement": "theorem req_dequeue_contents : DequeueContents step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-ring-b1",
+   "spec_sha256": "35cfe3f669ba5e1131a15ace70bf8c4869db60f3522e9abe33cf689327ca6598"
+  },
+  {
+   "name": "req_enqueue_contents",
+   "kind": "theorem",
+   "text": "theorem req_enqueue_contents : EnqueueContents step := by\n  intro s x h\n  have hv : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity := by\n    by_cases hc' : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity\n    \u00b7 exact hc'\n    \u00b7 exfalso; apply h; simp [step, hc']\n  have he := req_enqueue_effects (s:=s) (x:=x) h\n  rw [he]\n  unfold contents slot; simp only\n  have key : \u2200 n (s' : State), s'.count = n \u2192 0 < s'.capacity \u2227 s'.head < s'.capacity \u2227 n < s'.capacity \u2192\n    List.map (fun i => if (s'.head + i) % s'.capacity = (s'.head + n) % s'.capacity then x else s'.buf ((s'.head + i) % s'.capacity)) (List.range (n+1))\n    = List.map (fun i => s'.buf ((s'.head + i) % s'.capacity)) (List.range n) ++ [x] := by\n    intro n s' hn1 hv'\n    have hr : List.range (n+1) = List.range n ++ [n] := by simp [List.range_succ]\n    rw [hr, List.map_append]\n    have h1m : List.map (fun i => if (s'.head + i) % s'.capacity = (s'.head + n) % s'.capacity then x else s'.buf ((s'.head + i) % s'.capacity)) [n] = [x] := by simp\n    rw [h1m]\n    have hmap : List.map (fun i => if (s'.head + i) % s'.capacity = (s'.head + n) % s'.capacity then x else s'.buf ((s'.head + i) % s'.capacity)) (List.range n)\n      = List.map (fun i => s'.buf ((s'.head + i) % s'.capacity)) (List.range n) := by\n      apply List.map_congr_left; intro i hi; have hi2 : i < n := by simp at hi; omega\n      have hne : (s'.head + i) % s'.capacity \u2260 (s'.head + n) % s'.capacity := by have := slot_ne_aux (s:={s' with count := n}) i hi2 (by simpa using hv'); simpa using this\n      simp [hne]\n    rw [hmap]\n  exact key s.count s rfl hv",
+   "deps": [
+    "mod_two_aux",
+    "req_enqueue_effects",
+    "slot_ne_aux",
+    "step"
+   ],
+   "statement": "theorem req_enqueue_contents : EnqueueContents step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-ring-b1",
+   "spec_sha256": "35cfe3f669ba5e1131a15ace70bf8c4869db60f3522e9abe33cf689327ca6598"
+  },
+  {
+   "name": "req_dequeue_effects",
+   "kind": "theorem",
+   "text": "theorem req_dequeue_effects : DequeueEffects step := by\n  intro s h\n  have hc : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count := by\n    by_cases hc' : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count\n    \u00b7 exact hc'\n    \u00b7 exfalso; apply h; simp [step, hc']\n  simp [step, hc]",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_dequeue_effects : DequeueEffects step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-ring-b1",
+   "spec_sha256": "35cfe3f669ba5e1131a15ace70bf8c4869db60f3522e9abe33cf689327ca6598"
+  },
+  {
+   "name": "req_enqueue_effects",
+   "kind": "theorem",
+   "text": "theorem req_enqueue_effects : EnqueueEffects step := by\n  intro s x h\n  have hc : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity := by\n    by_cases hc' : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity\n    \u00b7 exact hc'\n    \u00b7 exfalso; apply h; simp [step, hc']\n  -- step reduces to ok-branch and slot definition matches\n  have hstep : step s (Op.enqueue x) = (Outcome.ok, { s with buf := fun i => if i = (s.head + s.count) % s.capacity then x else s.buf i, count := s.count + 1 }) := by simp [step, hc]\n  have hslot : (s.head + s.count) % s.capacity = slot s s.count := rfl\n  rw [hslot] at hstep\n  exact hstep",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_enqueue_effects : EnqueueEffects step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-ring-b1",
+   "spec_sha256": "35cfe3f669ba5e1131a15ace70bf8c4869db60f3522e9abe33cf689327ca6598"
+  },
+  {
+   "name": "req_well_formed",
+   "kind": "theorem",
+   "text": "theorem req_well_formed : KeepsWellFormed step := by\n  intro s op hw\n  cases op with\n  | enqueue x =>\n    show WellFormed (step s (Op.enqueue x)).2\n    simp only [step]\n    split\n    \u00b7 simp [WellFormed] at hw \u22a2; omega\n    \u00b7 exact hw\n  | dequeue =>\n    show WellFormed (step s Op.dequeue).2\n    simp only [step]\n    split\n    \u00b7 simp [WellFormed] at hw \u22a2; constructor; exact hw.1; constructor; exact Nat.mod_lt _ hw.1; omega\n    \u00b7 exact hw",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_well_formed : KeepsWellFormed step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-ring-b1",
+   "spec_sha256": "35cfe3f669ba5e1131a15ace70bf8c4869db60f3522e9abe33cf689327ca6598"
+  },
+  {
+   "name": "req_invalid_noop",
+   "kind": "theorem",
+   "text": "theorem req_invalid_noop : InvalidNoop step := by\n  intro s op hv\n  cases op with\n  | enqueue x =>\n    have hc : \u00ac(0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity) := by\n      intro h; apply hv; exact \u27e8\u27e8h.1, h.2.1, Nat.le_of_lt h.2.2\u27e9, h.2.2\u27e9\n    show step s (Op.enqueue x) = (.rejected, s)\n    simp [step, hc]\n  | dequeue =>\n    have hc : \u00ac(0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count) := by\n      intro h; apply hv; exact \u27e8\u27e8h.1, h.2.1, h.2.2.1\u27e9, h.2.2.2\u27e9\n    show step s Op.dequeue = (.rejected, s)\n    simp [step, hc]",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_invalid_noop : InvalidNoop step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-ring-b1",
+   "spec_sha256": "35cfe3f669ba5e1131a15ace70bf8c4869db60f3522e9abe33cf689327ca6598"
+  },
+  {
+   "name": "req_valid_succeeds",
+   "kind": "theorem",
+   "text": "theorem req_valid_succeeds : ValidSucceeds step := by\n  intro s op hv\n  cases op with\n  | enqueue x =>\n    simp [Valid] at hv\n    obtain \u27e8hw, hlt\u27e9 := hv\n    show (step s (Op.enqueue x)).1 \u2260 .rejected\n    simp [step, hw.1, hw.2.1, hlt]\n  | dequeue =>\n    simp [Valid] at hv\n    obtain \u27e8hw, hlt\u27e9 := hv\n    show (step s Op.dequeue).1 \u2260 .rejected\n    simp [step, hw.1, hw.2.1, hw.2.2, hlt]",
+   "deps": [
+    "step"
+   ],
+   "statement": "theorem req_valid_succeeds : ValidSucceeds step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-ring-b1",
+   "spec_sha256": "35cfe3f669ba5e1131a15ace70bf8c4869db60f3522e9abe33cf689327ca6598"
+  },
+  {
+   "name": "slot_shift_aux",
+   "kind": "theorem",
+   "text": "theorem slot_shift_aux (s : State) (i : Nat) : ((s.head + 1) % s.capacity + i) % s.capacity = (s.head + 1 + i) % s.capacity := by\n  have h1 : ((s.head + 1) % s.capacity + i) % s.capacity = (((s.head + 1) % s.capacity % s.capacity + i % s.capacity) % s.capacity) := by rw [\u2190 Nat.add_mod]\n  have h2 : (((s.head + 1) % s.capacity % s.capacity + i % s.capacity) % s.capacity) = (((s.head + 1) % s.capacity + i % s.capacity) % s.capacity) := by rw [Nat.mod_mod_of_dvd _ (Nat.dvd_refl _)]\n  have h3 : (((s.head + 1) % s.capacity + i % s.capacity) % s.capacity) = (s.head + 1 + i) % s.capacity := by rw [\u2190 Nat.add_mod]\n  rw [h1, h2, h3]",
+   "deps": [],
+   "statement": "theorem slot_shift_aux (s : State) (i : Nat) : ((s.head + 1) % s.capacity + i) % s.capacity = (s.head + 1 + i) % s.capacity",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "queues-ring-b1",
+   "spec_sha256": "35cfe3f669ba5e1131a15ace70bf8c4869db60f3522e9abe33cf689327ca6598"
+  },
+  {
+   "name": "slot_ne_aux",
+   "kind": "theorem",
+   "text": "theorem slot_ne_aux (s : State) (i : Nat) (hi : i < s.count) (hv : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity) : (s.head + i) % s.capacity \u2260 (s.head + s.count) % s.capacity := by\n  have hpos := hv.1\n  have hAi : s.head + i < 2 * s.capacity := by omega\n  have hAc : s.head + s.count < 2 * s.capacity := by omega\n  rw [mod_two_aux _ _ hpos hAi, mod_two_aux _ _ hpos hAc]\n  intro heq\n  by_cases hi_lt : s.head + i < s.capacity <;> by_cases hc_lt : s.head + s.count < s.capacity <;> simp [hi_lt, hc_lt] at heq <;> omega",
+   "deps": [
+    "mod_two_aux"
+   ],
+   "statement": "theorem slot_ne_aux (s : State) (i : Nat) (hi : i < s.count) (hv : 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity) : (s.head + i) % s.capacity \u2260 (s.head + s.count) % s.capacity",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "queues-ring-b1",
+   "spec_sha256": "35cfe3f669ba5e1131a15ace70bf8c4869db60f3522e9abe33cf689327ca6598"
+  },
+  {
+   "name": "mod_two_aux",
+   "kind": "theorem",
+   "text": "theorem mod_two_aux (a n : Nat) (_h1 : 0 < n) (h2 : a < 2 * n) : a % n = if a < n then a else a - n := by\n  by_cases ha : a < n\n  \u00b7 simp [ha, Nat.mod_eq_of_lt ha]\n  \u00b7 have hsub : a - n < n := by omega\n    have : a % n = (a - n + n) % n := by\n      have : (a - n) + n = a := by omega\n      rw [this]\n    rw [this, Nat.add_mod_right, Nat.mod_eq_of_lt hsub]\n    simp [ha]",
+   "deps": [],
+   "statement": "theorem mod_two_aux (a n : Nat) (_h1 : 0 < n) (h2 : a < 2 * n) : a % n = if a < n then a else a - n",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "queues-ring-b1",
+   "spec_sha256": "35cfe3f669ba5e1131a15ace70bf8c4869db60f3522e9abe33cf689327ca6598"
+  },
+  {
+   "name": "step",
+   "kind": "def",
+   "text": "def step : Impl := fun s op =>\n  match op with\n  | .enqueue x =>\n    if 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity then\n      (.ok, { s with buf := fun i => if i = (s.head + s.count) % s.capacity then x else s.buf i, count := s.count + 1 })\n    else (.rejected, s)\n  | .dequeue =>\n    if 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count then\n      (.got (s.buf s.head), { s with head := (s.head + 1) % s.capacity, count := s.count - 1 })\n    else (.rejected, s)",
+   "deps": [],
+   "statement": "def step : Impl := fun s op =>\n  match op with\n  | .enqueue x =>\n    if 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count < s.capacity then\n      (.ok, { s with buf := fun i => if i = (s.head + s.count) % s.capacity then x else s.buf i, count := s.count + 1 })\n    else (.rejected, s)\n  | .dequeue =>\n    if 0 < s.capacity \u2227 s.head < s.capacity \u2227 s.count \u2264 s.capacity \u2227 0 < s.count then\n      (.got (s.buf s.head), { s with head := (s.head + 1) % s.capacity, count := s.count - 1 })\n    else (.rejected, s)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "queues-ring-b1",
+   "spec_sha256": "35cfe3f669ba5e1131a15ace70bf8c4869db60f3522e9abe33cf689327ca6598"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [],
+ "budget": {
+  "usd_cap": 3.0,
+  "wall_cap_s": 3600.0,
+  "stop": null,
+  "usd_list": 2.5589,
+  "usd_actual": 2.5589,
+  "elapsed_s": 1702.8,
+  "unknown_usage_calls": 0,
+  "lost_attempts": 1,
+  "input_bound_violations": 0,
+  "wall_overrun_s": 0.0,
+  "by_model": {
+   "meta-models/muse-spark-open": {
+    "calls": 64,
+    "prompt": 2285335,
+    "cached": 1438848,
+    "completion": 267088,
+    "usd_list": 2.5589,
+    "usd_actual": 2.5589
+   }
+  }
+ },
+ "resumed_from": []
+}

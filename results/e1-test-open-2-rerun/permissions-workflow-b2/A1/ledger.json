@@ -1,0 +1,328 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "permissions-workflow-b2",
+ "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52",
+ "run_dir": "results/e1-test-open-2-rerun/permissions-workflow-b2/A1",
+ "arm": "A1",
+ "loop": "orchestrated",
+ "model": "meta-models/muse-spark-open",
+ "created": "2026-11-02T22:54:15-0500",
+ "reconstructed": false,
+ "final": {
+  "text": "import Workflow.Spec\nnamespace Workflow\ninstance instDecidableValidRequest (s : State) (r : Request) : Decidable (ValidRequest s r) := by\n  unfold ValidRequest; infer_instance\ndef edges : List (Role \u00d7 Status \u00d7 Status) :=\n  [(.author, .draft, .review), (.author, .draft, .archived), (.author, .review, .draft),\n   (.reviewer, .review, .approved), (.reviewer, .review, .draft),\n   (.publisher, .approved, .published), (.publisher, .approved, .draft),\n   (.publisher, .published, .archived)]\n\ndef mayMove (s : State) (r : Request) : Bool :=\n  edges.contains (s.role r.actor, s.status r.doc, r.dst)\n\ndef mayEdit (s : State) (r : Request) : Bool :=\n  s.role r.actor == .author && s.status r.doc == .draft\n\ndef doMove (s : State) (r : Request) : State :=\n  { s with status := fun d => if d == r.doc then r.dst else s.status d,\n           audit := s.audit ++ [{ doc := r.doc, actor := r.actor, src := s.status r.doc, dst := r.dst }] }\n\ndef doEdit (s : State) (r : Request) : State :=\n  { s with content := fun d => if d == r.doc then r.body else s.content d }\n\ndef step : Impl := fun s r =>\n  if s.docs.contains r.doc && s.users.contains r.actor then\n    match r.kind with\n    | .move => if mayMove s r then (.ok, doMove s r) else (.rejected, s)\n    | .edit => if mayEdit s r then (.ok, doEdit s r) else (.rejected, s)\n  else (.rejected, s)\n\ntheorem replayAppend2 (audit : List Entry) (e : Entry) (d : DocId) (st : Status) :\n  replay (audit ++ [e]) d st = if e.doc = d then e.dst else replay audit d st := by\n  induction audit generalizing st with\n  | nil => simp [replay]\n  | cons hd tl ih =>\n    simp [replay, ih]\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s r h\n  have hdoc : r.doc \u2208 s.docs := h.1\n  have huser : r.actor \u2208 s.users := h.2.1\n  have hmove := h.2.2.1\n  have hedit := h.2.2.2\n  show (step s r).1 = .ok\n  unfold step\n  simp [hdoc, huser]\n  cases hk : r.kind with\n  | move =>\n    have hall : allowed (s.role r.actor) (s.status r.doc) r.dst = true := hmove hk\n    have hc : mayMove s r = true := by\n      unfold mayMove allowed at *\n      unfold edges at *\n      cases hr : s.role r.actor <;> cases hs : s.status r.doc <;> cases hd : r.dst <;> simp_all\n    simp [hk, hc]\n  | edit =>\n    have he := hedit hk\n    have hc : mayEdit s r = true := by unfold mayEdit; simp [he.1, he.2]\n    simp [hk, hc]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s r h\n  unfold ValidRequest at h\n  unfold step\n  by_cases hdoc : r.doc \u2208 s.docs\n  \u00b7 by_cases huser : r.actor \u2208 s.users\n    \u00b7 simp [show r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users from \u27e8hdoc,huser\u27e9]\n      cases hk : r.kind\n      \u00b7 have hall : allowed (s.role r.actor) (s.status r.doc) r.dst \u2260 true := by\n          intro hc\n          apply h\n          refine \u27e8hdoc, huser, ?_, ?_\u27e9\n          \u00b7 intro _; exact hc\n          \u00b7 intro he; simp [hk] at he\n        have hm : mayMove s r = false := by\n          unfold mayMove allowed edges at *\n          cases hr : s.role r.actor <;> cases hs : s.status r.doc <;> cases hd : r.dst <;> simp_all\n        simp [hk, hm]\n      \u00b7 have hall : \u00ac (s.role r.actor = .author \u2227 s.status r.doc = .draft) := by\n          intro hc\n          apply h\n          refine \u27e8hdoc, huser, ?_, ?_\u27e9\n          \u00b7 intro hm; simp [hk] at hm\n          \u00b7 intro _; exact hc\n        have hm : mayEdit s r = false := by\n          unfold mayEdit\n          simp\n          intro ha hb\n          exact hall \u27e8ha, hb\u27e9\n        simp [hk, hm]\n    \u00b7 have hmem : \u00ac (r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users) := by\n        intro \u27e8_, hu\u27e9; exact huser hu\n      simp [hmem]\n  \u00b7 have hmem : \u00ac (r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users) := by\n      intro \u27e8hd, _\u27e9; exact hdoc hd\n    simp [hmem]\n\ntheorem req_authorization : Authorized step := by\n  intro s r hok\n  unfold step at hok\n  by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n  \u00b7 simp [hmem] at hok\n    cases hk : r.kind\n    \u00b7 simp [hk] at hok\n      have hm : mayMove s r = true := by\n        cases hc : mayMove s r\n        \u00b7 simp [hc] at hok\n        \u00b7 rfl\n      constructor\n      \u00b7 intro _\n        unfold mayMove at hm\n        unfold allowed\n        cases hr : s.role r.actor <;> cases hs : s.status r.doc <;> cases hd : r.dst <;> simp_all [edges]\n      \u00b7 intro he; simp [hk] at he\n    \u00b7 simp [hk] at hok\n      have hm : mayEdit s r = true := by\n        cases hc : mayEdit s r\n        \u00b7 simp [hc] at hok\n        \u00b7 rfl\n      constructor\n      \u00b7 intro hm2; simp [hk] at hm2\n      \u00b7 intro _\n        unfold mayEdit at hm\n        simp at hm\n        have hra : s.role r.actor = .author := by\n          cases hr : s.role r.actor <;> simp_all\n        have hsd : s.status r.doc = .draft := by\n          cases hs : s.status r.doc <;> simp_all\n        exact \u27e8hra, hsd\u27e9\n  \u00b7 simp [hmem] at hok\n\ntheorem req_single_doc : SingleDoc step := by\n  intro s r hok d hne\n  unfold step at hok \u22a2\n  by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n  \u00b7 simp [hmem] at hok \u22a2\n    cases hk : r.kind\n    \u00b7 simp [hk] at hok \u22a2\n      cases hm : mayMove s r\n      \u00b7 simp [hm] at hok\n      \u00b7 simp [hm] at hok \u22a2\n        constructor\n        \u00b7 show (doMove s r).status d = s.status d; simp [doMove, beq_iff_eq, hne]\n        \u00b7 show (doMove s r).content d = s.content d; simp [doMove]\n    \u00b7 simp [hk] at hok \u22a2\n      cases hm : mayEdit s r\n      \u00b7 simp [hm] at hok\n      \u00b7 simp [hm] at hok \u22a2\n        constructor\n        \u00b7 show (doEdit s r).status d = s.status d; simp [doEdit]\n        \u00b7 show (doEdit s r).content d = s.content d; simp [doEdit, beq_iff_eq, hne]\n  \u00b7 simp [hmem] at hok\n\ntheorem req_published_immutable : PublishedImmutable step := by\n  intro s r d hd\n  unfold step\n  by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n  \u00b7 simp [hmem]\n    cases hk : r.kind\n    \u00b7 simp [hk]\n      cases hm : mayMove s r\n      \u00b7 simp [hm]\n      \u00b7 simp [hm, doMove]\n    \u00b7 simp [hk]\n      cases hm : mayEdit s r\n      \u00b7 simp [hm]\n      \u00b7 simp [hm]\n        have hmd : mayEdit s r = true := hm\n        unfold mayEdit at hmd\n        simp at hmd\n        have hsd : s.status r.doc = .draft := by\n          cases hs : s.status r.doc <;> simp_all\n        by_cases heq : d = r.doc\n        \u00b7 subst heq\n          simp_all\n        \u00b7 simp [doEdit, beq_iff_eq, heq]\n  \u00b7 simp [hmem]\n\ntheorem req_no_unpublish : NoUnpublish step := by\n  intro s r d\n  constructor\n  \u00b7 intro hpub\n    show (step s r).2.status d = .published \u2228 (step s r).2.status d = .archived\n    unfold step\n    by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n    \u00b7 simp [hmem]\n      cases hk : r.kind\n      \u00b7 simp [hk]\n        by_cases hm : mayMove s r = true\n        \u00b7 simp only [hm, \u2193reduceIte, doMove]\n          -- now goal is (fun d => if d == r.doc then r.dst else s.status d) d ...\n          simp only [beq_iff_eq]\n          by_cases heq : d = r.doc\n          \u00b7 subst heq\n            have hm2 : edges.contains (s.role r.actor, s.status r.doc, r.dst) = true := by\n              unfold mayMove at hm; exact hm\n            rw [hpub] at hm2\n            unfold edges at hm2\n            cases hr : s.role r.actor <;> cases hd : r.dst <;> simp_all\n          \u00b7 simp [heq, hpub]\n        \u00b7 have hmF : mayMove s r = false := by cases hc : mayMove s r <;> simp_all\n          simp [hmF, hpub]\n      \u00b7 simp [hk]\n        by_cases hm : mayEdit s r = true\n        \u00b7 simp [hm, doEdit, hpub]\n        \u00b7 have hmF : mayEdit s r = false := by cases hc : mayEdit s r <;> simp_all\n          simp [hmF, hpub]\n    \u00b7 simp [hmem, hpub]\n  \u00b7 intro harc\n    show (step s r).2.status d = .archived\n    unfold step\n    by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n    \u00b7 simp [hmem]\n      cases hk : r.kind\n      \u00b7 simp [hk]\n        by_cases hm : mayMove s r = true\n        \u00b7 simp only [hm, \u2193reduceIte, doMove]\n          simp only [beq_iff_eq]\n          by_cases heq : d = r.doc\n          \u00b7 subst heq\n            have hm2 : edges.contains (s.role r.actor, s.status r.doc, r.dst) = true := by\n              unfold mayMove at hm; exact hm\n            rw [harc] at hm2\n            unfold edges at hm2\n            cases hr : s.role r.actor <;> cases hd : r.dst <;> simp_all\n          \u00b7 simp [heq, harc]\n        \u00b7 have hmF : mayMove s r = false := by cases hc : mayMove s r <;> simp_all\n          simp [hmF, harc]\n      \u00b7 simp [hk]\n        by_cases hm : mayEdit s r = true\n        \u00b7 simp [hm, doEdit, harc]\n        \u00b7 have hmF : mayEdit s r = false := by cases hc : mayEdit s r <;> simp_all\n          simp [hmF, harc]\n    \u00b7 simp [hmem, harc]\n\ntheorem req_effects : Effects step := by\n  intro s r hok\n  have hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users := by\n    unfold step at hok\n    by_cases h : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n    \u00b7 exact h\n    \u00b7 simp [h] at hok\n  unfold step at hok \u22a2\n  simp [hmem] at hok \u22a2\n  cases hk : r.kind\n  \u00b7 simp [hk] at hok \u22a2\n    have hm : mayMove s r = true := by\n      by_cases hc : mayMove s r = true\n      \u00b7 exact hc\n      \u00b7 have : mayMove s r = false := by cases hc2 : mayMove s r <;> simp_all\n        simp [this] at hok\n    simp [hm] at hok \u22a2\n    refine \u27e8rfl, rfl, rfl, ?_, ?_, ?_\u27e9\n    \u00b7 intro d; simp only [doMove, expectedStatus, hk, beq_iff_eq]; by_cases heq : d = r.doc <;> simp [heq]\n    \u00b7 intro d; simp [doMove, expectedContent, hk]\n    \u00b7 simp [doMove, expectedAudit, hk]\n  \u00b7 simp [hk] at hok \u22a2\n    have hm : mayEdit s r = true := by\n      by_cases hc : mayEdit s r = true\n      \u00b7 exact hc\n      \u00b7 have : mayEdit s r = false := by cases hc2 : mayEdit s r <;> simp_all\n        simp [this] at hok\n    simp [hm] at hok \u22a2\n    refine \u27e8rfl, rfl, rfl, ?_, ?_, ?_\u27e9\n    \u00b7 intro d; simp [doEdit, expectedStatus, hk]\n    \u00b7 intro d; simp only [doEdit, expectedContent, hk, beq_iff_eq]; by_cases heq : d = r.doc <;> simp [heq]\n    \u00b7 simp [doEdit, expectedAudit, hk]\n\ntheorem req_audit_append_only : AuditAppendOnly step := by\n  intro s r\n  show s.audit <+: (step s r).2.audit\n  unfold step\n  by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n  \u00b7 simp [hmem]\n    cases hk : r.kind\n    \u00b7 cases hm : mayMove s r <;> simp [hk, hm]\n      unfold doMove; simp\n    \u00b7 cases hm : mayEdit s r <;> simp [hk, hm]\n      unfold doEdit; simp\n  \u00b7 simp [hmem]\n\ntheorem req_audit_consistent : KeepsAuditConsistent step := by\n  intro s r hCons d hd\n  unfold step at hd \u22a2\n  by_cases hb : s.docs.contains r.doc && s.users.contains r.actor\n  \u00b7 simp only [hb, \u2193reduceIte] at hd \u22a2\n    cases hk : r.kind\n    \u00b7 simp only [hk] at hd \u22a2\n      by_cases hm : mayMove s r\n      \u00b7 simp only [hm, \u2193reduceIte, doMove] at hd \u22a2\n        have hrep : replay (s.audit ++ [{ doc := r.doc, actor := r.actor, src := s.status r.doc, dst := r.dst }]) d .draft\n            = if r.doc = d then r.dst else replay s.audit d .draft := replayAppend2 _ _ _ _\n        by_cases heq : r.doc = d\n        \u00b7 have heq2 : d == r.doc := by simp [beq_iff_eq, heq]\n          have h1 : r.doc = d := heq\n          rw [hrep, if_pos h1]\n          simp [heq2]\n        \u00b7 have heq2 : \u00ac (d == r.doc) := by simp [beq_iff_eq]; intro h; exact heq h.symm\n          rw [hrep, if_neg heq]\n          simp [heq2, hCons d hd]\n      \u00b7 simp only [hm, \u2193reduceIte] at hd \u22a2\n        exact hCons d hd\n    \u00b7 simp only [hk] at hd \u22a2\n      by_cases hm : mayEdit s r\n      \u00b7 simp only [hm, \u2193reduceIte, doEdit] at hd \u22a2\n        exact hCons d hd\n      \u00b7 simp only [hm, \u2193reduceIte] at hd \u22a2\n        exact hCons d hd\n  \u00b7 simp only [hb, \u2193reduceIte] at hd \u22a2\n    exact hCons d hd\n\nend Workflow\n",
+  "sha256": "ce7ee16f64d143bf4e162e899dc7d52b659428397ea081a77c4bc2bfad05d830",
+  "proved_required": [
+   "req_audit_append_only",
+   "req_audit_consistent",
+   "req_authorization",
+   "req_effects",
+   "req_invalid_noop",
+   "req_no_unpublish",
+   "req_published_immutable",
+   "req_single_doc",
+   "req_valid_succeeds"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_audit_append_only",
+   "req_audit_consistent",
+   "req_authorization",
+   "req_effects",
+   "req_invalid_noop",
+   "req_no_unpublish",
+   "req_published_immutable",
+   "req_single_doc",
+   "req_valid_succeeds"
+  ],
+  "text": "import Workflow.Spec\nnamespace Workflow\ninstance instDecidableValidRequest (s : State) (r : Request) : Decidable (ValidRequest s r) := by\n  unfold ValidRequest; infer_instance\ndef edges : List (Role \u00d7 Status \u00d7 Status) :=\n  [(.author, .draft, .review), (.author, .draft, .archived), (.author, .review, .draft),\n   (.reviewer, .review, .approved), (.reviewer, .review, .draft),\n   (.publisher, .approved, .published), (.publisher, .approved, .draft),\n   (.publisher, .published, .archived)]\n\ndef mayMove (s : State) (r : Request) : Bool :=\n  edges.contains (s.role r.actor, s.status r.doc, r.dst)\n\ndef mayEdit (s : State) (r : Request) : Bool :=\n  s.role r.actor == .author && s.status r.doc == .draft\n\ndef doMove (s : State) (r : Request) : State :=\n  { s with status := fun d => if d == r.doc then r.dst else s.status d,\n           audit := s.audit ++ [{ doc := r.doc, actor := r.actor, src := s.status r.doc, dst := r.dst }] }\n\ndef doEdit (s : State) (r : Request) : State :=\n  { s with content := fun d => if d == r.doc then r.body else s.content d }\n\ndef step : Impl := fun s r =>\n  if s.docs.contains r.doc && s.users.contains r.actor then\n    match r.kind with\n    | .move => if mayMove s r then (.ok, doMove s r) else (.rejected, s)\n    | .edit => if mayEdit s r then (.ok, doEdit s r) else (.rejected, s)\n  else (.rejected, s)\n\ntheorem replayAppend2 (audit : List Entry) (e : Entry) (d : DocId) (st : Status) :\n  replay (audit ++ [e]) d st = if e.doc = d then e.dst else replay audit d st := by\n  induction audit generalizing st with\n  | nil => simp [replay]\n  | cons hd tl ih =>\n    simp [replay, ih]\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s r h\n  have hdoc : r.doc \u2208 s.docs := h.1\n  have huser : r.actor \u2208 s.users := h.2.1\n  have hmove := h.2.2.1\n  have hedit := h.2.2.2\n  show (step s r).1 = .ok\n  unfold step\n  simp [hdoc, huser]\n  cases hk : r.kind with\n  | move =>\n    have hall : allowed (s.role r.actor) (s.status r.doc) r.dst = true := hmove hk\n    have hc : mayMove s r = true := by\n      unfold mayMove allowed at *\n      unfold edges at *\n      cases hr : s.role r.actor <;> cases hs : s.status r.doc <;> cases hd : r.dst <;> simp_all\n    simp [hk, hc]\n  | edit =>\n    have he := hedit hk\n    have hc : mayEdit s r = true := by unfold mayEdit; simp [he.1, he.2]\n    simp [hk, hc]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s r h\n  unfold ValidRequest at h\n  unfold step\n  by_cases hdoc : r.doc \u2208 s.docs\n  \u00b7 by_cases huser : r.actor \u2208 s.users\n    \u00b7 simp [show r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users from \u27e8hdoc,huser\u27e9]\n      cases hk : r.kind\n      \u00b7 have hall : allowed (s.role r.actor) (s.status r.doc) r.dst \u2260 true := by\n          intro hc\n          apply h\n          refine \u27e8hdoc, huser, ?_, ?_\u27e9\n          \u00b7 intro _; exact hc\n          \u00b7 intro he; simp [hk] at he\n        have hm : mayMove s r = false := by\n          unfold mayMove allowed edges at *\n          cases hr : s.role r.actor <;> cases hs : s.status r.doc <;> cases hd : r.dst <;> simp_all\n        simp [hk, hm]\n      \u00b7 have hall : \u00ac (s.role r.actor = .author \u2227 s.status r.doc = .draft) := by\n          intro hc\n          apply h\n          refine \u27e8hdoc, huser, ?_, ?_\u27e9\n          \u00b7 intro hm; simp [hk] at hm\n          \u00b7 intro _; exact hc\n        have hm : mayEdit s r = false := by\n          unfold mayEdit\n          simp\n          intro ha hb\n          exact hall \u27e8ha, hb\u27e9\n        simp [hk, hm]\n    \u00b7 have hmem : \u00ac (r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users) := by\n        intro \u27e8_, hu\u27e9; exact huser hu\n      simp [hmem]\n  \u00b7 have hmem : \u00ac (r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users) := by\n      intro \u27e8hd, _\u27e9; exact hdoc hd\n    simp [hmem]\n\ntheorem req_authorization : Authorized step := by\n  intro s r hok\n  unfold step at hok\n  by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n  \u00b7 simp [hmem] at hok\n    cases hk : r.kind\n    \u00b7 simp [hk] at hok\n      have hm : mayMove s r = true := by\n        cases hc : mayMove s r\n        \u00b7 simp [hc] at hok\n        \u00b7 rfl\n      constructor\n      \u00b7 intro _\n        unfold mayMove at hm\n        unfold allowed\n        cases hr : s.role r.actor <;> cases hs : s.status r.doc <;> cases hd : r.dst <;> simp_all [edges]\n      \u00b7 intro he; simp [hk] at he\n    \u00b7 simp [hk] at hok\n      have hm : mayEdit s r = true := by\n        cases hc : mayEdit s r\n        \u00b7 simp [hc] at hok\n        \u00b7 rfl\n      constructor\n      \u00b7 intro hm2; simp [hk] at hm2\n      \u00b7 intro _\n        unfold mayEdit at hm\n        simp at hm\n        have hra : s.role r.actor = .author := by\n          cases hr : s.role r.actor <;> simp_all\n        have hsd : s.status r.doc = .draft := by\n          cases hs : s.status r.doc <;> simp_all\n        exact \u27e8hra, hsd\u27e9\n  \u00b7 simp [hmem] at hok\n\ntheorem req_single_doc : SingleDoc step := by\n  intro s r hok d hne\n  unfold step at hok \u22a2\n  by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n  \u00b7 simp [hmem] at hok \u22a2\n    cases hk : r.kind\n    \u00b7 simp [hk] at hok \u22a2\n      cases hm : mayMove s r\n      \u00b7 simp [hm] at hok\n      \u00b7 simp [hm] at hok \u22a2\n        constructor\n        \u00b7 show (doMove s r).status d = s.status d; simp [doMove, beq_iff_eq, hne]\n        \u00b7 show (doMove s r).content d = s.content d; simp [doMove]\n    \u00b7 simp [hk] at hok \u22a2\n      cases hm : mayEdit s r\n      \u00b7 simp [hm] at hok\n      \u00b7 simp [hm] at hok \u22a2\n        constructor\n        \u00b7 show (doEdit s r).status d = s.status d; simp [doEdit]\n        \u00b7 show (doEdit s r).content d = s.content d; simp [doEdit, beq_iff_eq, hne]\n  \u00b7 simp [hmem] at hok\n\ntheorem req_published_immutable : PublishedImmutable step := by\n  intro s r d hd\n  unfold step\n  by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n  \u00b7 simp [hmem]\n    cases hk : r.kind\n    \u00b7 simp [hk]\n      cases hm : mayMove s r\n      \u00b7 simp [hm]\n      \u00b7 simp [hm, doMove]\n    \u00b7 simp [hk]\n      cases hm : mayEdit s r\n      \u00b7 simp [hm]\n      \u00b7 simp [hm]\n        have hmd : mayEdit s r = true := hm\n        unfold mayEdit at hmd\n        simp at hmd\n        have hsd : s.status r.doc = .draft := by\n          cases hs : s.status r.doc <;> simp_all\n        by_cases heq : d = r.doc\n        \u00b7 subst heq\n          simp_all\n        \u00b7 simp [doEdit, beq_iff_eq, heq]\n  \u00b7 simp [hmem]\n\ntheorem req_no_unpublish : NoUnpublish step := by\n  intro s r d\n  constructor\n  \u00b7 intro hpub\n    show (step s r).2.status d = .published \u2228 (step s r).2.status d = .archived\n    unfold step\n    by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n    \u00b7 simp [hmem]\n      cases hk : r.kind\n      \u00b7 simp [hk]\n        by_cases hm : mayMove s r = true\n        \u00b7 simp only [hm, \u2193reduceIte, doMove]\n          -- now goal is (fun d => if d == r.doc then r.dst else s.status d) d ...\n          simp only [beq_iff_eq]\n          by_cases heq : d = r.doc\n          \u00b7 subst heq\n            have hm2 : edges.contains (s.role r.actor, s.status r.doc, r.dst) = true := by\n              unfold mayMove at hm; exact hm\n            rw [hpub] at hm2\n            unfold edges at hm2\n            cases hr : s.role r.actor <;> cases hd : r.dst <;> simp_all\n          \u00b7 simp [heq, hpub]\n        \u00b7 have hmF : mayMove s r = false := by cases hc : mayMove s r <;> simp_all\n          simp [hmF, hpub]\n      \u00b7 simp [hk]\n        by_cases hm : mayEdit s r = true\n        \u00b7 simp [hm, doEdit, hpub]\n        \u00b7 have hmF : mayEdit s r = false := by cases hc : mayEdit s r <;> simp_all\n          simp [hmF, hpub]\n    \u00b7 simp [hmem, hpub]\n  \u00b7 intro harc\n    show (step s r).2.status d = .archived\n    unfold step\n    by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n    \u00b7 simp [hmem]\n      cases hk : r.kind\n      \u00b7 simp [hk]\n        by_cases hm : mayMove s r = true\n        \u00b7 simp only [hm, \u2193reduceIte, doMove]\n          simp only [beq_iff_eq]\n          by_cases heq : d = r.doc\n          \u00b7 subst heq\n            have hm2 : edges.contains (s.role r.actor, s.status r.doc, r.dst) = true := by\n              unfold mayMove at hm; exact hm\n            rw [harc] at hm2\n            unfold edges at hm2\n            cases hr : s.role r.actor <;> cases hd : r.dst <;> simp_all\n          \u00b7 simp [heq, harc]\n        \u00b7 have hmF : mayMove s r = false := by cases hc : mayMove s r <;> simp_all\n          simp [hmF, harc]\n      \u00b7 simp [hk]\n        by_cases hm : mayEdit s r = true\n        \u00b7 simp [hm, doEdit, harc]\n        \u00b7 have hmF : mayEdit s r = false := by cases hc : mayEdit s r <;> simp_all\n          simp [hmF, harc]\n    \u00b7 simp [hmem, harc]\n\ntheorem req_effects : Effects step := by\n  intro s r hok\n  have hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users := by\n    unfold step at hok\n    by_cases h : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n    \u00b7 exact h\n    \u00b7 simp [h] at hok\n  unfold step at hok \u22a2\n  simp [hmem] at hok \u22a2\n  cases hk : r.kind\n  \u00b7 simp [hk] at hok \u22a2\n    have hm : mayMove s r = true := by\n      by_cases hc : mayMove s r = true\n      \u00b7 exact hc\n      \u00b7 have : mayMove s r = false := by cases hc2 : mayMove s r <;> simp_all\n        simp [this] at hok\n    simp [hm] at hok \u22a2\n    refine \u27e8rfl, rfl, rfl, ?_, ?_, ?_\u27e9\n    \u00b7 intro d; simp only [doMove, expectedStatus, hk, beq_iff_eq]; by_cases heq : d = r.doc <;> simp [heq]\n    \u00b7 intro d; simp [doMove, expectedContent, hk]\n    \u00b7 simp [doMove, expectedAudit, hk]\n  \u00b7 simp [hk] at hok \u22a2\n    have hm : mayEdit s r = true := by\n      by_cases hc : mayEdit s r = true\n      \u00b7 exact hc\n      \u00b7 have : mayEdit s r = false := by cases hc2 : mayEdit s r <;> simp_all\n        simp [this] at hok\n    simp [hm] at hok \u22a2\n    refine \u27e8rfl, rfl, rfl, ?_, ?_, ?_\u27e9\n    \u00b7 intro d; simp [doEdit, expectedStatus, hk]\n    \u00b7 intro d; simp only [doEdit, expectedContent, hk, beq_iff_eq]; by_cases heq : d = r.doc <;> simp [heq]\n    \u00b7 simp [doEdit, expectedAudit, hk]\n\ntheorem req_audit_append_only : AuditAppendOnly step := by\n  intro s r\n  show s.audit <+: (step s r).2.audit\n  unfold step\n  by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n  \u00b7 simp [hmem]\n    cases hk : r.kind\n    \u00b7 cases hm : mayMove s r <;> simp [hk, hm]\n      unfold doMove; simp\n    \u00b7 cases hm : mayEdit s r <;> simp [hk, hm]\n      unfold doEdit; simp\n  \u00b7 simp [hmem]\n\ntheorem req_audit_consistent : KeepsAuditConsistent step := by\n  intro s r hCons d hd\n  unfold step at hd \u22a2\n  by_cases hb : s.docs.contains r.doc && s.users.contains r.actor\n  \u00b7 simp only [hb, \u2193reduceIte] at hd \u22a2\n    cases hk : r.kind\n    \u00b7 simp only [hk] at hd \u22a2\n      by_cases hm : mayMove s r\n      \u00b7 simp only [hm, \u2193reduceIte, doMove] at hd \u22a2\n        have hrep : replay (s.audit ++ [{ doc := r.doc, actor := r.actor, src := s.status r.doc, dst := r.dst }]) d .draft\n            = if r.doc = d then r.dst else replay s.audit d .draft := replayAppend2 _ _ _ _\n        by_cases heq : r.doc = d\n        \u00b7 have heq2 : d == r.doc := by simp [beq_iff_eq, heq]\n          have h1 : r.doc = d := heq\n          rw [hrep, if_pos h1]\n          simp [heq2]\n        \u00b7 have heq2 : \u00ac (d == r.doc) := by simp [beq_iff_eq]; intro h; exact heq h.symm\n          rw [hrep, if_neg heq]\n          simp [heq2, hCons d hd]\n      \u00b7 simp only [hm, \u2193reduceIte] at hd \u22a2\n        exact hCons d hd\n    \u00b7 simp only [hk] at hd \u22a2\n      by_cases hm : mayEdit s r\n      \u00b7 simp only [hm, \u2193reduceIte, doEdit] at hd \u22a2\n        exact hCons d hd\n      \u00b7 simp only [hm, \u2193reduceIte] at hd \u22a2\n        exact hCons d hd\n  \u00b7 simp only [hb, \u2193reduceIte] at hd \u22a2\n    exact hCons d hd\n\nend Workflow\n"
+ },
+ "proved": [
+  {
+   "name": "step",
+   "kind": "def",
+   "text": "def step : Impl := fun s r =>\n  if s.docs.contains r.doc && s.users.contains r.actor then\n    match r.kind with\n    | .move => if mayMove s r then (.ok, doMove s r) else (.rejected, s)\n    | .edit => if mayEdit s r then (.ok, doEdit s r) else (.rejected, s)\n  else (.rejected, s)",
+   "deps": [
+    "doEdit",
+    "doMove",
+    "edges",
+    "mayEdit",
+    "mayMove"
+   ],
+   "statement": "def step : Impl := fun s r =>\n  if s.docs.contains r.doc && s.users.contains r.actor then\n    match r.kind with\n    | .move => if mayMove s r then (.ok, doMove s r) else (.rejected, s)\n    | .edit => if mayEdit s r then (.ok, doEdit s r) else (.rejected, s)\n  else (.rejected, s)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "doEdit",
+   "kind": "def",
+   "text": "def doEdit (s : State) (r : Request) : State :=\n  { s with content := fun d => if d == r.doc then r.body else s.content d }",
+   "deps": [],
+   "statement": "def doEdit (s : State) (r : Request) : State :=\n  { s with content := fun d => if d == r.doc then r.body else s.content d }",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "doMove",
+   "kind": "def",
+   "text": "def doMove (s : State) (r : Request) : State :=\n  { s with status := fun d => if d == r.doc then r.dst else s.status d,\n           audit := s.audit ++ [{ doc := r.doc, actor := r.actor, src := s.status r.doc, dst := r.dst }] }",
+   "deps": [],
+   "statement": "def doMove (s : State) (r : Request) : State :=\n  { s with status := fun d => if d == r.doc then r.dst else s.status d,\n           audit := s.audit ++ [{ doc := r.doc, actor := r.actor, src := s.status r.doc, dst := r.dst }] }",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "mayEdit",
+   "kind": "def",
+   "text": "def mayEdit (s : State) (r : Request) : Bool :=\n  s.role r.actor == .author && s.status r.doc == .draft",
+   "deps": [],
+   "statement": "def mayEdit (s : State) (r : Request) : Bool :=\n  s.role r.actor == .author && s.status r.doc == .draft",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "mayMove",
+   "kind": "def",
+   "text": "def mayMove (s : State) (r : Request) : Bool :=\n  edges.contains (s.role r.actor, s.status r.doc, r.dst)",
+   "deps": [
+    "edges"
+   ],
+   "statement": "def mayMove (s : State) (r : Request) : Bool :=\n  edges.contains (s.role r.actor, s.status r.doc, r.dst)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "edges",
+   "kind": "def",
+   "text": "def edges : List (Role \u00d7 Status \u00d7 Status) :=\n  [(.author, .draft, .review), (.author, .draft, .archived), (.author, .review, .draft),\n   (.reviewer, .review, .approved), (.reviewer, .review, .draft),\n   (.publisher, .approved, .published), (.publisher, .approved, .draft),\n   (.publisher, .published, .archived)]",
+   "deps": [],
+   "statement": "def edges : List (Role \u00d7 Status \u00d7 Status) :=\n  [(.author, .draft, .review), (.author, .draft, .archived), (.author, .review, .draft),\n   (.reviewer, .review, .approved), (.reviewer, .review, .draft),\n   (.publisher, .approved, .published), (.publisher, .approved, .draft),\n   (.publisher, .published, .archived)]",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "instDecidableValidRequest",
+   "kind": "instance",
+   "text": "instance instDecidableValidRequest (s : State) (r : Request) : Decidable (ValidRequest s r) := by\n  unfold ValidRequest; infer_instance",
+   "deps": [],
+   "statement": "instance instDecidableValidRequest (s : State) (r : Request) : Decidable (ValidRequest s r) := by\n  unfold ValidRequest; infer_instance",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_valid_succeeds",
+   "kind": "theorem",
+   "text": "theorem req_valid_succeeds : ValidSucceeds step := by\n  intro s r h\n  have hdoc : r.doc \u2208 s.docs := h.1\n  have huser : r.actor \u2208 s.users := h.2.1\n  have hmove := h.2.2.1\n  have hedit := h.2.2.2\n  show (step s r).1 = .ok\n  unfold step\n  simp [hdoc, huser]\n  cases hk : r.kind with\n  | move =>\n    have hall : allowed (s.role r.actor) (s.status r.doc) r.dst = true := hmove hk\n    have hc : mayMove s r = true := by\n      unfold mayMove allowed at *\n      unfold edges at *\n      cases hr : s.role r.actor <;> cases hs : s.status r.doc <;> cases hd : r.dst <;> simp_all\n    simp [hk, hc]\n  | edit =>\n    have he := hedit hk\n    have hc : mayEdit s r = true := by unfold mayEdit; simp [he.1, he.2]\n    simp [hk, hc]",
+   "deps": [
+    "doEdit",
+    "doMove",
+    "edges",
+    "mayEdit",
+    "mayMove",
+    "step"
+   ],
+   "statement": "theorem req_valid_succeeds : ValidSucceeds step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_authorization",
+   "kind": "theorem",
+   "text": "theorem req_authorization : Authorized step := by\n  intro s r hok\n  unfold step at hok\n  by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n  \u00b7 simp [hmem] at hok\n    cases hk : r.kind\n    \u00b7 simp [hk] at hok\n      have hm : mayMove s r = true := by\n        cases hc : mayMove s r\n        \u00b7 simp [hc] at hok\n        \u00b7 rfl\n      constructor\n      \u00b7 intro _\n        unfold mayMove at hm\n        unfold allowed\n        cases hr : s.role r.actor <;> cases hs : s.status r.doc <;> cases hd : r.dst <;> simp_all [edges]\n      \u00b7 intro he; simp [hk] at he\n    \u00b7 simp [hk] at hok\n      have hm : mayEdit s r = true := by\n        cases hc : mayEdit s r\n        \u00b7 simp [hc] at hok\n        \u00b7 rfl\n      constructor\n      \u00b7 intro hm2; simp [hk] at hm2\n      \u00b7 intro _\n        unfold mayEdit at hm\n        simp at hm\n        have hra : s.role r.actor = .author := by\n          cases hr : s.role r.actor <;> simp_all\n        have hsd : s.status r.doc = .draft := by\n          cases hs : s.status r.doc <;> simp_all\n        exact \u27e8hra, hsd\u27e9\n  \u00b7 simp [hmem] at hok",
+   "deps": [
+    "doEdit",
+    "doMove",
+    "edges",
+    "mayEdit",
+    "mayMove",
+    "step"
+   ],
+   "statement": "theorem req_authorization : Authorized step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_single_doc",
+   "kind": "theorem",
+   "text": "theorem req_single_doc : SingleDoc step := by\n  intro s r hok d hne\n  unfold step at hok \u22a2\n  by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n  \u00b7 simp [hmem] at hok \u22a2\n    cases hk : r.kind\n    \u00b7 simp [hk] at hok \u22a2\n      cases hm : mayMove s r\n      \u00b7 simp [hm] at hok\n      \u00b7 simp [hm] at hok \u22a2\n        constructor\n        \u00b7 show (doMove s r).status d = s.status d; simp [doMove, beq_iff_eq, hne]\n        \u00b7 show (doMove s r).content d = s.content d; simp [doMove]\n    \u00b7 simp [hk] at hok \u22a2\n      cases hm : mayEdit s r\n      \u00b7 simp [hm] at hok\n      \u00b7 simp [hm] at hok \u22a2\n        constructor\n        \u00b7 show (doEdit s r).status d = s.status d; simp [doEdit]\n        \u00b7 show (doEdit s r).content d = s.content d; simp [doEdit, beq_iff_eq, hne]\n  \u00b7 simp [hmem] at hok",
+   "deps": [
+    "doEdit",
+    "doMove",
+    "edges",
+    "mayEdit",
+    "mayMove",
+    "step"
+   ],
+   "statement": "theorem req_single_doc : SingleDoc step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_published_immutable",
+   "kind": "theorem",
+   "text": "theorem req_published_immutable : PublishedImmutable step := by\n  intro s r d hd\n  unfold step\n  by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n  \u00b7 simp [hmem]\n    cases hk : r.kind\n    \u00b7 simp [hk]\n      cases hm : mayMove s r\n      \u00b7 simp [hm]\n      \u00b7 simp [hm, doMove]\n    \u00b7 simp [hk]\n      cases hm : mayEdit s r\n      \u00b7 simp [hm]\n      \u00b7 simp [hm]\n        have hmd : mayEdit s r = true := hm\n        unfold mayEdit at hmd\n        simp at hmd\n        have hsd : s.status r.doc = .draft := by\n          cases hs : s.status r.doc <;> simp_all\n        by_cases heq : d = r.doc\n        \u00b7 subst heq\n          simp_all\n        \u00b7 simp [doEdit, beq_iff_eq, heq]\n  \u00b7 simp [hmem]",
+   "deps": [
+    "doEdit",
+    "doMove",
+    "edges",
+    "mayEdit",
+    "mayMove",
+    "step"
+   ],
+   "statement": "theorem req_published_immutable : PublishedImmutable step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_audit_append_only",
+   "kind": "theorem",
+   "text": "theorem req_audit_append_only : AuditAppendOnly step := by\n  intro s r\n  show s.audit <+: (step s r).2.audit\n  unfold step\n  by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n  \u00b7 simp [hmem]\n    cases hk : r.kind\n    \u00b7 cases hm : mayMove s r <;> simp [hk, hm]\n      unfold doMove; simp\n    \u00b7 cases hm : mayEdit s r <;> simp [hk, hm]\n      unfold doEdit; simp\n  \u00b7 simp [hmem]",
+   "deps": [
+    "doEdit",
+    "doMove",
+    "edges",
+    "mayEdit",
+    "mayMove",
+    "step"
+   ],
+   "statement": "theorem req_audit_append_only : AuditAppendOnly step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_invalid_noop",
+   "kind": "theorem",
+   "text": "theorem req_invalid_noop : InvalidNoop step := by\n  intro s r h\n  unfold ValidRequest at h\n  unfold step\n  by_cases hdoc : r.doc \u2208 s.docs\n  \u00b7 by_cases huser : r.actor \u2208 s.users\n    \u00b7 simp [show r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users from \u27e8hdoc,huser\u27e9]\n      cases hk : r.kind\n      \u00b7 have hall : allowed (s.role r.actor) (s.status r.doc) r.dst \u2260 true := by\n          intro hc\n          apply h\n          refine \u27e8hdoc, huser, ?_, ?_\u27e9\n          \u00b7 intro _; exact hc\n          \u00b7 intro he; simp [hk] at he\n        have hm : mayMove s r = false := by\n          unfold mayMove allowed edges at *\n          cases hr : s.role r.actor <;> cases hs : s.status r.doc <;> cases hd : r.dst <;> simp_all\n        simp [hk, hm]\n      \u00b7 have hall : \u00ac (s.role r.actor = .author \u2227 s.status r.doc = .draft) := by\n          intro hc\n          apply h\n          refine \u27e8hdoc, huser, ?_, ?_\u27e9\n          \u00b7 intro hm; simp [hk] at hm\n          \u00b7 intro _; exact hc\n        have hm : mayEdit s r = false := by\n          unfold mayEdit\n          simp\n          intro ha hb\n          exact hall \u27e8ha, hb\u27e9\n        simp [hk, hm]\n    \u00b7 have hmem : \u00ac (r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users) := by\n        intro \u27e8_, hu\u27e9; exact huser hu\n      simp [hmem]\n  \u00b7 have hmem : \u00ac (r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users) := by\n      intro \u27e8hd, _\u27e9; exact hdoc hd\n    simp [hmem]",
+   "deps": [
+    "doEdit",
+    "doMove",
+    "edges",
+    "mayEdit",
+    "mayMove",
+    "step"
+   ],
+   "statement": "theorem req_invalid_noop : InvalidNoop step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_no_unpublish",
+   "kind": "theorem",
+   "text": "theorem req_no_unpublish : NoUnpublish step := by\n  intro s r d\n  constructor\n  \u00b7 intro hpub\n    show (step s r).2.status d = .published \u2228 (step s r).2.status d = .archived\n    unfold step\n    by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n    \u00b7 simp [hmem]\n      cases hk : r.kind\n      \u00b7 simp [hk]\n        by_cases hm : mayMove s r = true\n        \u00b7 simp only [hm, \u2193reduceIte, doMove]\n          -- now goal is (fun d => if d == r.doc then r.dst else s.status d) d ...\n          simp only [beq_iff_eq]\n          by_cases heq : d = r.doc\n          \u00b7 subst heq\n            have hm2 : edges.contains (s.role r.actor, s.status r.doc, r.dst) = true := by\n              unfold mayMove at hm; exact hm\n            rw [hpub] at hm2\n            unfold edges at hm2\n            cases hr : s.role r.actor <;> cases hd : r.dst <;> simp_all\n          \u00b7 simp [heq, hpub]\n        \u00b7 have hmF : mayMove s r = false := by cases hc : mayMove s r <;> simp_all\n          simp [hmF, hpub]\n      \u00b7 simp [hk]\n        by_cases hm : mayEdit s r = true\n        \u00b7 simp [hm, doEdit, hpub]\n        \u00b7 have hmF : mayEdit s r = false := by cases hc : mayEdit s r <;> simp_all\n          simp [hmF, hpub]\n    \u00b7 simp [hmem, hpub]\n  \u00b7 intro harc\n    show (step s r).2.status d = .archived\n    unfold step\n    by_cases hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n    \u00b7 simp [hmem]\n      cases hk : r.kind\n      \u00b7 simp [hk]\n        by_cases hm : mayMove s r = true\n        \u00b7 simp only [hm, \u2193reduceIte, doMove]\n          simp only [beq_iff_eq]\n          by_cases heq : d = r.doc\n          \u00b7 subst heq\n            have hm2 : edges.contains (s.role r.actor, s.status r.doc, r.dst) = true := by\n              unfold mayMove at hm; exact hm\n            rw [harc] at hm2\n            unfold edges at hm2\n            cases hr : s.role r.actor <;> cases hd : r.dst <;> simp_all\n          \u00b7 simp [heq, harc]\n        \u00b7 have hmF : mayMove s r = false := by cases hc : mayMove s r <;> simp_all\n          simp [hmF, harc]\n      \u00b7 simp [hk]\n        by_cases hm : mayEdit s r = true\n        \u00b7 simp [hm, doEdit, harc]\n        \u00b7 have hmF : mayEdit s r = false := by cases hc : mayEdit s r <;> simp_all\n          simp [hmF, harc]\n    \u00b7 simp [hmem, harc]",
+   "deps": [
+    "doEdit",
+    "doMove",
+    "edges",
+    "mayEdit",
+    "mayMove",
+    "step"
+   ],
+   "statement": "theorem req_no_unpublish : NoUnpublish step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_effects",
+   "kind": "theorem",
+   "text": "theorem req_effects : Effects step := by\n  intro s r hok\n  have hmem : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users := by\n    unfold step at hok\n    by_cases h : r.doc \u2208 s.docs \u2227 r.actor \u2208 s.users\n    \u00b7 exact h\n    \u00b7 simp [h] at hok\n  unfold step at hok \u22a2\n  simp [hmem] at hok \u22a2\n  cases hk : r.kind\n  \u00b7 simp [hk] at hok \u22a2\n    have hm : mayMove s r = true := by\n      by_cases hc : mayMove s r = true\n      \u00b7 exact hc\n      \u00b7 have : mayMove s r = false := by cases hc2 : mayMove s r <;> simp_all\n        simp [this] at hok\n    simp [hm] at hok \u22a2\n    refine \u27e8rfl, rfl, rfl, ?_, ?_, ?_\u27e9\n    \u00b7 intro d; simp only [doMove, expectedStatus, hk, beq_iff_eq]; by_cases heq : d = r.doc <;> simp [heq]\n    \u00b7 intro d; simp [doMove, expectedContent, hk]\n    \u00b7 simp [doMove, expectedAudit, hk]\n  \u00b7 simp [hk] at hok \u22a2\n    have hm : mayEdit s r = true := by\n      by_cases hc : mayEdit s r = true\n      \u00b7 exact hc\n      \u00b7 have : mayEdit s r = false := by cases hc2 : mayEdit s r <;> simp_all\n        simp [this] at hok\n    simp [hm] at hok \u22a2\n    refine \u27e8rfl, rfl, rfl, ?_, ?_, ?_\u27e9\n    \u00b7 intro d; simp [doEdit, expectedStatus, hk]\n    \u00b7 intro d; simp only [doEdit, expectedContent, hk, beq_iff_eq]; by_cases heq : d = r.doc <;> simp [heq]\n    \u00b7 simp [doEdit, expectedAudit, hk]",
+   "deps": [
+    "doEdit",
+    "doMove",
+    "edges",
+    "mayEdit",
+    "mayMove",
+    "step"
+   ],
+   "statement": "theorem req_effects : Effects step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "replayAppend2",
+   "kind": "theorem",
+   "text": "theorem replayAppend2 (audit : List Entry) (e : Entry) (d : DocId) (st : Status) :\n  replay (audit ++ [e]) d st = if e.doc = d then e.dst else replay audit d st := by\n  induction audit generalizing st with\n  | nil => simp [replay]\n  | cons hd tl ih =>\n    simp [replay, ih]",
+   "deps": [],
+   "statement": "theorem replayAppend2 (audit : List Entry) (e : Entry) (d : DocId) (st : Status) :\n  replay (audit ++ [e]) d st = if e.doc = d then e.dst else replay audit d st",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  },
+  {
+   "name": "req_audit_consistent",
+   "kind": "theorem",
+   "text": "theorem req_audit_consistent : KeepsAuditConsistent step := by\n  intro s r hCons d hd\n  unfold step at hd \u22a2\n  by_cases hb : s.docs.contains r.doc && s.users.contains r.actor\n  \u00b7 simp only [hb, \u2193reduceIte] at hd \u22a2\n    cases hk : r.kind\n    \u00b7 simp only [hk] at hd \u22a2\n      by_cases hm : mayMove s r\n      \u00b7 simp only [hm, \u2193reduceIte, doMove] at hd \u22a2\n        have hrep : replay (s.audit ++ [{ doc := r.doc, actor := r.actor, src := s.status r.doc, dst := r.dst }]) d .draft\n            = if r.doc = d then r.dst else replay s.audit d .draft := replayAppend2 _ _ _ _\n        by_cases heq : r.doc = d\n        \u00b7 have heq2 : d == r.doc := by simp [beq_iff_eq, heq]\n          have h1 : r.doc = d := heq\n          rw [hrep, if_pos h1]\n          simp [heq2]\n        \u00b7 have heq2 : \u00ac (d == r.doc) := by simp [beq_iff_eq]; intro h; exact heq h.symm\n          rw [hrep, if_neg heq]\n          simp [heq2, hCons d hd]\n      \u00b7 simp only [hm, \u2193reduceIte] at hd \u22a2\n        exact hCons d hd\n    \u00b7 simp only [hk] at hd \u22a2\n      by_cases hm : mayEdit s r\n      \u00b7 simp only [hm, \u2193reduceIte, doEdit] at hd \u22a2\n        exact hCons d hd\n      \u00b7 simp only [hm, \u2193reduceIte] at hd \u22a2\n        exact hCons d hd\n  \u00b7 simp only [hb, \u2193reduceIte] at hd \u22a2\n    exact hCons d hd",
+   "deps": [
+    "doEdit",
+    "doMove",
+    "edges",
+    "mayEdit",
+    "mayMove",
+    "replayAppend2",
+    "step"
+   ],
+   "statement": "theorem req_audit_consistent : KeepsAuditConsistent step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-workflow-b2",
+   "spec_sha256": "ebbc2f7f1d5d0c49b6185d6b7a1f8f1d95519d2a80534c8045dcb3a3917bed52"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [],
+ "budget": {
+  "usd_cap": 3.0,
+  "wall_cap_s": 3600.0,
+  "stop": null,
+  "usd_list": 0.9936,
+  "usd_actual": 0.9936,
+  "elapsed_s": 1077.7,
+  "unknown_usage_calls": 0,
+  "lost_attempts": 0,
+  "input_bound_violations": 0,
+  "wall_overrun_s": 0.0,
+  "by_model": {
+   "meta-models/muse-spark-open": {
+    "calls": 117,
+    "prompt": 1891753,
+    "cached": 1590144,
+    "completion": 88965,
+    "usd_list": 0.9936,
+    "usd_actual": 0.9936
+   }
+  }
+ },
+ "resumed_from": []
+}

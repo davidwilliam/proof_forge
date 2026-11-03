@@ -1,0 +1,344 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "ledgers-journal-b1",
+ "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93",
+ "run_dir": "results/e1-test-open-2/ledgers-journal-b1/A0",
+ "arm": "A0",
+ "loop": null,
+ "model": "meta-models/muse-spark-open-1026",
+ "created": "2026-11-01T18:03:13-0500",
+ "reconstructed": false,
+ "final": {
+  "text": "import Journal.Spec\nimport Journal.Lemmas\nnamespace Journal\n\ninstance instDecidableValidEntry (s : State) (e : Entry) : Decidable (ValidEntry s e) := by\n  unfold ValidEntry; infer_instance\n\ndef adjust (bal : AccountId \u2192 Int) (a : AccountId) (amt : Int) : AccountId \u2192 Int :=\n  fun b => if b = a then bal b + amt else bal b\n\ndef step : Impl := fun s e =>\n  if _h : ValidEntry s e then\n    let bal := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance\n    (.ok, { s with balance := bal, posted := e.id :: s.posted })\n  else (.rejected, s)\n\nprivate theorem step_eq_of_valid {s : State} {e : Entry} (hV : ValidEntry s e) :\n    step s e = (.ok, { s with balance := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted }) := by\n  unfold step\n  simp only [dif_pos hV]\n\nprivate theorem step_eq_of_invalid {s : State} {e : Entry} (hNV : \u00ac ValidEntry s e) :\n    step s e = (.rejected, s) := by\n  unfold step\n  simp only [dif_neg hNV]\n\nprivate theorem ok_imp_valid {s : State} {e : Entry} (h : (step s e).1 = .ok) : ValidEntry s e := by\n  by_cases hV : ValidEntry s e\n  \u00b7 exact hV\n  \u00b7 have heq := step_eq_of_invalid hV\n    have h2 : (step s e).1 = .rejected := by rw [heq]\n    rw [h2] at h\n    cases h\n\nprivate theorem adjust_eq (bal : AccountId \u2192 Int) (a : AccountId) (amt : Int) (x : AccountId) :\n    adjust bal a amt x = bal x + if a = x then amt else 0 := by\n  unfold adjust\n  by_cases hx : x = a\n  \u00b7 have ha : a = x := hx.symm\n    rw [if_pos hx, if_pos ha]\n  \u00b7 have ha : \u00ac a = x := fun h => hx h.symm\n    rw [if_neg hx, if_neg ha, Int.add_zero]\n\nprivate theorem adjust_swap (bal : AccountId \u2192 Int) (hd : Line) (a : AccountId) :\n    adjust bal hd.1 hd.2 a = bal a + if hd.1 = a then hd.2 else 0 := by\n  exact adjust_eq bal hd.1 hd.2 a\n\nprivate theorem foldl_adjust_eq (ls : List Line) (bal : AccountId \u2192 Int) (a : AccountId) :\n    (ls.foldl (fun b (l : Line) => adjust b l.1 l.2) bal) a = bal a + netOf ls a := by\n  induction ls generalizing bal with\n  | nil =>\n    simp only [List.foldl_nil, netOf, sumOver_nil, Int.add_zero]\n  | cons hd tl ih =>\n    have hFold : List.foldl (fun b (l : Line) => adjust b l.1 l.2) bal (hd :: tl) =\n                List.foldl (fun b (l : Line) => adjust b l.1 l.2) (adjust bal hd.1 hd.2) tl := rfl\n    rw [hFold]\n    have h1 := ih (adjust bal hd.1 hd.2)\n    rw [adjust_swap bal hd a] at h1\n    have hNet : netOf (hd :: tl) a = (if hd.1 = a then hd.2 else 0) + netOf tl a := rfl\n    rw [hNet]\n    omega\n\nprivate theorem sumOver_zero (l : List AccountId) : sumOver l (fun _ : AccountId => (0 : Int)) = 0 := by\n  induction l with\n  | nil => rfl\n  | cons hd tl ih =>\n    have : sumOver (hd :: tl) (fun _ => (0 : Int)) = (0 : Int) + sumOver tl (fun _ => (0 : Int)) := rfl\n    rw [this, ih, Int.add_zero]\n\nprivate theorem if_congr_hd (hd : Line) (a : AccountId) :\n    (if hd.1 = a then hd.2 else (0 : Int)) = (if a = hd.1 then hd.2 else 0) := by\n  by_cases h : a = hd.1\n  \u00b7 have h2 : hd.1 = a := h.symm\n    rw [if_pos h, if_pos h2]\n  \u00b7 have h2 : \u00ac hd.1 = a := fun h2 => h h2.symm\n    rw [if_neg h, if_neg h2]\n\nprivate theorem sumOver_netOf_eq_lineSum (accounts : List AccountId) (ls : List Line)\n    (hNodup : accounts.Nodup) (hMem : \u2200 l \u2208 ls, l.1 \u2208 accounts) :\n    sumOver accounts (fun a => netOf ls a) = lineSum ls := by\n  induction ls with\n  | nil =>\n    have h1 : (fun a => netOf [] a) = (fun _ : AccountId => (0 : Int)) := by\n      funext a; rfl\n    rw [h1]\n    have h2 : lineSum [] = 0 := rfl\n    rw [h2]\n    exact sumOver_zero accounts\n  | cons hd tl ihTl =>\n    have hMemTl : \u2200 l \u2208 tl, l.1 \u2208 accounts := fun l hl => hMem l (List.mem_cons_of_mem hd hl)\n    have ih := ihTl hMemTl\n    have hEq : \u2200 a \u2208 accounts, netOf (hd :: tl) a = (if a = hd.1 then hd.2 else (0 : Int)) + netOf tl a := by\n      intro a _\n      have hNet : netOf (hd :: tl) a = (if hd.1 = a then hd.2 else 0) + netOf tl a := rfl\n      rw [hNet, if_congr_hd hd a]\n    have hConj := sumOver_congr accounts\n        (fun a => netOf (hd :: tl) a)\n        (fun a => (if a = hd.1 then hd.2 else (0 : Int)) + netOf tl a)\n        hEq\n    rw [hConj]\n    have hAdd := sumOver_add accounts\n        (fun a => if a = hd.1 then hd.2 else (0 : Int))\n        (fun a => netOf tl a)\n    rw [hAdd, ih]\n    have hIte := sumOver_ite_eq hNodup hd.1 hd.2\n    rw [hIte]\n    have hMemHd : hd.1 \u2208 accounts := hMem hd List.mem_cons_self\n    rw [if_pos hMemHd]\n    have hLine : lineSum (hd :: tl) = hd.2 + lineSum tl := rfl\n    rw [hLine]\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s e hV\n  have hEq := step_eq_of_valid hV\n  rw [hEq]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s e hNV\n  exact step_eq_of_invalid hNV\n\ntheorem req_known_accounts : KnownAccounts step := by\n  intro s e hOk l hl\n  have hV := ok_imp_valid hOk\n  unfold ValidEntry at hV\n  exact hV.2.2.1 l hl\n\ntheorem req_balanced : Balanced step := by\n  intro s e hOk\n  have hV := ok_imp_valid hOk\n  unfold ValidEntry at hV\n  exact hV.2.2.2.2.1\n\ntheorem req_effects : Effects step := by\n  intro s e hOk\n  have hV := ok_imp_valid hOk\n  have hEq := step_eq_of_valid hV\n  rw [hEq]\n  constructor\n  \u00b7 rfl\n  \u00b7 intro a\n    exact foldl_adjust_eq e.lines s.balance a\n\ntheorem req_idempotency : Idempotent step := by\n  intro s e hOk\n  have hV := ok_imp_valid hOk\n  have hEq := step_eq_of_valid hV\n  rw [hEq]\n  constructor\n  \u00b7 intro x\n    simp only [List.mem_cons]\n  \u00b7 have hNotValid : \u00ac ValidEntry { s with balance := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted } e := by\n      intro hC\n      unfold ValidEntry at hC\n      have hMem : e.id \u2208 (e.id :: s.posted) := List.mem_cons_self\n      exact hC.2.2.2.2.2 hMem\n    show step { s with balance := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted } e =\n        (.rejected, { s with balance := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted })\n    exact step_eq_of_invalid hNotValid\n\ntheorem req_trial_balance : TrialBalance step := by\n  intro s e hOk\n  have hV := ok_imp_valid hOk\n  have hEff := req_effects (s:=s) (e:=e) hOk\n  have hAccounts : (step s e).2.accounts = s.accounts := hEff.1\n  have hBal : \u2200 a, (step s e).2.balance a = s.balance a + netOf e.lines a := hEff.2\n  unfold total\n  rw [hAccounts]\n  have hConj : sumOver s.accounts (step s e).2.balance = sumOver s.accounts (fun a => s.balance a + netOf e.lines a) := by\n    apply sumOver_congr\n    intro a ha\n    rw [hBal a]\n  rw [hConj]\n  have hAdd := sumOver_add s.accounts s.balance (fun a => netOf e.lines a)\n  rw [hAdd]\n  unfold ValidEntry at hV\n  have hNodup := hV.1\n  have hMemAccounts : \u2200 l \u2208 e.lines, l.1 \u2208 s.accounts := hV.2.2.1\n  have hLineSumZero : lineSum e.lines = 0 := hV.2.2.2.2.1\n  have hSumNet := sumOver_netOf_eq_lineSum s.accounts e.lines hNodup hMemAccounts\n  rw [hSumNet, hLineSumZero, Int.add_zero]\n\nend Journal\n",
+  "sha256": "705c13c7dc59b631e8108e7a1976fdb927975c20007a185b2bfe87366619214b",
+  "proved_required": [
+   "req_balanced",
+   "req_effects",
+   "req_idempotency",
+   "req_invalid_noop",
+   "req_known_accounts",
+   "req_trial_balance",
+   "req_valid_succeeds"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_balanced",
+   "req_effects",
+   "req_idempotency",
+   "req_invalid_noop",
+   "req_known_accounts",
+   "req_trial_balance",
+   "req_valid_succeeds"
+  ],
+  "text": "import Journal.Spec\nimport Journal.Lemmas\nnamespace Journal\n\ninstance instDecidableValidEntry (s : State) (e : Entry) : Decidable (ValidEntry s e) := by\n  unfold ValidEntry; infer_instance\n\ndef adjust (bal : AccountId \u2192 Int) (a : AccountId) (amt : Int) : AccountId \u2192 Int :=\n  fun b => if b = a then bal b + amt else bal b\n\ndef step : Impl := fun s e =>\n  if _h : ValidEntry s e then\n    let bal := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance\n    (.ok, { s with balance := bal, posted := e.id :: s.posted })\n  else (.rejected, s)\n\nprivate theorem step_eq_of_valid {s : State} {e : Entry} (hV : ValidEntry s e) :\n    step s e = (.ok, { s with balance := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted }) := by\n  unfold step\n  simp only [dif_pos hV]\n\nprivate theorem step_eq_of_invalid {s : State} {e : Entry} (hNV : \u00ac ValidEntry s e) :\n    step s e = (.rejected, s) := by\n  unfold step\n  simp only [dif_neg hNV]\n\nprivate theorem ok_imp_valid {s : State} {e : Entry} (h : (step s e).1 = .ok) : ValidEntry s e := by\n  by_cases hV : ValidEntry s e\n  \u00b7 exact hV\n  \u00b7 have heq := step_eq_of_invalid hV\n    have h2 : (step s e).1 = .rejected := by rw [heq]\n    rw [h2] at h\n    cases h\n\nprivate theorem adjust_eq (bal : AccountId \u2192 Int) (a : AccountId) (amt : Int) (x : AccountId) :\n    adjust bal a amt x = bal x + if a = x then amt else 0 := by\n  unfold adjust\n  by_cases hx : x = a\n  \u00b7 have ha : a = x := hx.symm\n    rw [if_pos hx, if_pos ha]\n  \u00b7 have ha : \u00ac a = x := fun h => hx h.symm\n    rw [if_neg hx, if_neg ha, Int.add_zero]\n\nprivate theorem adjust_swap (bal : AccountId \u2192 Int) (hd : Line) (a : AccountId) :\n    adjust bal hd.1 hd.2 a = bal a + if hd.1 = a then hd.2 else 0 := by\n  exact adjust_eq bal hd.1 hd.2 a\n\nprivate theorem foldl_adjust_eq (ls : List Line) (bal : AccountId \u2192 Int) (a : AccountId) :\n    (ls.foldl (fun b (l : Line) => adjust b l.1 l.2) bal) a = bal a + netOf ls a := by\n  induction ls generalizing bal with\n  | nil =>\n    simp only [List.foldl_nil, netOf, sumOver_nil, Int.add_zero]\n  | cons hd tl ih =>\n    have hFold : List.foldl (fun b (l : Line) => adjust b l.1 l.2) bal (hd :: tl) =\n                List.foldl (fun b (l : Line) => adjust b l.1 l.2) (adjust bal hd.1 hd.2) tl := rfl\n    rw [hFold]\n    have h1 := ih (adjust bal hd.1 hd.2)\n    rw [adjust_swap bal hd a] at h1\n    have hNet : netOf (hd :: tl) a = (if hd.1 = a then hd.2 else 0) + netOf tl a := rfl\n    rw [hNet]\n    omega\n\nprivate theorem sumOver_zero (l : List AccountId) : sumOver l (fun _ : AccountId => (0 : Int)) = 0 := by\n  induction l with\n  | nil => rfl\n  | cons hd tl ih =>\n    have : sumOver (hd :: tl) (fun _ => (0 : Int)) = (0 : Int) + sumOver tl (fun _ => (0 : Int)) := rfl\n    rw [this, ih, Int.add_zero]\n\nprivate theorem if_congr_hd (hd : Line) (a : AccountId) :\n    (if hd.1 = a then hd.2 else (0 : Int)) = (if a = hd.1 then hd.2 else 0) := by\n  by_cases h : a = hd.1\n  \u00b7 have h2 : hd.1 = a := h.symm\n    rw [if_pos h, if_pos h2]\n  \u00b7 have h2 : \u00ac hd.1 = a := fun h2 => h h2.symm\n    rw [if_neg h, if_neg h2]\n\nprivate theorem sumOver_netOf_eq_lineSum (accounts : List AccountId) (ls : List Line)\n    (hNodup : accounts.Nodup) (hMem : \u2200 l \u2208 ls, l.1 \u2208 accounts) :\n    sumOver accounts (fun a => netOf ls a) = lineSum ls := by\n  induction ls with\n  | nil =>\n    have h1 : (fun a => netOf [] a) = (fun _ : AccountId => (0 : Int)) := by\n      funext a; rfl\n    rw [h1]\n    have h2 : lineSum [] = 0 := rfl\n    rw [h2]\n    exact sumOver_zero accounts\n  | cons hd tl ihTl =>\n    have hMemTl : \u2200 l \u2208 tl, l.1 \u2208 accounts := fun l hl => hMem l (List.mem_cons_of_mem hd hl)\n    have ih := ihTl hMemTl\n    have hEq : \u2200 a \u2208 accounts, netOf (hd :: tl) a = (if a = hd.1 then hd.2 else (0 : Int)) + netOf tl a := by\n      intro a _\n      have hNet : netOf (hd :: tl) a = (if hd.1 = a then hd.2 else 0) + netOf tl a := rfl\n      rw [hNet, if_congr_hd hd a]\n    have hConj := sumOver_congr accounts\n        (fun a => netOf (hd :: tl) a)\n        (fun a => (if a = hd.1 then hd.2 else (0 : Int)) + netOf tl a)\n        hEq\n    rw [hConj]\n    have hAdd := sumOver_add accounts\n        (fun a => if a = hd.1 then hd.2 else (0 : Int))\n        (fun a => netOf tl a)\n    rw [hAdd, ih]\n    have hIte := sumOver_ite_eq hNodup hd.1 hd.2\n    rw [hIte]\n    have hMemHd : hd.1 \u2208 accounts := hMem hd List.mem_cons_self\n    rw [if_pos hMemHd]\n    have hLine : lineSum (hd :: tl) = hd.2 + lineSum tl := rfl\n    rw [hLine]\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s e hV\n  have hEq := step_eq_of_valid hV\n  rw [hEq]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s e hNV\n  exact step_eq_of_invalid hNV\n\ntheorem req_known_accounts : KnownAccounts step := by\n  intro s e hOk l hl\n  have hV := ok_imp_valid hOk\n  unfold ValidEntry at hV\n  exact hV.2.2.1 l hl\n\ntheorem req_balanced : Balanced step := by\n  intro s e hOk\n  have hV := ok_imp_valid hOk\n  unfold ValidEntry at hV\n  exact hV.2.2.2.2.1\n\ntheorem req_effects : Effects step := by\n  intro s e hOk\n  have hV := ok_imp_valid hOk\n  have hEq := step_eq_of_valid hV\n  rw [hEq]\n  constructor\n  \u00b7 rfl\n  \u00b7 intro a\n    exact foldl_adjust_eq e.lines s.balance a\n\ntheorem req_idempotency : Idempotent step := by\n  intro s e hOk\n  have hV := ok_imp_valid hOk\n  have hEq := step_eq_of_valid hV\n  rw [hEq]\n  constructor\n  \u00b7 intro x\n    simp only [List.mem_cons]\n  \u00b7 have hNotValid : \u00ac ValidEntry { s with balance := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted } e := by\n      intro hC\n      unfold ValidEntry at hC\n      have hMem : e.id \u2208 (e.id :: s.posted) := List.mem_cons_self\n      exact hC.2.2.2.2.2 hMem\n    show step { s with balance := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted } e =\n        (.rejected, { s with balance := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted })\n    exact step_eq_of_invalid hNotValid\n\ntheorem req_trial_balance : TrialBalance step := by\n  intro s e hOk\n  have hV := ok_imp_valid hOk\n  have hEff := req_effects (s:=s) (e:=e) hOk\n  have hAccounts : (step s e).2.accounts = s.accounts := hEff.1\n  have hBal : \u2200 a, (step s e).2.balance a = s.balance a + netOf e.lines a := hEff.2\n  unfold total\n  rw [hAccounts]\n  have hConj : sumOver s.accounts (step s e).2.balance = sumOver s.accounts (fun a => s.balance a + netOf e.lines a) := by\n    apply sumOver_congr\n    intro a ha\n    rw [hBal a]\n  rw [hConj]\n  have hAdd := sumOver_add s.accounts s.balance (fun a => netOf e.lines a)\n  rw [hAdd]\n  unfold ValidEntry at hV\n  have hNodup := hV.1\n  have hMemAccounts : \u2200 l \u2208 e.lines, l.1 \u2208 s.accounts := hV.2.2.1\n  have hLineSumZero : lineSum e.lines = 0 := hV.2.2.2.2.1\n  have hSumNet := sumOver_netOf_eq_lineSum s.accounts e.lines hNodup hMemAccounts\n  rw [hSumNet, hLineSumZero, Int.add_zero]\n\nend Journal\n"
+ },
+ "proved": [
+  {
+   "name": "req_trial_balance",
+   "kind": "theorem",
+   "text": "theorem req_trial_balance : TrialBalance step := by\n  intro s e hOk\n  have hV := ok_imp_valid hOk\n  have hEff := req_effects (s:=s) (e:=e) hOk\n  have hAccounts : (step s e).2.accounts = s.accounts := hEff.1\n  have hBal : \u2200 a, (step s e).2.balance a = s.balance a + netOf e.lines a := hEff.2\n  unfold total\n  rw [hAccounts]\n  have hConj : sumOver s.accounts (step s e).2.balance = sumOver s.accounts (fun a => s.balance a + netOf e.lines a) := by\n    apply sumOver_congr\n    intro a ha\n    rw [hBal a]\n  rw [hConj]\n  have hAdd := sumOver_add s.accounts s.balance (fun a => netOf e.lines a)\n  rw [hAdd]\n  unfold ValidEntry at hV\n  have hNodup := hV.1\n  have hMemAccounts : \u2200 l \u2208 e.lines, l.1 \u2208 s.accounts := hV.2.2.1\n  have hLineSumZero : lineSum e.lines = 0 := hV.2.2.2.2.1\n  have hSumNet := sumOver_netOf_eq_lineSum s.accounts e.lines hNodup hMemAccounts\n  rw [hSumNet, hLineSumZero, Int.add_zero]",
+   "deps": [
+    "adjust",
+    "adjust_eq",
+    "adjust_swap",
+    "foldl_adjust_eq",
+    "if_congr_hd",
+    "ok_imp_valid",
+    "req_effects",
+    "step",
+    "step_eq_of_invalid",
+    "step_eq_of_valid",
+    "sumOver_netOf_eq_lineSum",
+    "sumOver_zero"
+   ],
+   "statement": "theorem req_trial_balance : TrialBalance step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "req_idempotency",
+   "kind": "theorem",
+   "text": "theorem req_idempotency : Idempotent step := by\n  intro s e hOk\n  have hV := ok_imp_valid hOk\n  have hEq := step_eq_of_valid hV\n  rw [hEq]\n  constructor\n  \u00b7 intro x\n    simp only [List.mem_cons]\n  \u00b7 have hNotValid : \u00ac ValidEntry { s with balance := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted } e := by\n      intro hC\n      unfold ValidEntry at hC\n      have hMem : e.id \u2208 (e.id :: s.posted) := List.mem_cons_self\n      exact hC.2.2.2.2.2 hMem\n    show step { s with balance := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted } e =\n        (.rejected, { s with balance := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted })\n    exact step_eq_of_invalid hNotValid",
+   "deps": [
+    "adjust",
+    "ok_imp_valid",
+    "step",
+    "step_eq_of_invalid",
+    "step_eq_of_valid"
+   ],
+   "statement": "theorem req_idempotency : Idempotent step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "req_effects",
+   "kind": "theorem",
+   "text": "theorem req_effects : Effects step := by\n  intro s e hOk\n  have hV := ok_imp_valid hOk\n  have hEq := step_eq_of_valid hV\n  rw [hEq]\n  constructor\n  \u00b7 rfl\n  \u00b7 intro a\n    exact foldl_adjust_eq e.lines s.balance a",
+   "deps": [
+    "adjust",
+    "adjust_eq",
+    "adjust_swap",
+    "foldl_adjust_eq",
+    "ok_imp_valid",
+    "step",
+    "step_eq_of_invalid",
+    "step_eq_of_valid"
+   ],
+   "statement": "theorem req_effects : Effects step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "req_balanced",
+   "kind": "theorem",
+   "text": "theorem req_balanced : Balanced step := by\n  intro s e hOk\n  have hV := ok_imp_valid hOk\n  unfold ValidEntry at hV\n  exact hV.2.2.2.2.1",
+   "deps": [
+    "adjust",
+    "ok_imp_valid",
+    "step",
+    "step_eq_of_invalid"
+   ],
+   "statement": "theorem req_balanced : Balanced step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "req_known_accounts",
+   "kind": "theorem",
+   "text": "theorem req_known_accounts : KnownAccounts step := by\n  intro s e hOk l hl\n  have hV := ok_imp_valid hOk\n  unfold ValidEntry at hV\n  exact hV.2.2.1 l hl",
+   "deps": [
+    "adjust",
+    "ok_imp_valid",
+    "step",
+    "step_eq_of_invalid"
+   ],
+   "statement": "theorem req_known_accounts : KnownAccounts step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "req_invalid_noop",
+   "kind": "theorem",
+   "text": "theorem req_invalid_noop : InvalidNoop step := by\n  intro s e hNV\n  exact step_eq_of_invalid hNV",
+   "deps": [
+    "adjust",
+    "step",
+    "step_eq_of_invalid"
+   ],
+   "statement": "theorem req_invalid_noop : InvalidNoop step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "req_valid_succeeds",
+   "kind": "theorem",
+   "text": "theorem req_valid_succeeds : ValidSucceeds step := by\n  intro s e hV\n  have hEq := step_eq_of_valid hV\n  rw [hEq]",
+   "deps": [
+    "adjust",
+    "step",
+    "step_eq_of_valid"
+   ],
+   "statement": "theorem req_valid_succeeds : ValidSucceeds step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "sumOver_netOf_eq_lineSum",
+   "kind": "theorem",
+   "text": "private theorem sumOver_netOf_eq_lineSum (accounts : List AccountId) (ls : List Line)\n    (hNodup : accounts.Nodup) (hMem : \u2200 l \u2208 ls, l.1 \u2208 accounts) :\n    sumOver accounts (fun a => netOf ls a) = lineSum ls := by\n  induction ls with\n  | nil =>\n    have h1 : (fun a => netOf [] a) = (fun _ : AccountId => (0 : Int)) := by\n      funext a; rfl\n    rw [h1]\n    have h2 : lineSum [] = 0 := rfl\n    rw [h2]\n    exact sumOver_zero accounts\n  | cons hd tl ihTl =>\n    have hMemTl : \u2200 l \u2208 tl, l.1 \u2208 accounts := fun l hl => hMem l (List.mem_cons_of_mem hd hl)\n    have ih := ihTl hMemTl\n    have hEq : \u2200 a \u2208 accounts, netOf (hd :: tl) a = (if a = hd.1 then hd.2 else (0 : Int)) + netOf tl a := by\n      intro a _\n      have hNet : netOf (hd :: tl) a = (if hd.1 = a then hd.2 else 0) + netOf tl a := rfl\n      rw [hNet, if_congr_hd hd a]\n    have hConj := sumOver_congr accounts\n        (fun a => netOf (hd :: tl) a)\n        (fun a => (if a = hd.1 then hd.2 else (0 : Int)) + netOf tl a)\n        hEq\n    rw [hConj]\n    have hAdd := sumOver_add accounts\n        (fun a => if a = hd.1 then hd.2 else (0 : Int))\n        (fun a => netOf tl a)\n    rw [hAdd, ih]\n    have hIte := sumOver_ite_eq hNodup hd.1 hd.2\n    rw [hIte]\n    have hMemHd : hd.1 \u2208 accounts := hMem hd List.mem_cons_self\n    rw [if_pos hMemHd]\n    have hLine : lineSum (hd :: tl) = hd.2 + lineSum tl := rfl\n    rw [hLine]",
+   "deps": [
+    "if_congr_hd",
+    "sumOver_zero"
+   ],
+   "statement": "private theorem sumOver_netOf_eq_lineSum (accounts : List AccountId) (ls : List Line)\n    (hNodup : accounts.Nodup) (hMem : \u2200 l \u2208 ls, l.1 \u2208 accounts) :\n    sumOver accounts (fun a => netOf ls a) = lineSum ls",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "if_congr_hd",
+   "kind": "theorem",
+   "text": "private theorem if_congr_hd (hd : Line) (a : AccountId) :\n    (if hd.1 = a then hd.2 else (0 : Int)) = (if a = hd.1 then hd.2 else 0) := by\n  by_cases h : a = hd.1\n  \u00b7 have h2 : hd.1 = a := h.symm\n    rw [if_pos h, if_pos h2]\n  \u00b7 have h2 : \u00ac hd.1 = a := fun h2 => h h2.symm\n    rw [if_neg h, if_neg h2]",
+   "deps": [],
+   "statement": "private theorem if_congr_hd (hd : Line) (a : AccountId) :\n    (if hd.1 = a then hd.2 else (0 : Int)) = (if a = hd.1 then hd.2 else 0)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "sumOver_zero",
+   "kind": "theorem",
+   "text": "private theorem sumOver_zero (l : List AccountId) : sumOver l (fun _ : AccountId => (0 : Int)) = 0 := by\n  induction l with\n  | nil => rfl\n  | cons hd tl ih =>\n    have : sumOver (hd :: tl) (fun _ => (0 : Int)) = (0 : Int) + sumOver tl (fun _ => (0 : Int)) := rfl\n    rw [this, ih, Int.add_zero]",
+   "deps": [],
+   "statement": "private theorem sumOver_zero (l : List AccountId) : sumOver l (fun _ : AccountId => (0 : Int)) = 0",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "foldl_adjust_eq",
+   "kind": "theorem",
+   "text": "private theorem foldl_adjust_eq (ls : List Line) (bal : AccountId \u2192 Int) (a : AccountId) :\n    (ls.foldl (fun b (l : Line) => adjust b l.1 l.2) bal) a = bal a + netOf ls a := by\n  induction ls generalizing bal with\n  | nil =>\n    simp only [List.foldl_nil, netOf, sumOver_nil, Int.add_zero]\n  | cons hd tl ih =>\n    have hFold : List.foldl (fun b (l : Line) => adjust b l.1 l.2) bal (hd :: tl) =\n                List.foldl (fun b (l : Line) => adjust b l.1 l.2) (adjust bal hd.1 hd.2) tl := rfl\n    rw [hFold]\n    have h1 := ih (adjust bal hd.1 hd.2)\n    rw [adjust_swap bal hd a] at h1\n    have hNet : netOf (hd :: tl) a = (if hd.1 = a then hd.2 else 0) + netOf tl a := rfl\n    rw [hNet]\n    omega",
+   "deps": [
+    "adjust",
+    "adjust_eq",
+    "adjust_swap"
+   ],
+   "statement": "private theorem foldl_adjust_eq (ls : List Line) (bal : AccountId \u2192 Int) (a : AccountId) :\n    (ls.foldl (fun b (l : Line) => adjust b l.1 l.2) bal) a = bal a + netOf ls a",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "adjust_swap",
+   "kind": "theorem",
+   "text": "private theorem adjust_swap (bal : AccountId \u2192 Int) (hd : Line) (a : AccountId) :\n    adjust bal hd.1 hd.2 a = bal a + if hd.1 = a then hd.2 else 0 := by\n  exact adjust_eq bal hd.1 hd.2 a",
+   "deps": [
+    "adjust",
+    "adjust_eq"
+   ],
+   "statement": "private theorem adjust_swap (bal : AccountId \u2192 Int) (hd : Line) (a : AccountId) :\n    adjust bal hd.1 hd.2 a = bal a + if hd.1 = a then hd.2 else 0",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "adjust_eq",
+   "kind": "theorem",
+   "text": "private theorem adjust_eq (bal : AccountId \u2192 Int) (a : AccountId) (amt : Int) (x : AccountId) :\n    adjust bal a amt x = bal x + if a = x then amt else 0 := by\n  unfold adjust\n  by_cases hx : x = a\n  \u00b7 have ha : a = x := hx.symm\n    rw [if_pos hx, if_pos ha]\n  \u00b7 have ha : \u00ac a = x := fun h => hx h.symm\n    rw [if_neg hx, if_neg ha, Int.add_zero]",
+   "deps": [
+    "adjust"
+   ],
+   "statement": "private theorem adjust_eq (bal : AccountId \u2192 Int) (a : AccountId) (amt : Int) (x : AccountId) :\n    adjust bal a amt x = bal x + if a = x then amt else 0",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "ok_imp_valid",
+   "kind": "theorem",
+   "text": "private theorem ok_imp_valid {s : State} {e : Entry} (h : (step s e).1 = .ok) : ValidEntry s e := by\n  by_cases hV : ValidEntry s e\n  \u00b7 exact hV\n  \u00b7 have heq := step_eq_of_invalid hV\n    have h2 : (step s e).1 = .rejected := by rw [heq]\n    rw [h2] at h\n    cases h",
+   "deps": [
+    "adjust",
+    "step",
+    "step_eq_of_invalid"
+   ],
+   "statement": "private theorem ok_imp_valid {s : State} {e : Entry} (h : (step s e).1 = .ok) : ValidEntry s e",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "step_eq_of_invalid",
+   "kind": "theorem",
+   "text": "private theorem step_eq_of_invalid {s : State} {e : Entry} (hNV : \u00ac ValidEntry s e) :\n    step s e = (.rejected, s) := by\n  unfold step\n  simp only [dif_neg hNV]",
+   "deps": [
+    "adjust",
+    "step"
+   ],
+   "statement": "private theorem step_eq_of_invalid {s : State} {e : Entry} (hNV : \u00ac ValidEntry s e) :\n    step s e = (.rejected, s)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "step_eq_of_valid",
+   "kind": "theorem",
+   "text": "private theorem step_eq_of_valid {s : State} {e : Entry} (hV : ValidEntry s e) :\n    step s e = (.ok, { s with balance := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted }) := by\n  unfold step\n  simp only [dif_pos hV]",
+   "deps": [
+    "adjust",
+    "step"
+   ],
+   "statement": "private theorem step_eq_of_valid {s : State} {e : Entry} (hV : ValidEntry s e) :\n    step s e = (.ok, { s with balance := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted })",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "step",
+   "kind": "def",
+   "text": "def step : Impl := fun s e =>\n  if _h : ValidEntry s e then\n    let bal := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance\n    (.ok, { s with balance := bal, posted := e.id :: s.posted })\n  else (.rejected, s)",
+   "deps": [
+    "adjust"
+   ],
+   "statement": "def step : Impl := fun s e =>\n  if _h : ValidEntry s e then\n    let bal := e.lines.foldl (fun b (l : Line) => adjust b l.1 l.2) s.balance\n    (.ok, { s with balance := bal, posted := e.id :: s.posted })\n  else (.rejected, s)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "adjust",
+   "kind": "def",
+   "text": "def adjust (bal : AccountId \u2192 Int) (a : AccountId) (amt : Int) : AccountId \u2192 Int :=\n  fun b => if b = a then bal b + amt else bal b",
+   "deps": [],
+   "statement": "def adjust (bal : AccountId \u2192 Int) (a : AccountId) (amt : Int) : AccountId \u2192 Int :=\n  fun b => if b = a then bal b + amt else bal b",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "instDecidableValidEntry",
+   "kind": "instance",
+   "text": "instance instDecidableValidEntry (s : State) (e : Entry) : Decidable (ValidEntry s e) := by\n  unfold ValidEntry; infer_instance",
+   "deps": [],
+   "statement": "instance instDecidableValidEntry (s : State) (e : Entry) : Decidable (ValidEntry s e) := by\n  unfold ValidEntry; infer_instance",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b1",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [],
+ "budget": {
+  "usd_cap": 3.0,
+  "wall_cap_s": 3600.0,
+  "stop": null,
+  "usd_list": 0.1963,
+  "usd_actual": 0.1963,
+  "elapsed_s": 132.5,
+  "unknown_usage_calls": 0,
+  "lost_attempts": 0,
+  "input_bound_violations": 0,
+  "wall_overrun_s": 0.0,
+  "by_model": {
+   "meta-models/muse-spark-open-1026": {
+    "calls": 9,
+    "prompt": 93654,
+    "cached": 38784,
+    "completion": 28678,
+    "usd_list": 0.1963,
+    "usd_actual": 0.1963
+   }
+  }
+ },
+ "resumed_from": []
+}

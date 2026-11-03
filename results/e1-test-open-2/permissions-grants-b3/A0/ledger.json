@@ -1,0 +1,276 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "permissions-grants-b3",
+ "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885",
+ "run_dir": "results/e1-test-open-2/permissions-grants-b3/A0",
+ "arm": "A0",
+ "loop": null,
+ "model": "meta-models/muse-spark-open-1026",
+ "created": "2026-11-01T20:31:33-0500",
+ "reconstructed": false,
+ "final": {
+  "text": "import Grants.Spec\nnamespace Grants\n\ninstance instDecidableValidCommand (s : State) (r : Request) : Decidable (ValidCommand s r) := by\n  unfold ValidCommand OtherAdmin; infer_instance\n\ndef otherAdminBool (s : State) (u : UserId) : Bool :=\n  s.users.any (fun v => decide (v \u2260 u) && s.has v .admin)\n\n-- helper: for any Bool predicate, any = true iff exists\ntheorem otherAdminBool_true_iff (s : State) (u : UserId) :\n    otherAdminBool s u = true \u2194 OtherAdmin s u := by\n  unfold otherAdminBool OtherAdmin\n  rw [List.any_eq_true]\n  constructor\n  \u00b7 intro h\n    obtain \u27e8v, hv_mem, hv_true\u27e9 := h\n    have hv : decide (v \u2260 u) && s.has v .admin = true := hv_true\n    have h1 : decide (v \u2260 u) = true := by\n      cases d : decide (v \u2260 u) with\n      | true => rfl\n      | false => simp [d] at hv\n    have h2 : s.has v .admin = true := by simp [h1] at hv; exact hv\n    exact \u27e8v, hv_mem, of_decide_eq_true h1, h2\u27e9\n  \u00b7 intro h\n    obtain \u27e8v, hv_mem, hv_neq, hv_adm\u27e9 := h\n    exact \u27e8v, hv_mem, by simp [hv_neq, hv_adm]\u27e9\n\ndef validBool (s : State) (r : Request) : Bool :=\n  decide (r.actor \u2208 s.users) &&\n  decide (r.target \u2208 s.users) &&\n  s.has r.actor .admin &&\n  (match r.op with\n   | .grant => decide (r.actor \u2260 r.target) && decide (s.has r.target r.role = false)\n   | .revoke => s.has r.target r.role && (if r.role == .admin then otherAdminBool s r.target else true))\n\ntheorem validBool_true_iff (s : State) (r : Request) :\n    validBool s r = true \u2194 ValidCommand s r := by\n  unfold validBool ValidCommand\n  constructor\n  \u00b7 intro h\n    simp only [Bool.and_eq_true] at h\n    obtain \u27e8\u27e8\u27e8h1, h2\u27e9, h3\u27e9, h4\u27e9 := h\n    have ha : r.actor \u2208 s.users := of_decide_eq_true h1\n    have ht : r.target \u2208 s.users := of_decide_eq_true h2\n    refine \u27e8ha, ht, h3, ?_, ?_\u27e9\n    \u00b7 intro hgrant\n      have h4g : (match (Op.grant : Op) with | .grant => decide (r.actor \u2260 r.target) && decide (s.has r.target r.role = false) | .revoke => s.has r.target r.role && (if r.role == .admin then otherAdminBool s r.target else true)) = true := by rw [\u2190 hgrant]; exact h4\n      simp only at h4g\n      simpa [Bool.and_eq_true, decide_eq_true_eq] using h4g\n    \u00b7 intro hrev\n      have h4r : (match (Op.revoke : Op) with | .grant => decide (r.actor \u2260 r.target) && decide (s.has r.target r.role = false) | .revoke => s.has r.target r.role && (if r.role == .admin then otherAdminBool s r.target else true)) = true := by rw [\u2190 hrev]; exact h4\n      simp only at h4r\n      simp only [Bool.and_eq_true] at h4r\n      obtain \u27e8hhas, hother\u27e9 := h4r\n      refine \u27e8hhas, ?_\u27e9\n      intro hrole\n      have hroleB : (r.role == .admin) = true := by simp [hrole]\n      have hother2 : otherAdminBool s r.target = true := by simp [hroleB] at hother; exact hother\n      exact (otherAdminBool_true_iff s r.target).mp hother2\n  \u00b7 intro h\n    obtain \u27e8ha, ht, hadm, hg, hr\u27e9 := h\n    simp only [Bool.and_eq_true]\n    refine \u27e8\u27e8\u27e8decide_eq_true ha, decide_eq_true ht\u27e9, hadm\u27e9, ?_\u27e9\n    cases hop : r.op with\n    | grant =>\n      have hh := hg hop\n      simp [hop, hh.1, hh.2]\n    | revoke =>\n      have hh := hr hop\n      simp only [hop, Bool.and_eq_true, hh.1, true_and]\n      by_cases hrole : r.role = .admin\n      \u00b7 have hbeq : (r.role == .admin) = true := by simp [hrole]\n        simp [hbeq, (otherAdminBool_true_iff s r.target).mpr (hh.2 hrole)]\n      \u00b7 have hbeq : (r.role == .admin) = false := by\n          cases hc : r.role with\n          | admin => contradiction\n          | editor => rfl\n          | viewer => rfl\n        simp [hbeq]\n\ndef step : Impl := fun s r =>\n  match validBool s r with\n  | true => (.ok, { users := s.users, has := expectedHas s r })\n  | false => (.rejected, s)\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s r h\n  show (step s r).1 = .ok\n  unfold step\n  have hv : validBool s r = true := (validBool_true_iff s r).mpr h\n  simp [hv]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s r h\n  show step s r = (.rejected, s)\n  unfold step\n  have hv : validBool s r = false := by\n    cases hb : validBool s r with\n    | true => exact absurd ((validBool_true_iff s r).mp hb) h\n    | false => rfl\n  simp [hv]\n\ntheorem req_authorization : AdminOnly step := by\n  intro s r hok\n  show r.actor \u2208 s.users \u2227 s.has r.actor .admin = true\n  unfold step at hok\n  by_cases hv : validBool s r = true\n  \u00b7 have hvc : ValidCommand s r := (validBool_true_iff s r).mp hv\n    simp [hv] at hok; exact \u27e8hvc.1, hvc.2.2.1\u27e9\n  \u00b7 simp [hv] at hok\n\ntheorem req_no_self_grant : NoSelfGrant step := by\n  intro s r hok hgrant\n  show r.actor \u2260 r.target\n  unfold step at hok\n  by_cases hv : validBool s r = true\n  \u00b7 have hvc : ValidCommand s r := (validBool_true_iff s r).mp hv\n    simp [hv] at hok; exact (hvc.2.2.2.1 hgrant).1\n  \u00b7 simp [hv] at hok\n\ntheorem req_others_unchanged : OthersUnchanged step := by\n  intro s r hok u q hneq\n  show (step s r).2.has u q = s.has u q\n  unfold step at hok \u22a2\n  by_cases hv : validBool s r = true\n  \u00b7 simp [hv] at hok \u22a2\n    show expectedHas s r u q = s.has u q\n    unfold expectedHas\n    have hcond : \u00ac(u = r.target \u2227 q = r.role) := by\n      intro \u27e8a, b\u27e9; rcases hneq with h1 | h2; exact h1 a; exact h2 b\n    simp [hcond]\n  \u00b7 simp [hv] at hok\n\ntheorem req_effects : Effects step := by\n  intro s r hok\n  show (step s r).2.users = s.users \u2227 \u2200 u q, (step s r).2.has u q = expectedHas s r u q\n  unfold step at hok \u22a2\n  by_cases hv : validBool s r = true\n  \u00b7 simp [hv] at hok \u22a2\n  \u00b7 simp [hv] at hok\n\ntheorem req_idempotency : Idempotent step := by\n  intro s r hok\n  show step (step s r).2 r = (.rejected, (step s r).2)\n  unfold step at hok \u22a2\n  by_cases hv : validBool s r = true\n  \u00b7 simp [hv] at hok \u22a2\n    suffices validBool { users := s.users, has := expectedHas s r } r = false by simp [this]\n    cases hb : validBool { users := s.users, has := expectedHas s r } r with\n    | true =>\n      have hvc2 : ValidCommand { users := s.users, has := expectedHas s r } r := (validBool_true_iff _ _).mp hb\n      cases hop : r.op with\n      | grant =>\n        have hg2 := (hvc2.2.2.2.1 hop)\n        have h1 : expectedHas s r r.target r.role = true := by unfold expectedHas; simp [hop]\n        have h2 : expectedHas s r r.target r.role = false := hg2.2\n        rw [h1] at h2; contradiction\n      | revoke =>\n        have hr2 := (hvc2.2.2.2.2 hop)\n        have h1 : expectedHas s r r.target r.role = false := by unfold expectedHas; simp [hop]\n        have h2 : expectedHas s r r.target r.role = true := hr2.1\n        rw [h1] at h2; contradiction\n    | false => rfl\n  \u00b7 simp [hv] at hok\n\ntheorem req_last_admin : KeepsAdmin step := by\n  intro s r hex\n  show \u2203 u \u2208 (step s r).2.users, (step s r).2.has u .admin = true\n  unfold step\n  by_cases hv : validBool s r = true\n  \u00b7 simp [hv]\n    have hvc : ValidCommand s r := (validBool_true_iff s r).mp hv\n    cases hop : r.op with\n    | grant =>\n      obtain \u27e8u, hu_mem, hu_admin\u27e9 := hex\n      refine \u27e8u, hu_mem, ?_\u27e9; unfold expectedHas\n      by_cases heq : u = r.target \u2227 Role.admin = r.role\n      \u00b7 obtain \u27e8h1, h2\u27e9 := heq; subst h1; rw [\u2190 h2]; simp [hop]\n      \u00b7 simp [heq, hu_admin]\n    | revoke =>\n      by_cases hrole : r.role = .admin\n      \u00b7 have hother : OtherAdmin s r.target := (hvc.2.2.2.2 hop).2 hrole\n        obtain \u27e8v, hv_mem, hv_neq, hv_admin\u27e9 := hother\n        refine \u27e8v, hv_mem, ?_\u27e9; unfold expectedHas\n        have hneq : \u00ac(v = r.target \u2227 Role.admin = .admin) := by intro h; exact hv_neq h.1\n        simp [hrole] at hneq \u22a2; simp [hneq, hv_admin]\n      \u00b7 obtain \u27e8u, hu_mem, hu_admin\u27e9 := hex\n        refine \u27e8u, hu_mem, ?_\u27e9; unfold expectedHas\n        by_cases heq : u = r.target \u2227 Role.admin = r.role\n        \u00b7 have : r.role = .admin := heq.2.symm; contradiction\n        \u00b7 simp [heq, hu_admin]\n  \u00b7 simp [hv]; exact hex\n\nend Grants\n",
+  "sha256": "40b830e529940e112960630c8c947a895b5f57ec4dfcde836d1ef2b1345c7dd8",
+  "proved_required": [
+   "req_authorization",
+   "req_effects",
+   "req_idempotency",
+   "req_invalid_noop",
+   "req_last_admin",
+   "req_no_self_grant",
+   "req_others_unchanged",
+   "req_valid_succeeds"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_authorization",
+   "req_effects",
+   "req_idempotency",
+   "req_invalid_noop",
+   "req_last_admin",
+   "req_no_self_grant",
+   "req_others_unchanged",
+   "req_valid_succeeds"
+  ],
+  "text": "import Grants.Spec\nnamespace Grants\n\ninstance instDecidableValidCommand (s : State) (r : Request) : Decidable (ValidCommand s r) := by\n  unfold ValidCommand OtherAdmin; infer_instance\n\ndef otherAdminBool (s : State) (u : UserId) : Bool :=\n  s.users.any (fun v => decide (v \u2260 u) && s.has v .admin)\n\n-- helper: for any Bool predicate, any = true iff exists\ntheorem otherAdminBool_true_iff (s : State) (u : UserId) :\n    otherAdminBool s u = true \u2194 OtherAdmin s u := by\n  unfold otherAdminBool OtherAdmin\n  rw [List.any_eq_true]\n  constructor\n  \u00b7 intro h\n    obtain \u27e8v, hv_mem, hv_true\u27e9 := h\n    have hv : decide (v \u2260 u) && s.has v .admin = true := hv_true\n    have h1 : decide (v \u2260 u) = true := by\n      cases d : decide (v \u2260 u) with\n      | true => rfl\n      | false => simp [d] at hv\n    have h2 : s.has v .admin = true := by simp [h1] at hv; exact hv\n    exact \u27e8v, hv_mem, of_decide_eq_true h1, h2\u27e9\n  \u00b7 intro h\n    obtain \u27e8v, hv_mem, hv_neq, hv_adm\u27e9 := h\n    exact \u27e8v, hv_mem, by simp [hv_neq, hv_adm]\u27e9\n\ndef validBool (s : State) (r : Request) : Bool :=\n  decide (r.actor \u2208 s.users) &&\n  decide (r.target \u2208 s.users) &&\n  s.has r.actor .admin &&\n  (match r.op with\n   | .grant => decide (r.actor \u2260 r.target) && decide (s.has r.target r.role = false)\n   | .revoke => s.has r.target r.role && (if r.role == .admin then otherAdminBool s r.target else true))\n\ntheorem validBool_true_iff (s : State) (r : Request) :\n    validBool s r = true \u2194 ValidCommand s r := by\n  unfold validBool ValidCommand\n  constructor\n  \u00b7 intro h\n    simp only [Bool.and_eq_true] at h\n    obtain \u27e8\u27e8\u27e8h1, h2\u27e9, h3\u27e9, h4\u27e9 := h\n    have ha : r.actor \u2208 s.users := of_decide_eq_true h1\n    have ht : r.target \u2208 s.users := of_decide_eq_true h2\n    refine \u27e8ha, ht, h3, ?_, ?_\u27e9\n    \u00b7 intro hgrant\n      have h4g : (match (Op.grant : Op) with | .grant => decide (r.actor \u2260 r.target) && decide (s.has r.target r.role = false) | .revoke => s.has r.target r.role && (if r.role == .admin then otherAdminBool s r.target else true)) = true := by rw [\u2190 hgrant]; exact h4\n      simp only at h4g\n      simpa [Bool.and_eq_true, decide_eq_true_eq] using h4g\n    \u00b7 intro hrev\n      have h4r : (match (Op.revoke : Op) with | .grant => decide (r.actor \u2260 r.target) && decide (s.has r.target r.role = false) | .revoke => s.has r.target r.role && (if r.role == .admin then otherAdminBool s r.target else true)) = true := by rw [\u2190 hrev]; exact h4\n      simp only at h4r\n      simp only [Bool.and_eq_true] at h4r\n      obtain \u27e8hhas, hother\u27e9 := h4r\n      refine \u27e8hhas, ?_\u27e9\n      intro hrole\n      have hroleB : (r.role == .admin) = true := by simp [hrole]\n      have hother2 : otherAdminBool s r.target = true := by simp [hroleB] at hother; exact hother\n      exact (otherAdminBool_true_iff s r.target).mp hother2\n  \u00b7 intro h\n    obtain \u27e8ha, ht, hadm, hg, hr\u27e9 := h\n    simp only [Bool.and_eq_true]\n    refine \u27e8\u27e8\u27e8decide_eq_true ha, decide_eq_true ht\u27e9, hadm\u27e9, ?_\u27e9\n    cases hop : r.op with\n    | grant =>\n      have hh := hg hop\n      simp [hop, hh.1, hh.2]\n    | revoke =>\n      have hh := hr hop\n      simp only [hop, Bool.and_eq_true, hh.1, true_and]\n      by_cases hrole : r.role = .admin\n      \u00b7 have hbeq : (r.role == .admin) = true := by simp [hrole]\n        simp [hbeq, (otherAdminBool_true_iff s r.target).mpr (hh.2 hrole)]\n      \u00b7 have hbeq : (r.role == .admin) = false := by\n          cases hc : r.role with\n          | admin => contradiction\n          | editor => rfl\n          | viewer => rfl\n        simp [hbeq]\n\ndef step : Impl := fun s r =>\n  match validBool s r with\n  | true => (.ok, { users := s.users, has := expectedHas s r })\n  | false => (.rejected, s)\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s r h\n  show (step s r).1 = .ok\n  unfold step\n  have hv : validBool s r = true := (validBool_true_iff s r).mpr h\n  simp [hv]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s r h\n  show step s r = (.rejected, s)\n  unfold step\n  have hv : validBool s r = false := by\n    cases hb : validBool s r with\n    | true => exact absurd ((validBool_true_iff s r).mp hb) h\n    | false => rfl\n  simp [hv]\n\ntheorem req_authorization : AdminOnly step := by\n  intro s r hok\n  show r.actor \u2208 s.users \u2227 s.has r.actor .admin = true\n  unfold step at hok\n  by_cases hv : validBool s r = true\n  \u00b7 have hvc : ValidCommand s r := (validBool_true_iff s r).mp hv\n    simp [hv] at hok; exact \u27e8hvc.1, hvc.2.2.1\u27e9\n  \u00b7 simp [hv] at hok\n\ntheorem req_no_self_grant : NoSelfGrant step := by\n  intro s r hok hgrant\n  show r.actor \u2260 r.target\n  unfold step at hok\n  by_cases hv : validBool s r = true\n  \u00b7 have hvc : ValidCommand s r := (validBool_true_iff s r).mp hv\n    simp [hv] at hok; exact (hvc.2.2.2.1 hgrant).1\n  \u00b7 simp [hv] at hok\n\ntheorem req_others_unchanged : OthersUnchanged step := by\n  intro s r hok u q hneq\n  show (step s r).2.has u q = s.has u q\n  unfold step at hok \u22a2\n  by_cases hv : validBool s r = true\n  \u00b7 simp [hv] at hok \u22a2\n    show expectedHas s r u q = s.has u q\n    unfold expectedHas\n    have hcond : \u00ac(u = r.target \u2227 q = r.role) := by\n      intro \u27e8a, b\u27e9; rcases hneq with h1 | h2; exact h1 a; exact h2 b\n    simp [hcond]\n  \u00b7 simp [hv] at hok\n\ntheorem req_effects : Effects step := by\n  intro s r hok\n  show (step s r).2.users = s.users \u2227 \u2200 u q, (step s r).2.has u q = expectedHas s r u q\n  unfold step at hok \u22a2\n  by_cases hv : validBool s r = true\n  \u00b7 simp [hv] at hok \u22a2\n  \u00b7 simp [hv] at hok\n\ntheorem req_idempotency : Idempotent step := by\n  intro s r hok\n  show step (step s r).2 r = (.rejected, (step s r).2)\n  unfold step at hok \u22a2\n  by_cases hv : validBool s r = true\n  \u00b7 simp [hv] at hok \u22a2\n    suffices validBool { users := s.users, has := expectedHas s r } r = false by simp [this]\n    cases hb : validBool { users := s.users, has := expectedHas s r } r with\n    | true =>\n      have hvc2 : ValidCommand { users := s.users, has := expectedHas s r } r := (validBool_true_iff _ _).mp hb\n      cases hop : r.op with\n      | grant =>\n        have hg2 := (hvc2.2.2.2.1 hop)\n        have h1 : expectedHas s r r.target r.role = true := by unfold expectedHas; simp [hop]\n        have h2 : expectedHas s r r.target r.role = false := hg2.2\n        rw [h1] at h2; contradiction\n      | revoke =>\n        have hr2 := (hvc2.2.2.2.2 hop)\n        have h1 : expectedHas s r r.target r.role = false := by unfold expectedHas; simp [hop]\n        have h2 : expectedHas s r r.target r.role = true := hr2.1\n        rw [h1] at h2; contradiction\n    | false => rfl\n  \u00b7 simp [hv] at hok\n\ntheorem req_last_admin : KeepsAdmin step := by\n  intro s r hex\n  show \u2203 u \u2208 (step s r).2.users, (step s r).2.has u .admin = true\n  unfold step\n  by_cases hv : validBool s r = true\n  \u00b7 simp [hv]\n    have hvc : ValidCommand s r := (validBool_true_iff s r).mp hv\n    cases hop : r.op with\n    | grant =>\n      obtain \u27e8u, hu_mem, hu_admin\u27e9 := hex\n      refine \u27e8u, hu_mem, ?_\u27e9; unfold expectedHas\n      by_cases heq : u = r.target \u2227 Role.admin = r.role\n      \u00b7 obtain \u27e8h1, h2\u27e9 := heq; subst h1; rw [\u2190 h2]; simp [hop]\n      \u00b7 simp [heq, hu_admin]\n    | revoke =>\n      by_cases hrole : r.role = .admin\n      \u00b7 have hother : OtherAdmin s r.target := (hvc.2.2.2.2 hop).2 hrole\n        obtain \u27e8v, hv_mem, hv_neq, hv_admin\u27e9 := hother\n        refine \u27e8v, hv_mem, ?_\u27e9; unfold expectedHas\n        have hneq : \u00ac(v = r.target \u2227 Role.admin = .admin) := by intro h; exact hv_neq h.1\n        simp [hrole] at hneq \u22a2; simp [hneq, hv_admin]\n      \u00b7 obtain \u27e8u, hu_mem, hu_admin\u27e9 := hex\n        refine \u27e8u, hu_mem, ?_\u27e9; unfold expectedHas\n        by_cases heq : u = r.target \u2227 Role.admin = r.role\n        \u00b7 have : r.role = .admin := heq.2.symm; contradiction\n        \u00b7 simp [heq, hu_admin]\n  \u00b7 simp [hv]; exact hex\n\nend Grants\n"
+ },
+ "proved": [
+  {
+   "name": "req_last_admin",
+   "kind": "theorem",
+   "text": "theorem req_last_admin : KeepsAdmin step := by\n  intro s r hex\n  show \u2203 u \u2208 (step s r).2.users, (step s r).2.has u .admin = true\n  unfold step\n  by_cases hv : validBool s r = true\n  \u00b7 simp [hv]\n    have hvc : ValidCommand s r := (validBool_true_iff s r).mp hv\n    cases hop : r.op with\n    | grant =>\n      obtain \u27e8u, hu_mem, hu_admin\u27e9 := hex\n      refine \u27e8u, hu_mem, ?_\u27e9; unfold expectedHas\n      by_cases heq : u = r.target \u2227 Role.admin = r.role\n      \u00b7 obtain \u27e8h1, h2\u27e9 := heq; subst h1; rw [\u2190 h2]; simp [hop]\n      \u00b7 simp [heq, hu_admin]\n    | revoke =>\n      by_cases hrole : r.role = .admin\n      \u00b7 have hother : OtherAdmin s r.target := (hvc.2.2.2.2 hop).2 hrole\n        obtain \u27e8v, hv_mem, hv_neq, hv_admin\u27e9 := hother\n        refine \u27e8v, hv_mem, ?_\u27e9; unfold expectedHas\n        have hneq : \u00ac(v = r.target \u2227 Role.admin = .admin) := by intro h; exact hv_neq h.1\n        simp [hrole] at hneq \u22a2; simp [hneq, hv_admin]\n      \u00b7 obtain \u27e8u, hu_mem, hu_admin\u27e9 := hex\n        refine \u27e8u, hu_mem, ?_\u27e9; unfold expectedHas\n        by_cases heq : u = r.target \u2227 Role.admin = r.role\n        \u00b7 have : r.role = .admin := heq.2.symm; contradiction\n        \u00b7 simp [heq, hu_admin]\n  \u00b7 simp [hv]; exact hex",
+   "deps": [
+    "otherAdminBool",
+    "otherAdminBool_true_iff",
+    "step",
+    "validBool",
+    "validBool_true_iff"
+   ],
+   "statement": "theorem req_last_admin : KeepsAdmin step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-grants-b3",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "req_idempotency",
+   "kind": "theorem",
+   "text": "theorem req_idempotency : Idempotent step := by\n  intro s r hok\n  show step (step s r).2 r = (.rejected, (step s r).2)\n  unfold step at hok \u22a2\n  by_cases hv : validBool s r = true\n  \u00b7 simp [hv] at hok \u22a2\n    suffices validBool { users := s.users, has := expectedHas s r } r = false by simp [this]\n    cases hb : validBool { users := s.users, has := expectedHas s r } r with\n    | true =>\n      have hvc2 : ValidCommand { users := s.users, has := expectedHas s r } r := (validBool_true_iff _ _).mp hb\n      cases hop : r.op with\n      | grant =>\n        have hg2 := (hvc2.2.2.2.1 hop)\n        have h1 : expectedHas s r r.target r.role = true := by unfold expectedHas; simp [hop]\n        have h2 : expectedHas s r r.target r.role = false := hg2.2\n        rw [h1] at h2; contradiction\n      | revoke =>\n        have hr2 := (hvc2.2.2.2.2 hop)\n        have h1 : expectedHas s r r.target r.role = false := by unfold expectedHas; simp [hop]\n        have h2 : expectedHas s r r.target r.role = true := hr2.1\n        rw [h1] at h2; contradiction\n    | false => rfl\n  \u00b7 simp [hv] at hok",
+   "deps": [
+    "otherAdminBool",
+    "otherAdminBool_true_iff",
+    "step",
+    "validBool",
+    "validBool_true_iff"
+   ],
+   "statement": "theorem req_idempotency : Idempotent step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-grants-b3",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "req_effects",
+   "kind": "theorem",
+   "text": "theorem req_effects : Effects step := by\n  intro s r hok\n  show (step s r).2.users = s.users \u2227 \u2200 u q, (step s r).2.has u q = expectedHas s r u q\n  unfold step at hok \u22a2\n  by_cases hv : validBool s r = true\n  \u00b7 simp [hv] at hok \u22a2\n  \u00b7 simp [hv] at hok",
+   "deps": [
+    "otherAdminBool",
+    "step",
+    "validBool"
+   ],
+   "statement": "theorem req_effects : Effects step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-grants-b3",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "req_others_unchanged",
+   "kind": "theorem",
+   "text": "theorem req_others_unchanged : OthersUnchanged step := by\n  intro s r hok u q hneq\n  show (step s r).2.has u q = s.has u q\n  unfold step at hok \u22a2\n  by_cases hv : validBool s r = true\n  \u00b7 simp [hv] at hok \u22a2\n    show expectedHas s r u q = s.has u q\n    unfold expectedHas\n    have hcond : \u00ac(u = r.target \u2227 q = r.role) := by\n      intro \u27e8a, b\u27e9; rcases hneq with h1 | h2; exact h1 a; exact h2 b\n    simp [hcond]\n  \u00b7 simp [hv] at hok",
+   "deps": [
+    "otherAdminBool",
+    "step",
+    "validBool"
+   ],
+   "statement": "theorem req_others_unchanged : OthersUnchanged step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-grants-b3",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "req_no_self_grant",
+   "kind": "theorem",
+   "text": "theorem req_no_self_grant : NoSelfGrant step := by\n  intro s r hok hgrant\n  show r.actor \u2260 r.target\n  unfold step at hok\n  by_cases hv : validBool s r = true\n  \u00b7 have hvc : ValidCommand s r := (validBool_true_iff s r).mp hv\n    simp [hv] at hok; exact (hvc.2.2.2.1 hgrant).1\n  \u00b7 simp [hv] at hok",
+   "deps": [
+    "otherAdminBool",
+    "otherAdminBool_true_iff",
+    "step",
+    "validBool",
+    "validBool_true_iff"
+   ],
+   "statement": "theorem req_no_self_grant : NoSelfGrant step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-grants-b3",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "req_authorization",
+   "kind": "theorem",
+   "text": "theorem req_authorization : AdminOnly step := by\n  intro s r hok\n  show r.actor \u2208 s.users \u2227 s.has r.actor .admin = true\n  unfold step at hok\n  by_cases hv : validBool s r = true\n  \u00b7 have hvc : ValidCommand s r := (validBool_true_iff s r).mp hv\n    simp [hv] at hok; exact \u27e8hvc.1, hvc.2.2.1\u27e9\n  \u00b7 simp [hv] at hok",
+   "deps": [
+    "otherAdminBool",
+    "otherAdminBool_true_iff",
+    "step",
+    "validBool",
+    "validBool_true_iff"
+   ],
+   "statement": "theorem req_authorization : AdminOnly step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-grants-b3",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "req_invalid_noop",
+   "kind": "theorem",
+   "text": "theorem req_invalid_noop : InvalidNoop step := by\n  intro s r h\n  show step s r = (.rejected, s)\n  unfold step\n  have hv : validBool s r = false := by\n    cases hb : validBool s r with\n    | true => exact absurd ((validBool_true_iff s r).mp hb) h\n    | false => rfl\n  simp [hv]",
+   "deps": [
+    "otherAdminBool",
+    "otherAdminBool_true_iff",
+    "step",
+    "validBool",
+    "validBool_true_iff"
+   ],
+   "statement": "theorem req_invalid_noop : InvalidNoop step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-grants-b3",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "req_valid_succeeds",
+   "kind": "theorem",
+   "text": "theorem req_valid_succeeds : ValidSucceeds step := by\n  intro s r h\n  show (step s r).1 = .ok\n  unfold step\n  have hv : validBool s r = true := (validBool_true_iff s r).mpr h\n  simp [hv]",
+   "deps": [
+    "otherAdminBool",
+    "otherAdminBool_true_iff",
+    "step",
+    "validBool",
+    "validBool_true_iff"
+   ],
+   "statement": "theorem req_valid_succeeds : ValidSucceeds step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-grants-b3",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "step",
+   "kind": "def",
+   "text": "def step : Impl := fun s r =>\n  match validBool s r with\n  | true => (.ok, { users := s.users, has := expectedHas s r })\n  | false => (.rejected, s)",
+   "deps": [
+    "otherAdminBool",
+    "validBool"
+   ],
+   "statement": "def step : Impl := fun s r =>\n  match validBool s r with\n  | true => (.ok, { users := s.users, has := expectedHas s r })\n  | false => (.rejected, s)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "permissions-grants-b3",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "validBool_true_iff",
+   "kind": "theorem",
+   "text": "theorem validBool_true_iff (s : State) (r : Request) :\n    validBool s r = true \u2194 ValidCommand s r := by\n  unfold validBool ValidCommand\n  constructor\n  \u00b7 intro h\n    simp only [Bool.and_eq_true] at h\n    obtain \u27e8\u27e8\u27e8h1, h2\u27e9, h3\u27e9, h4\u27e9 := h\n    have ha : r.actor \u2208 s.users := of_decide_eq_true h1\n    have ht : r.target \u2208 s.users := of_decide_eq_true h2\n    refine \u27e8ha, ht, h3, ?_, ?_\u27e9\n    \u00b7 intro hgrant\n      have h4g : (match (Op.grant : Op) with | .grant => decide (r.actor \u2260 r.target) && decide (s.has r.target r.role = false) | .revoke => s.has r.target r.role && (if r.role == .admin then otherAdminBool s r.target else true)) = true := by rw [\u2190 hgrant]; exact h4\n      simp only at h4g\n      simpa [Bool.and_eq_true, decide_eq_true_eq] using h4g\n    \u00b7 intro hrev\n      have h4r : (match (Op.revoke : Op) with | .grant => decide (r.actor \u2260 r.target) && decide (s.has r.target r.role = false) | .revoke => s.has r.target r.role && (if r.role == .admin then otherAdminBool s r.target else true)) = true := by rw [\u2190 hrev]; exact h4\n      simp only at h4r\n      simp only [Bool.and_eq_true] at h4r\n      obtain \u27e8hhas, hother\u27e9 := h4r\n      refine \u27e8hhas, ?_\u27e9\n      intro hrole\n      have hroleB : (r.role == .admin) = true := by simp [hrole]\n      have hother2 : otherAdminBool s r.target = true := by simp [hroleB] at hother; exact hother\n      exact (otherAdminBool_true_iff s r.target).mp hother2\n  \u00b7 intro h\n    obtain \u27e8ha, ht, hadm, hg, hr\u27e9 := h\n    simp only [Bool.and_eq_true]\n    refine \u27e8\u27e8\u27e8decide_eq_true ha, decide_eq_true ht\u27e9, hadm\u27e9, ?_\u27e9\n    cases hop : r.op with\n    | grant =>\n      have hh := hg hop\n      simp [hop, hh.1, hh.2]\n    | revoke =>\n      have hh := hr hop\n      simp only [hop, Bool.and_eq_true, hh.1, true_and]\n      by_cases hrole : r.role = .admin\n      \u00b7 have hbeq : (r.role == .admin) = true := by simp [hrole]\n        simp [hbeq, (otherAdminBool_true_iff s r.target).mpr (hh.2 hrole)]\n      \u00b7 have hbeq : (r.role == .admin) = false := by\n          cases hc : r.role with\n          | admin => contradiction\n          | editor => rfl\n          | viewer => rfl\n        simp [hbeq]",
+   "deps": [
+    "otherAdminBool",
+    "otherAdminBool_true_iff",
+    "validBool"
+   ],
+   "statement": "theorem validBool_true_iff (s : State) (r : Request) :\n    validBool s r = true \u2194 ValidCommand s r",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-grants-b3",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "validBool",
+   "kind": "def",
+   "text": "def validBool (s : State) (r : Request) : Bool :=\n  decide (r.actor \u2208 s.users) &&\n  decide (r.target \u2208 s.users) &&\n  s.has r.actor .admin &&\n  (match r.op with\n   | .grant => decide (r.actor \u2260 r.target) && decide (s.has r.target r.role = false)\n   | .revoke => s.has r.target r.role && (if r.role == .admin then otherAdminBool s r.target else true))",
+   "deps": [
+    "otherAdminBool"
+   ],
+   "statement": "def validBool (s : State) (r : Request) : Bool :=\n  decide (r.actor \u2208 s.users) &&\n  decide (r.target \u2208 s.users) &&\n  s.has r.actor .admin &&\n  (match r.op with\n   | .grant => decide (r.actor \u2260 r.target) && decide (s.has r.target r.role = false)\n   | .revoke => s.has r.target r.role && (if r.role == .admin then otherAdminBool s r.target else true))",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-grants-b3",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "otherAdminBool_true_iff",
+   "kind": "theorem",
+   "text": "theorem otherAdminBool_true_iff (s : State) (u : UserId) :\n    otherAdminBool s u = true \u2194 OtherAdmin s u := by\n  unfold otherAdminBool OtherAdmin\n  rw [List.any_eq_true]\n  constructor\n  \u00b7 intro h\n    obtain \u27e8v, hv_mem, hv_true\u27e9 := h\n    have hv : decide (v \u2260 u) && s.has v .admin = true := hv_true\n    have h1 : decide (v \u2260 u) = true := by\n      cases d : decide (v \u2260 u) with\n      | true => rfl\n      | false => simp [d] at hv\n    have h2 : s.has v .admin = true := by simp [h1] at hv; exact hv\n    exact \u27e8v, hv_mem, of_decide_eq_true h1, h2\u27e9\n  \u00b7 intro h\n    obtain \u27e8v, hv_mem, hv_neq, hv_adm\u27e9 := h\n    exact \u27e8v, hv_mem, by simp [hv_neq, hv_adm]\u27e9",
+   "deps": [
+    "otherAdminBool"
+   ],
+   "statement": "theorem otherAdminBool_true_iff (s : State) (u : UserId) :\n    otherAdminBool s u = true \u2194 OtherAdmin s u",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-grants-b3",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "otherAdminBool",
+   "kind": "def",
+   "text": "def otherAdminBool (s : State) (u : UserId) : Bool :=\n  s.users.any (fun v => decide (v \u2260 u) && s.has v .admin)\n\n-- helper: for any Bool predicate, any = true iff exists",
+   "deps": [],
+   "statement": "def otherAdminBool (s : State) (u : UserId) : Bool :=\n  s.users.any (fun v => decide (v \u2260 u) && s.has v .admin)\n\n-- helper: for any Bool predicate, any = true iff exists",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-grants-b3",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  },
+  {
+   "name": "instDecidableValidCommand",
+   "kind": "instance",
+   "text": "instance instDecidableValidCommand (s : State) (r : Request) : Decidable (ValidCommand s r) := by\n  unfold ValidCommand OtherAdmin; infer_instance",
+   "deps": [],
+   "statement": "instance instDecidableValidCommand (s : State) (r : Request) : Decidable (ValidCommand s r) := by\n  unfold ValidCommand OtherAdmin; infer_instance",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-grants-b3",
+   "spec_sha256": "b9422a8b69025c855be9b066f459165d7388b8bf496dcb801d8ab10d5e63b885"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [],
+ "budget": {
+  "usd_cap": 3.0,
+  "wall_cap_s": 3600.0,
+  "stop": null,
+  "usd_list": 1.4637,
+  "usd_actual": 1.4637,
+  "elapsed_s": 617.9,
+  "unknown_usage_calls": 0,
+  "lost_attempts": 0,
+  "input_bound_violations": 0,
+  "wall_overrun_s": 0.0,
+  "by_model": {
+   "meta-models/muse-spark-open-1026": {
+    "calls": 47,
+    "prompt": 1115079,
+    "cached": 618496,
+    "completion": 176512,
+    "usd_list": 1.4637,
+    "usd_actual": 1.4637
+   }
+  }
+ },
+ "resumed_from": []
+}

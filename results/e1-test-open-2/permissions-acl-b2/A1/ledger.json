@@ -1,0 +1,529 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "permissions-acl-b2",
+ "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193",
+ "run_dir": "results/e1-test-open-2/permissions-acl-b2/A1",
+ "arm": "A1",
+ "loop": "orchestrated",
+ "model": "meta-models/muse-spark-open-1026",
+ "created": "2026-11-01T19:37:27-0500",
+ "reconstructed": false,
+ "final": {
+  "text": "import Acl.Spec\nnamespace Acl\ninstance instDecidableValidQuery (s : State) (r : Request) : Decidable (ValidQuery s r) := by\n  unfold ValidQuery; infer_instance\n\ndef matchesB (e : Entry) (r : Request) : Bool :=\n  (e.subject == 0 || e.subject == r.user) && e.path.isPrefixOf r.path\n\ndef maxDepth (l : List Entry) : Nat :=\n  l.foldl (fun acc e => max acc e.path.length) 0\n\ndef decision (l : List Entry) (r : Request) : Bool :=\n  let allows := l.filter (fun e => matchesB e r && decide (e.effect = .allow))\n  let denies := l.filter (fun e => matchesB e r && decide (e.effect = .deny))\n  if allows.isEmpty then false\n  else if denies.isEmpty then true\n  else decide (maxDepth denies < maxDepth allows)\n\ndef step : Impl := fun s r =>\n  if s.users.contains r.user && r.user != 0 then\n    let g := decision s.entries r\n    (if g then .granted else .denied, { s with log := s.log ++ [\u27e8r.user, r.path, g\u27e9] })\n  else (.rejected, s)\n\ntheorem helper_maxDepth_cons3 (hd : Entry) (tl : List Entry) : maxDepth (hd :: tl) = max hd.path.length (maxDepth tl) := by\n  unfold maxDepth\n  simp only [List.foldl_cons]\n  have key : \u2200 (init : Nat) (l : List Entry), List.foldl (fun acc e => max acc e.path.length) (max init hd.path.length) l = max hd.path.length (List.foldl (fun acc e => max acc e.path.length) init l) := by\n    intro init l\n    induction l generalizing init with\n    | nil => simp [Nat.max_comm]\n    | cons y ys ih =>\n      simp only [List.foldl_cons]\n      calc List.foldl (fun acc e => max acc e.path.length) (max (max init hd.path.length) y.path.length) ys\n          = List.foldl (fun acc e => max acc e.path.length) (max (max init y.path.length) hd.path.length) ys := by\n            have : max (max init hd.path.length) y.path.length = max (max init y.path.length) hd.path.length := by\n              simp [Nat.max_comm, Nat.max_left_comm]\n            rw [this]\n        _ = max hd.path.length (List.foldl (fun acc e => max acc e.path.length) (max init y.path.length) ys) := ih (max init y.path.length)\n        _ = max hd.path.length (List.foldl (fun acc e => max acc e.path.length) init (y :: ys)) := by simp [List.foldl_cons]\n  have h := key 0 tl\n  simp at h\n  exact h\n\ntheorem helper_maxDepth_le3 (l : List Entry) (e : Entry) : e \u2208 l \u2192 e.path.length \u2264 maxDepth l := by\n  intro he\n  induction l with\n  | nil => simp at he\n  | cons hd tl ih =>\n    rcases List.mem_cons.mp he with rfl | hmem\n    \u00b7 rw [helper_maxDepth_cons3]; exact Nat.le_max_left _ _\n    \u00b7 rw [helper_maxDepth_cons3]; exact Nat.le_trans (ih hmem) (Nat.le_max_right _ _)\n\ntheorem helper_maxDepth_exists3 (l : List Entry) : l \u2260 [] \u2192 \u2203 e \u2208 l, e.path.length = maxDepth l := by\n  intro hne\n  induction l with\n  | nil => contradiction\n  | cons hd tl ih =>\n    by_cases htl : tl = []\n    \u00b7 subst htl\n      exact \u27e8hd, by simp, by rw [helper_maxDepth_cons3]; simp [maxDepth]\u27e9\n    \u00b7 have htl_ne : tl \u2260 [] := htl\n      obtain \u27e8e0, he0, heq\u27e9 := ih htl_ne\n      by_cases hle : decide (hd.path.length \u2264 maxDepth tl) = true\n      \u00b7 have hle' : hd.path.length \u2264 maxDepth tl := of_decide_eq_true hle\n        refine \u27e8e0, List.Mem.tail _ he0, ?_\u27e9\n        rw [helper_maxDepth_cons3, Nat.max_eq_right hle', heq]\n      \u00b7 have hle_false : decide (hd.path.length \u2264 maxDepth tl) = false := by\n          cases hc : decide (hd.path.length \u2264 maxDepth tl) <;> simp_all\n        have hlt : maxDepth tl < hd.path.length := by\n          have h' : \u00ac hd.path.length \u2264 maxDepth tl := by intro h; simp [h] at hle_false\n          exact Nat.lt_of_not_ge h'\n        refine \u27e8hd, by simp, ?_\u27e9\n        rw [helper_maxDepth_cons3, Nat.max_eq_left (Nat.le_of_lt hlt)]\n\nprivate theorem test_search : True := by\n  have h : [1,2].isPrefixOf [1,2,3] = true := by rfl\n  trivial\n-- check what lemmas exist\n\ntheorem matchesB_correct4 (e : Entry) (r : Request) : matchesB e r = true \u2194 Matches e r := by\n  unfold matchesB Matches\n  simp\n\ntheorem mem_filter_matches_allow4 (l : List Entry) (r : Request) (e : Entry) :\n  e \u2208 l.filter (fun e => matchesB e r && decide (e.effect = .allow)) \u2194 e \u2208 l \u2227 Matches e r \u2227 e.effect = .allow := by\n  simp [List.mem_filter, matchesB_correct4, Bool.and_eq_true, decide_eq_true_eq]\n\ntheorem mem_filter_matches_deny4 (l : List Entry) (r : Request) (e : Entry) :\n  e \u2208 l.filter (fun e => matchesB e r && decide (e.effect = .deny)) \u2194 e \u2208 l \u2227 Matches e r \u2227 e.effect = .deny := by\n  simp [List.mem_filter, matchesB_correct4, Bool.and_eq_true, decide_eq_true_eq]\n\ntheorem maxDepth_le_of_forall_mem4 (l : List Entry) (M : Nat) (h : \u2200 e \u2208 l, e.path.length \u2264 M) : maxDepth l \u2264 M := by\n  induction l with\n  | nil => simp [maxDepth]\n  | cons hd tl ih =>\n    rw [helper_maxDepth_cons3]\n    exact Nat.max_le.mpr \u27e8h hd (by simp), ih (fun e he => h e (List.Mem.tail _ he))\u27e9\n\ntheorem maxDepth_allows_bound4 (l : List Entry) (r : Request) (d : Entry) (hall : \u2200 a \u2208 l, Matches a r \u2192 a.effect = .allow \u2192 depth a \u2264 depth d) :\n  maxDepth (l.filter (fun e => matchesB e r && decide (e.effect = .allow))) \u2264 depth d := by\n  apply maxDepth_le_of_forall_mem4\n  intro e he\n  have h := (mem_filter_matches_allow4 l r e).mp he\n  exact hall e h.1 h.2.1 h.2.2\n\ntheorem perm_filter3 (p : Entry \u2192 Bool) {l\u2081 l\u2082 : List Entry} (h : l\u2081.Perm l\u2082) : (l\u2081.filter p).Perm (l\u2082.filter p) := by\n  induction h with\n  | nil => exact List.Perm.rfl\n  | cons x _ ih =>\n    by_cases hx : p x <;> simp [hx, ih]\n  | swap x y l =>\n    by_cases hx : p x <;> by_cases hy : p y <;> simp [hx, hy]\n    \u00b7 exact (List.Perm.swap x y (List.filter p l))\n  | trans ha hb iha ihb => exact iha.trans ihb\n\ntheorem perm_isEmpty4 {l\u2081 l\u2082 : List Entry} (h : l\u2081.Perm l\u2082) : l\u2081.isEmpty = l\u2082.isEmpty := by\n  have hlen : l\u2081.length = l\u2082.length := h.length_eq\n  cases l\u2081 <;> cases l\u2082 <;> simp_all [List.isEmpty]\n\ntheorem perm_maxDepth4 {l\u2081 l\u2082 : List Entry} (h : l\u2081.Perm l\u2082) : maxDepth l\u2081 = maxDepth l\u2082 := by\n  induction h with\n  | nil => rfl\n  | cons x _ ih => rw [helper_maxDepth_cons3, helper_maxDepth_cons3, ih]\n  | swap x y l =>\n      rw [helper_maxDepth_cons3, helper_maxDepth_cons3, helper_maxDepth_cons3, helper_maxDepth_cons3]\n      simp only [Nat.max_comm, Nat.max_left_comm]\n  | trans ha hb iha ihb => rw [iha, ihb]\n\ntheorem decision_perm4 {l\u2081 l\u2082 : List Entry} (h : l\u2081.Perm l\u2082) (r : Request) : decision l\u2081 r = decision l\u2082 r := by\n  unfold decision\n  have hA : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))).Perm (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .allow))) := perm_filter3 _ h\n  have hD : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))).Perm (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .deny))) := perm_filter3 _ h\n  have hAemp : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty = (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty := perm_isEmpty4 hA\n  have hDemp : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty = (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty := perm_isEmpty4 hD\n  by_cases hAE : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty = true\n  \u00b7 have hAE2 : (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty = true := hAemp \u25b8 hAE\n    simp [hAE, hAE2]\n  \u00b7 have hAE2 : (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty = false := by\n      have h1 : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty = false := by\n        cases hc : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty <;> simp_all\n      exact hAemp \u25b8 h1\n    simp only [hAE, hAE2, \u2193reduceIte, Bool.false_eq_true]\n    by_cases hDE : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty = true\n    \u00b7 have hDE2 : (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty = true := hDemp \u25b8 hDE\n      simp [hDE, hDE2]\n    \u00b7 have hDE2 : (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty = false := by\n        have h1 : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty = false := by\n          cases hc : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty <;> simp_all\n        exact hDemp \u25b8 h1\n      simp only [hDE, hDE2]\n      have hmax : maxDepth (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))) = maxDepth (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .deny))) := perm_maxDepth4 hD\n      have hmax2 : maxDepth (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))) = maxDepth (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .allow))) := perm_maxDepth4 hA\n      simp [hmax, hmax2]\n\ntheorem helper_maxDepth_lt_of_forall_lt3 (l : List Entry) (M : Nat) (hne : l \u2260 []) (h : \u2200 e \u2208 l, e.path.length < M) : maxDepth l < M := by\n  induction l with\n  | nil => contradiction\n  | cons hd tl ih =>\n    rw [helper_maxDepth_cons3]\n    have hhd : hd.path.length < M := h hd (by simp)\n    by_cases htl_empty : tl = []\n    \u00b7 subst htl_empty\n      simp [maxDepth] at *\n      omega\n    \u00b7 have htl_ne : tl \u2260 [] := htl_empty\n      have htl_forall : \u2200 e \u2208 tl, e.path.length < M := fun e he => h e (List.Mem.tail _ he)\n      have ih' : maxDepth tl < M := ih htl_ne htl_forall\n      omega\n\ntheorem req_valid_answered : ValidAnswered step := by\n  intro s r h\n  have h1 : r.user \u2208 s.users := h.1\n  have h2 : r.user \u2260 0 := h.2\n  unfold step\n  simp [h1, h2]\n  -- Now need to show if ... then granted else denied \u2260 rejected\n  by_cases hg : decision s.entries r = true\n  \u00b7 simp [hg]\n  \u00b7 simp [hg]\n\ntheorem req_invalid_noop       : InvalidNoop step := sorry\n\ntheorem req_effects : Effects step := by\n  intro s r h\n  unfold step at h \u22a2\n  by_cases hv : s.users.contains r.user && r.user != 0\n  \u00b7 simp only [hv] at h \u22a2\n    simp at h \u22a2\n  \u00b7 simp only [hv] at h\n    simp at h\n\ntheorem req_default_deny : DefaultDeny step := by\n  intro s r hNoAllow\n  unfold step\n  by_cases hv : s.users.contains r.user && r.user != 0\n  \u00b7 simp only [hv, \u2193reduceIte]\n    have hdec_false : decision s.entries r = false := by\n      unfold decision\n      have hallows_nil : List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries = [] := by\n        rw [List.filter_eq_nil_iff]\n        intro e he hfi\n        have hb : (matchesB e r && decide (e.effect = .allow)) = true := hfi\n        have h1 : matchesB e r = true := by\n          have := Bool.and_eq_true_iff.mp hb; exact this.1\n        have h2 : decide (e.effect = .allow) = true := by\n          have := Bool.and_eq_true_iff.mp hb; exact this.2\n        have hm : Matches e r := (matchesB_correct4 e r).mp h1\n        have heq : e.effect = .allow := of_decide_eq_true h2\n        exact hNoAllow \u27e8e, he, hm, heq\u27e9\n      simp [hallows_nil]\n    simp only [hdec_false]\n    simp\n  \u00b7 simp only [hv, \u2193reduceIte]\n    simp\n\ntheorem req_deny_overrides : DenyOverrides step := by\n  intro s r \u27e8d, hd_mem, hd_match, hd_eff, hd_max\u27e9\n  unfold step\n  by_cases hv : s.users.contains r.user && r.user != 0\n  \u00b7 simp only [hv, \u2193reduceIte, ne_eq]\n    have hdec_false : decision s.entries r = false := by\n      unfold decision\n      simp only\n      by_cases hallows_empty : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty = true\n      \u00b7 simp only [hallows_empty, \u2193reduceIte]\n      \u00b7 simp only [hallows_empty, \u2193reduceIte]\n        have hden_mem : d \u2208 List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries := by\n          rw [mem_filter_matches_deny4]; exact \u27e8hd_mem, hd_match, hd_eff\u27e9\n        have hden_ne : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) \u2260 [] :=\n          List.ne_nil_of_mem hden_mem\n        have hden_not_empty : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = false := by\n          simp [hden_ne]\n        simp only [hden_not_empty, \u2193reduceIte]\n        -- decision = decide (maxDenies < maxAllows) . Show it's false.\n        have h1 : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) \u2264 depth d :=\n          maxDepth_allows_bound4 s.entries r d hd_max\n        have h2 : depth d \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) := by\n          exact helper_maxDepth_le3 _ d hden_mem\n        have hle : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) := Nat.le_trans h1 h2\n        have hnot : \u00ac maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) < maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) := by omega\n        simp [hnot]\n    simp [hdec_false]\n  \u00b7 simp only [hv, \u2193reduceIte]\n    simp\n\ntheorem req_specific_allow : SpecificAllow step := by\n  intro s r hvalid hperm\n  obtain \u27e8a, ha_mem, ha_match, ha_eff, ha_spec\u27e9 := hperm\n  have hmem : r.user \u2208 s.users := hvalid.1\n  have hne : r.user \u2260 0 := hvalid.2\n  have hv : (s.users.contains r.user && r.user != 0) = true := by simp [List.contains_eq_mem, hmem, hne]\n  unfold step\n  simp only [hv, \u2193reduceIte]\n  suffices hdec : decision s.entries r = true by simp [hdec]\n  unfold decision\n  have ha_filt : a \u2208 List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries := by\n    rw [mem_filter_matches_allow4]; exact \u27e8ha_mem, ha_match, ha_eff\u27e9\n  have hallows_ne : List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries \u2260 [] :=\n    List.ne_nil_of_mem ha_filt\n  have hallows_notEmpty : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty = false := by\n    simp [hallows_ne]\n  simp only [hallows_notEmpty]\n  by_cases hden_empty : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = true\n  \u00b7 simp [hden_empty]\n  \u00b7 have hden_nf : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = false := by\n      have : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = false := by\n        cases h : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty <;> simp_all\n      exact this\n    simp only [hden_nf]\n    have ha_le_max : a.path.length \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) :=\n      helper_maxDepth_le3 _ a ha_filt\n    have hden_ne : List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries \u2260 [] := by\n      intro heq; simp [heq] at hden_nf\n    have hmax_den_lt : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) < a.path.length := by\n      apply helper_maxDepth_lt_of_forall_lt3 _ a.path.length hden_ne\n      intro e he\n      have hmem2 := (mem_filter_matches_deny4 s.entries r e).mp he\n      exact ha_spec e hmem2.1 hmem2.2.1 hmem2.2.2\n    have hlt : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) < maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) := by omega\n    simp [hlt]\n\ntheorem req_grant_justified : GrantJustified step := by\n  intro s r hgranted\n  unfold step at hgranted\n  by_cases hv : s.users.contains r.user && r.user != 0\n  \u00b7 simp only [hv] at hgranted\n    have hg : decision s.entries r = true := by\n      cases hd : decision s.entries r with\n      | true => rfl\n      | false => simp [hd] at hgranted\n    unfold decision at hg\n    have hallows_notEmpty : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty = false := by\n      cases he : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty with\n      | true => simp [he] at hg\n      | false => rfl\n    have hallows_ne : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) \u2260 [] := by\n      intro heq; simp [heq] at hallows_notEmpty\n    obtain \u27e8a0, ha0_mem, ha0_eq\u27e9 := helper_maxDepth_exists3 _ hallows_ne\n    have ha0_decomp := (mem_filter_matches_allow4 s.entries r a0).mp ha0_mem\n    refine \u27e8a0, ha0_decomp.1, ha0_decomp.2.1, ha0_decomp.2.2, ?_\u27e9\n    intro d hd_mem hd_match hd_eff\n    have hden_mem : d \u2208 List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries := by\n      rw [mem_filter_matches_deny4]; exact \u27e8hd_mem, hd_match, hd_eff\u27e9\n    have hden_ne : List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries \u2260 [] := List.ne_nil_of_mem hden_mem\n    have hden_notEmpty : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = false := by simp [hden_ne]\n    simp only [hallows_notEmpty, hden_notEmpty] at hg\n    have hlt : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) < maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) := of_decide_eq_true hg\n    rw [\u2190 ha0_eq] at hlt\n    have hd_le : d.path.length \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) := helper_maxDepth_le3 _ d hden_mem\n    show d.path.length < a0.path.length\n    omega\n  \u00b7 have hvF : (s.users.contains r.user && r.user != 0) = false := by\n      cases h : s.users.contains r.user && r.user != 0 <;> simp_all\n    simp only [hvF] at hgranted\n    simp at hgranted\n\ntheorem req_order_independent : OrderIndependent step := by\n  intro s r l hperm\n  unfold step\n  simp only\n  have hperm_symm : s.entries.Perm l := hperm.symm\n  have hdec : decision s.entries r = decision l r := decision_perm4 hperm_symm r\n  by_cases hmem : r.user \u2208 s.users\n  \u00b7 by_cases hzero : r.user = 0\n    \u00b7 have hv : (s.users.contains r.user && r.user != 0) = false := by simp [List.contains_eq_mem, hmem, hzero]\n      simp [hv, hmem, hzero, hdec]\n    \u00b7 have hv : (s.users.contains r.user && r.user != 0) = true := by simp [List.contains_eq_mem, hmem, hzero]\n      have hv2 : r.user \u2208 s.users \u2227 r.user \u2260 0 := \u27e8hmem, hzero\u27e9\n      simp [hv, hv2, hdec]\n  \u00b7 by_cases hzero : r.user = 0\n    \u00b7 have hv : (s.users.contains r.user && r.user != 0) = false := by simp [List.contains_eq_mem, hzero]\n      have hnot : \u00ac (r.user \u2208 s.users \u2227 r.user \u2260 0) := by simp [hmem]\n      simp [hv, hnot]\n    \u00b7 have hv : (s.users.contains r.user && r.user != 0) = false := by simp [List.contains_eq_mem, hmem]\n      have hnot : \u00ac (r.user \u2208 s.users \u2227 r.user \u2260 0) := by simp [hmem]\n      simp [hv, hnot]\n\ntheorem req_denial_explained : DenialExplained step := by\n  intro s r hden\n  unfold step at hden\n  by_cases hv : s.users.contains r.user && r.user != 0\n  \u00b7 simp only [hv] at hden\n    have hdec_false : decision s.entries r = false := by\n      cases hd : decision s.entries r with\n      | true => simp [hd] at hden\n      | false => rfl\n    unfold decision at hdec_false\n    by_cases hallows_empty : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty = true\n    \u00b7 simp only [hallows_empty] at hdec_false\n      left\n      intro \u27e8a, ha_mem, ha_match, ha_eq\u27e9\n      have ha_filt : a \u2208 List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries := by\n        rw [mem_filter_matches_allow4]; exact \u27e8ha_mem, ha_match, ha_eq\u27e9\n      have hne : List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries \u2260 [] := List.ne_nil_of_mem ha_filt\n      simp [hne] at hallows_empty\n    \u00b7 have hallows_notEmpty : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty = false := by\n        cases h : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty <;> simp_all\n      simp only [hallows_notEmpty] at hdec_false\n      right\n      have hden_nemp : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) \u2260 [] := by\n        intro heq\n        have h1 : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = true := by simp [heq]\n        simp [h1] at hdec_false\n      have hden_notEmpty : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = false := by simp [hden_nemp]\n      simp only [hden_notEmpty] at hdec_false\n      have hge : \u00ac (maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) < maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries)) := by\n        intro hlt\n        simp [hlt] at hdec_false\n      have hle : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) := by omega\n      obtain \u27e8d0, hd0_mem, hd0_eq\u27e9 := helper_maxDepth_exists3 _ hden_nemp\n      have hd0_decomp := (mem_filter_matches_deny4 s.entries r d0).mp hd0_mem\n      refine \u27e8d0, hd0_decomp.1, hd0_decomp.2.1, hd0_decomp.2.2, ?_\u27e9\n      intro a ha_mem ha_match ha_eff\n      have ha_filt : a \u2208 List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries := by\n        rw [mem_filter_matches_allow4]; exact \u27e8ha_mem, ha_match, ha_eff\u27e9\n      have ha_le : a.path.length \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) := helper_maxDepth_le3 _ a ha_filt\n      have hd_eq : d0.path.length = maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) := hd0_eq\n      show depth a \u2264 depth d0\n      unfold depth\n      omega\n  \u00b7 simp only [hv] at hden\n    simp at hden\n\nend Acl\n",
+  "sha256": "85778e8f58fa91ef9868be4da262a12c10b3dd97204209a2e1ce25031bf14f25",
+  "proved_required": [
+   "req_default_deny",
+   "req_denial_explained",
+   "req_deny_overrides",
+   "req_effects",
+   "req_grant_justified",
+   "req_order_independent",
+   "req_specific_allow",
+   "req_valid_answered"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_default_deny",
+   "req_denial_explained",
+   "req_deny_overrides",
+   "req_effects",
+   "req_grant_justified",
+   "req_order_independent",
+   "req_specific_allow",
+   "req_valid_answered"
+  ],
+  "text": "import Acl.Spec\nnamespace Acl\ninstance instDecidableValidQuery (s : State) (r : Request) : Decidable (ValidQuery s r) := by\n  unfold ValidQuery; infer_instance\n\ndef matchesB (e : Entry) (r : Request) : Bool :=\n  (e.subject == 0 || e.subject == r.user) && e.path.isPrefixOf r.path\n\ndef maxDepth (l : List Entry) : Nat :=\n  l.foldl (fun acc e => max acc e.path.length) 0\n\ndef decision (l : List Entry) (r : Request) : Bool :=\n  let allows := l.filter (fun e => matchesB e r && decide (e.effect = .allow))\n  let denies := l.filter (fun e => matchesB e r && decide (e.effect = .deny))\n  if allows.isEmpty then false\n  else if denies.isEmpty then true\n  else decide (maxDepth denies < maxDepth allows)\n\ndef step : Impl := fun s r =>\n  if s.users.contains r.user && r.user != 0 then\n    let g := decision s.entries r\n    (if g then .granted else .denied, { s with log := s.log ++ [\u27e8r.user, r.path, g\u27e9] })\n  else (.rejected, s)\n\ntheorem helper_maxDepth_cons3 (hd : Entry) (tl : List Entry) : maxDepth (hd :: tl) = max hd.path.length (maxDepth tl) := by\n  unfold maxDepth\n  simp only [List.foldl_cons]\n  have key : \u2200 (init : Nat) (l : List Entry), List.foldl (fun acc e => max acc e.path.length) (max init hd.path.length) l = max hd.path.length (List.foldl (fun acc e => max acc e.path.length) init l) := by\n    intro init l\n    induction l generalizing init with\n    | nil => simp [Nat.max_comm]\n    | cons y ys ih =>\n      simp only [List.foldl_cons]\n      calc List.foldl (fun acc e => max acc e.path.length) (max (max init hd.path.length) y.path.length) ys\n          = List.foldl (fun acc e => max acc e.path.length) (max (max init y.path.length) hd.path.length) ys := by\n            have : max (max init hd.path.length) y.path.length = max (max init y.path.length) hd.path.length := by\n              simp [Nat.max_comm, Nat.max_left_comm]\n            rw [this]\n        _ = max hd.path.length (List.foldl (fun acc e => max acc e.path.length) (max init y.path.length) ys) := ih (max init y.path.length)\n        _ = max hd.path.length (List.foldl (fun acc e => max acc e.path.length) init (y :: ys)) := by simp [List.foldl_cons]\n  have h := key 0 tl\n  simp at h\n  exact h\n\ntheorem helper_maxDepth_le3 (l : List Entry) (e : Entry) : e \u2208 l \u2192 e.path.length \u2264 maxDepth l := by\n  intro he\n  induction l with\n  | nil => simp at he\n  | cons hd tl ih =>\n    rcases List.mem_cons.mp he with rfl | hmem\n    \u00b7 rw [helper_maxDepth_cons3]; exact Nat.le_max_left _ _\n    \u00b7 rw [helper_maxDepth_cons3]; exact Nat.le_trans (ih hmem) (Nat.le_max_right _ _)\n\ntheorem helper_maxDepth_exists3 (l : List Entry) : l \u2260 [] \u2192 \u2203 e \u2208 l, e.path.length = maxDepth l := by\n  intro hne\n  induction l with\n  | nil => contradiction\n  | cons hd tl ih =>\n    by_cases htl : tl = []\n    \u00b7 subst htl\n      exact \u27e8hd, by simp, by rw [helper_maxDepth_cons3]; simp [maxDepth]\u27e9\n    \u00b7 have htl_ne : tl \u2260 [] := htl\n      obtain \u27e8e0, he0, heq\u27e9 := ih htl_ne\n      by_cases hle : decide (hd.path.length \u2264 maxDepth tl) = true\n      \u00b7 have hle' : hd.path.length \u2264 maxDepth tl := of_decide_eq_true hle\n        refine \u27e8e0, List.Mem.tail _ he0, ?_\u27e9\n        rw [helper_maxDepth_cons3, Nat.max_eq_right hle', heq]\n      \u00b7 have hle_false : decide (hd.path.length \u2264 maxDepth tl) = false := by\n          cases hc : decide (hd.path.length \u2264 maxDepth tl) <;> simp_all\n        have hlt : maxDepth tl < hd.path.length := by\n          have h' : \u00ac hd.path.length \u2264 maxDepth tl := by intro h; simp [h] at hle_false\n          exact Nat.lt_of_not_ge h'\n        refine \u27e8hd, by simp, ?_\u27e9\n        rw [helper_maxDepth_cons3, Nat.max_eq_left (Nat.le_of_lt hlt)]\n\nprivate theorem test_search : True := by\n  have h : [1,2].isPrefixOf [1,2,3] = true := by rfl\n  trivial\n-- check what lemmas exist\n\ntheorem matchesB_correct4 (e : Entry) (r : Request) : matchesB e r = true \u2194 Matches e r := by\n  unfold matchesB Matches\n  simp\n\ntheorem mem_filter_matches_allow4 (l : List Entry) (r : Request) (e : Entry) :\n  e \u2208 l.filter (fun e => matchesB e r && decide (e.effect = .allow)) \u2194 e \u2208 l \u2227 Matches e r \u2227 e.effect = .allow := by\n  simp [List.mem_filter, matchesB_correct4, Bool.and_eq_true, decide_eq_true_eq]\n\ntheorem mem_filter_matches_deny4 (l : List Entry) (r : Request) (e : Entry) :\n  e \u2208 l.filter (fun e => matchesB e r && decide (e.effect = .deny)) \u2194 e \u2208 l \u2227 Matches e r \u2227 e.effect = .deny := by\n  simp [List.mem_filter, matchesB_correct4, Bool.and_eq_true, decide_eq_true_eq]\n\ntheorem maxDepth_le_of_forall_mem4 (l : List Entry) (M : Nat) (h : \u2200 e \u2208 l, e.path.length \u2264 M) : maxDepth l \u2264 M := by\n  induction l with\n  | nil => simp [maxDepth]\n  | cons hd tl ih =>\n    rw [helper_maxDepth_cons3]\n    exact Nat.max_le.mpr \u27e8h hd (by simp), ih (fun e he => h e (List.Mem.tail _ he))\u27e9\n\ntheorem maxDepth_allows_bound4 (l : List Entry) (r : Request) (d : Entry) (hall : \u2200 a \u2208 l, Matches a r \u2192 a.effect = .allow \u2192 depth a \u2264 depth d) :\n  maxDepth (l.filter (fun e => matchesB e r && decide (e.effect = .allow))) \u2264 depth d := by\n  apply maxDepth_le_of_forall_mem4\n  intro e he\n  have h := (mem_filter_matches_allow4 l r e).mp he\n  exact hall e h.1 h.2.1 h.2.2\n\ntheorem perm_filter3 (p : Entry \u2192 Bool) {l\u2081 l\u2082 : List Entry} (h : l\u2081.Perm l\u2082) : (l\u2081.filter p).Perm (l\u2082.filter p) := by\n  induction h with\n  | nil => exact List.Perm.rfl\n  | cons x _ ih =>\n    by_cases hx : p x <;> simp [hx, ih]\n  | swap x y l =>\n    by_cases hx : p x <;> by_cases hy : p y <;> simp [hx, hy]\n    \u00b7 exact (List.Perm.swap x y (List.filter p l))\n  | trans ha hb iha ihb => exact iha.trans ihb\n\ntheorem perm_isEmpty4 {l\u2081 l\u2082 : List Entry} (h : l\u2081.Perm l\u2082) : l\u2081.isEmpty = l\u2082.isEmpty := by\n  have hlen : l\u2081.length = l\u2082.length := h.length_eq\n  cases l\u2081 <;> cases l\u2082 <;> simp_all [List.isEmpty]\n\ntheorem perm_maxDepth4 {l\u2081 l\u2082 : List Entry} (h : l\u2081.Perm l\u2082) : maxDepth l\u2081 = maxDepth l\u2082 := by\n  induction h with\n  | nil => rfl\n  | cons x _ ih => rw [helper_maxDepth_cons3, helper_maxDepth_cons3, ih]\n  | swap x y l =>\n      rw [helper_maxDepth_cons3, helper_maxDepth_cons3, helper_maxDepth_cons3, helper_maxDepth_cons3]\n      simp only [Nat.max_comm, Nat.max_left_comm]\n  | trans ha hb iha ihb => rw [iha, ihb]\n\ntheorem decision_perm4 {l\u2081 l\u2082 : List Entry} (h : l\u2081.Perm l\u2082) (r : Request) : decision l\u2081 r = decision l\u2082 r := by\n  unfold decision\n  have hA : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))).Perm (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .allow))) := perm_filter3 _ h\n  have hD : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))).Perm (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .deny))) := perm_filter3 _ h\n  have hAemp : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty = (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty := perm_isEmpty4 hA\n  have hDemp : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty = (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty := perm_isEmpty4 hD\n  by_cases hAE : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty = true\n  \u00b7 have hAE2 : (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty = true := hAemp \u25b8 hAE\n    simp [hAE, hAE2]\n  \u00b7 have hAE2 : (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty = false := by\n      have h1 : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty = false := by\n        cases hc : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty <;> simp_all\n      exact hAemp \u25b8 h1\n    simp only [hAE, hAE2, \u2193reduceIte, Bool.false_eq_true]\n    by_cases hDE : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty = true\n    \u00b7 have hDE2 : (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty = true := hDemp \u25b8 hDE\n      simp [hDE, hDE2]\n    \u00b7 have hDE2 : (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty = false := by\n        have h1 : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty = false := by\n          cases hc : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty <;> simp_all\n        exact hDemp \u25b8 h1\n      simp only [hDE, hDE2]\n      have hmax : maxDepth (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))) = maxDepth (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .deny))) := perm_maxDepth4 hD\n      have hmax2 : maxDepth (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))) = maxDepth (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .allow))) := perm_maxDepth4 hA\n      simp [hmax, hmax2]\n\ntheorem helper_maxDepth_lt_of_forall_lt3 (l : List Entry) (M : Nat) (hne : l \u2260 []) (h : \u2200 e \u2208 l, e.path.length < M) : maxDepth l < M := by\n  induction l with\n  | nil => contradiction\n  | cons hd tl ih =>\n    rw [helper_maxDepth_cons3]\n    have hhd : hd.path.length < M := h hd (by simp)\n    by_cases htl_empty : tl = []\n    \u00b7 subst htl_empty\n      simp [maxDepth] at *\n      omega\n    \u00b7 have htl_ne : tl \u2260 [] := htl_empty\n      have htl_forall : \u2200 e \u2208 tl, e.path.length < M := fun e he => h e (List.Mem.tail _ he)\n      have ih' : maxDepth tl < M := ih htl_ne htl_forall\n      omega\n\ntheorem req_valid_answered : ValidAnswered step := by\n  intro s r h\n  have h1 : r.user \u2208 s.users := h.1\n  have h2 : r.user \u2260 0 := h.2\n  unfold step\n  simp [h1, h2]\n  -- Now need to show if ... then granted else denied \u2260 rejected\n  by_cases hg : decision s.entries r = true\n  \u00b7 simp [hg]\n  \u00b7 simp [hg]\n\ntheorem req_invalid_noop       : InvalidNoop step := sorry\n\ntheorem req_effects : Effects step := by\n  intro s r h\n  unfold step at h \u22a2\n  by_cases hv : s.users.contains r.user && r.user != 0\n  \u00b7 simp only [hv] at h \u22a2\n    simp at h \u22a2\n  \u00b7 simp only [hv] at h\n    simp at h\n\ntheorem req_default_deny : DefaultDeny step := by\n  intro s r hNoAllow\n  unfold step\n  by_cases hv : s.users.contains r.user && r.user != 0\n  \u00b7 simp only [hv, \u2193reduceIte]\n    have hdec_false : decision s.entries r = false := by\n      unfold decision\n      have hallows_nil : List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries = [] := by\n        rw [List.filter_eq_nil_iff]\n        intro e he hfi\n        have hb : (matchesB e r && decide (e.effect = .allow)) = true := hfi\n        have h1 : matchesB e r = true := by\n          have := Bool.and_eq_true_iff.mp hb; exact this.1\n        have h2 : decide (e.effect = .allow) = true := by\n          have := Bool.and_eq_true_iff.mp hb; exact this.2\n        have hm : Matches e r := (matchesB_correct4 e r).mp h1\n        have heq : e.effect = .allow := of_decide_eq_true h2\n        exact hNoAllow \u27e8e, he, hm, heq\u27e9\n      simp [hallows_nil]\n    simp only [hdec_false]\n    simp\n  \u00b7 simp only [hv, \u2193reduceIte]\n    simp\n\ntheorem req_deny_overrides : DenyOverrides step := by\n  intro s r \u27e8d, hd_mem, hd_match, hd_eff, hd_max\u27e9\n  unfold step\n  by_cases hv : s.users.contains r.user && r.user != 0\n  \u00b7 simp only [hv, \u2193reduceIte, ne_eq]\n    have hdec_false : decision s.entries r = false := by\n      unfold decision\n      simp only\n      by_cases hallows_empty : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty = true\n      \u00b7 simp only [hallows_empty, \u2193reduceIte]\n      \u00b7 simp only [hallows_empty, \u2193reduceIte]\n        have hden_mem : d \u2208 List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries := by\n          rw [mem_filter_matches_deny4]; exact \u27e8hd_mem, hd_match, hd_eff\u27e9\n        have hden_ne : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) \u2260 [] :=\n          List.ne_nil_of_mem hden_mem\n        have hden_not_empty : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = false := by\n          simp [hden_ne]\n        simp only [hden_not_empty, \u2193reduceIte]\n        -- decision = decide (maxDenies < maxAllows) . Show it's false.\n        have h1 : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) \u2264 depth d :=\n          maxDepth_allows_bound4 s.entries r d hd_max\n        have h2 : depth d \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) := by\n          exact helper_maxDepth_le3 _ d hden_mem\n        have hle : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) := Nat.le_trans h1 h2\n        have hnot : \u00ac maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) < maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) := by omega\n        simp [hnot]\n    simp [hdec_false]\n  \u00b7 simp only [hv, \u2193reduceIte]\n    simp\n\ntheorem req_specific_allow : SpecificAllow step := by\n  intro s r hvalid hperm\n  obtain \u27e8a, ha_mem, ha_match, ha_eff, ha_spec\u27e9 := hperm\n  have hmem : r.user \u2208 s.users := hvalid.1\n  have hne : r.user \u2260 0 := hvalid.2\n  have hv : (s.users.contains r.user && r.user != 0) = true := by simp [List.contains_eq_mem, hmem, hne]\n  unfold step\n  simp only [hv, \u2193reduceIte]\n  suffices hdec : decision s.entries r = true by simp [hdec]\n  unfold decision\n  have ha_filt : a \u2208 List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries := by\n    rw [mem_filter_matches_allow4]; exact \u27e8ha_mem, ha_match, ha_eff\u27e9\n  have hallows_ne : List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries \u2260 [] :=\n    List.ne_nil_of_mem ha_filt\n  have hallows_notEmpty : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty = false := by\n    simp [hallows_ne]\n  simp only [hallows_notEmpty]\n  by_cases hden_empty : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = true\n  \u00b7 simp [hden_empty]\n  \u00b7 have hden_nf : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = false := by\n      have : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = false := by\n        cases h : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty <;> simp_all\n      exact this\n    simp only [hden_nf]\n    have ha_le_max : a.path.length \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) :=\n      helper_maxDepth_le3 _ a ha_filt\n    have hden_ne : List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries \u2260 [] := by\n      intro heq; simp [heq] at hden_nf\n    have hmax_den_lt : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) < a.path.length := by\n      apply helper_maxDepth_lt_of_forall_lt3 _ a.path.length hden_ne\n      intro e he\n      have hmem2 := (mem_filter_matches_deny4 s.entries r e).mp he\n      exact ha_spec e hmem2.1 hmem2.2.1 hmem2.2.2\n    have hlt : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) < maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) := by omega\n    simp [hlt]\n\ntheorem req_grant_justified : GrantJustified step := by\n  intro s r hgranted\n  unfold step at hgranted\n  by_cases hv : s.users.contains r.user && r.user != 0\n  \u00b7 simp only [hv] at hgranted\n    have hg : decision s.entries r = true := by\n      cases hd : decision s.entries r with\n      | true => rfl\n      | false => simp [hd] at hgranted\n    unfold decision at hg\n    have hallows_notEmpty : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty = false := by\n      cases he : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty with\n      | true => simp [he] at hg\n      | false => rfl\n    have hallows_ne : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) \u2260 [] := by\n      intro heq; simp [heq] at hallows_notEmpty\n    obtain \u27e8a0, ha0_mem, ha0_eq\u27e9 := helper_maxDepth_exists3 _ hallows_ne\n    have ha0_decomp := (mem_filter_matches_allow4 s.entries r a0).mp ha0_mem\n    refine \u27e8a0, ha0_decomp.1, ha0_decomp.2.1, ha0_decomp.2.2, ?_\u27e9\n    intro d hd_mem hd_match hd_eff\n    have hden_mem : d \u2208 List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries := by\n      rw [mem_filter_matches_deny4]; exact \u27e8hd_mem, hd_match, hd_eff\u27e9\n    have hden_ne : List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries \u2260 [] := List.ne_nil_of_mem hden_mem\n    have hden_notEmpty : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = false := by simp [hden_ne]\n    simp only [hallows_notEmpty, hden_notEmpty] at hg\n    have hlt : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) < maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) := of_decide_eq_true hg\n    rw [\u2190 ha0_eq] at hlt\n    have hd_le : d.path.length \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) := helper_maxDepth_le3 _ d hden_mem\n    show d.path.length < a0.path.length\n    omega\n  \u00b7 have hvF : (s.users.contains r.user && r.user != 0) = false := by\n      cases h : s.users.contains r.user && r.user != 0 <;> simp_all\n    simp only [hvF] at hgranted\n    simp at hgranted\n\ntheorem req_order_independent : OrderIndependent step := by\n  intro s r l hperm\n  unfold step\n  simp only\n  have hperm_symm : s.entries.Perm l := hperm.symm\n  have hdec : decision s.entries r = decision l r := decision_perm4 hperm_symm r\n  by_cases hmem : r.user \u2208 s.users\n  \u00b7 by_cases hzero : r.user = 0\n    \u00b7 have hv : (s.users.contains r.user && r.user != 0) = false := by simp [List.contains_eq_mem, hmem, hzero]\n      simp [hv, hmem, hzero, hdec]\n    \u00b7 have hv : (s.users.contains r.user && r.user != 0) = true := by simp [List.contains_eq_mem, hmem, hzero]\n      have hv2 : r.user \u2208 s.users \u2227 r.user \u2260 0 := \u27e8hmem, hzero\u27e9\n      simp [hv, hv2, hdec]\n  \u00b7 by_cases hzero : r.user = 0\n    \u00b7 have hv : (s.users.contains r.user && r.user != 0) = false := by simp [List.contains_eq_mem, hzero]\n      have hnot : \u00ac (r.user \u2208 s.users \u2227 r.user \u2260 0) := by simp [hmem]\n      simp [hv, hnot]\n    \u00b7 have hv : (s.users.contains r.user && r.user != 0) = false := by simp [List.contains_eq_mem, hmem]\n      have hnot : \u00ac (r.user \u2208 s.users \u2227 r.user \u2260 0) := by simp [hmem]\n      simp [hv, hnot]\n\ntheorem req_denial_explained : DenialExplained step := by\n  intro s r hden\n  unfold step at hden\n  by_cases hv : s.users.contains r.user && r.user != 0\n  \u00b7 simp only [hv] at hden\n    have hdec_false : decision s.entries r = false := by\n      cases hd : decision s.entries r with\n      | true => simp [hd] at hden\n      | false => rfl\n    unfold decision at hdec_false\n    by_cases hallows_empty : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty = true\n    \u00b7 simp only [hallows_empty] at hdec_false\n      left\n      intro \u27e8a, ha_mem, ha_match, ha_eq\u27e9\n      have ha_filt : a \u2208 List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries := by\n        rw [mem_filter_matches_allow4]; exact \u27e8ha_mem, ha_match, ha_eq\u27e9\n      have hne : List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries \u2260 [] := List.ne_nil_of_mem ha_filt\n      simp [hne] at hallows_empty\n    \u00b7 have hallows_notEmpty : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty = false := by\n        cases h : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty <;> simp_all\n      simp only [hallows_notEmpty] at hdec_false\n      right\n      have hden_nemp : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) \u2260 [] := by\n        intro heq\n        have h1 : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = true := by simp [heq]\n        simp [h1] at hdec_false\n      have hden_notEmpty : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = false := by simp [hden_nemp]\n      simp only [hden_notEmpty] at hdec_false\n      have hge : \u00ac (maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) < maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries)) := by\n        intro hlt\n        simp [hlt] at hdec_false\n      have hle : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) := by omega\n      obtain \u27e8d0, hd0_mem, hd0_eq\u27e9 := helper_maxDepth_exists3 _ hden_nemp\n      have hd0_decomp := (mem_filter_matches_deny4 s.entries r d0).mp hd0_mem\n      refine \u27e8d0, hd0_decomp.1, hd0_decomp.2.1, hd0_decomp.2.2, ?_\u27e9\n      intro a ha_mem ha_match ha_eff\n      have ha_filt : a \u2208 List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries := by\n        rw [mem_filter_matches_allow4]; exact \u27e8ha_mem, ha_match, ha_eff\u27e9\n      have ha_le : a.path.length \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) := helper_maxDepth_le3 _ a ha_filt\n      have hd_eq : d0.path.length = maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) := hd0_eq\n      show depth a \u2264 depth d0\n      unfold depth\n      omega\n  \u00b7 simp only [hv] at hden\n    simp at hden\n\nend Acl\n"
+ },
+ "proved": [
+  {
+   "name": "step",
+   "kind": "def",
+   "text": "def step : Impl := fun s r =>\n  if s.users.contains r.user && r.user != 0 then\n    let g := decision s.entries r\n    (if g then .granted else .denied, { s with log := s.log ++ [\u27e8r.user, r.path, g\u27e9] })\n  else (.rejected, s)",
+   "deps": [
+    "decision",
+    "matchesB",
+    "maxDepth"
+   ],
+   "statement": "def step : Impl := fun s r =>\n  if s.users.contains r.user && r.user != 0 then\n    let g := decision s.entries r\n    (if g then .granted else .denied, { s with log := s.log ++ [\u27e8r.user, r.path, g\u27e9] })\n  else (.rejected, s)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "decision",
+   "kind": "def",
+   "text": "def decision (l : List Entry) (r : Request) : Bool :=\n  let allows := l.filter (fun e => matchesB e r && decide (e.effect = .allow))\n  let denies := l.filter (fun e => matchesB e r && decide (e.effect = .deny))\n  if allows.isEmpty then false\n  else if denies.isEmpty then true\n  else decide (maxDepth denies < maxDepth allows)",
+   "deps": [
+    "matchesB",
+    "maxDepth"
+   ],
+   "statement": "def decision (l : List Entry) (r : Request) : Bool :=\n  let allows := l.filter (fun e => matchesB e r && decide (e.effect = .allow))\n  let denies := l.filter (fun e => matchesB e r && decide (e.effect = .deny))\n  if allows.isEmpty then false\n  else if denies.isEmpty then true\n  else decide (maxDepth denies < maxDepth allows)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "maxDepth",
+   "kind": "def",
+   "text": "def maxDepth (l : List Entry) : Nat :=\n  l.foldl (fun acc e => max acc e.path.length) 0",
+   "deps": [],
+   "statement": "def maxDepth (l : List Entry) : Nat :=\n  l.foldl (fun acc e => max acc e.path.length) 0",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "matchesB",
+   "kind": "def",
+   "text": "def matchesB (e : Entry) (r : Request) : Bool :=\n  (e.subject == 0 || e.subject == r.user) && e.path.isPrefixOf r.path",
+   "deps": [],
+   "statement": "def matchesB (e : Entry) (r : Request) : Bool :=\n  (e.subject == 0 || e.subject == r.user) && e.path.isPrefixOf r.path",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "instDecidableValidQuery",
+   "kind": "instance",
+   "text": "instance instDecidableValidQuery (s : State) (r : Request) : Decidable (ValidQuery s r) := by\n  unfold ValidQuery; infer_instance",
+   "deps": [],
+   "statement": "instance instDecidableValidQuery (s : State) (r : Request) : Decidable (ValidQuery s r) := by\n  unfold ValidQuery; infer_instance",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "req_valid_answered",
+   "kind": "theorem",
+   "text": "theorem req_valid_answered : ValidAnswered step := by\n  intro s r h\n  have h1 : r.user \u2208 s.users := h.1\n  have h2 : r.user \u2260 0 := h.2\n  unfold step\n  simp [h1, h2]\n  -- Now need to show if ... then granted else denied \u2260 rejected\n  by_cases hg : decision s.entries r = true\n  \u00b7 simp [hg]\n  \u00b7 simp [hg]",
+   "deps": [
+    "decision",
+    "matchesB",
+    "maxDepth",
+    "step"
+   ],
+   "statement": "theorem req_valid_answered : ValidAnswered step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "helper_maxDepth_exists3",
+   "kind": "theorem",
+   "text": "theorem helper_maxDepth_exists3 (l : List Entry) : l \u2260 [] \u2192 \u2203 e \u2208 l, e.path.length = maxDepth l := by\n  intro hne\n  induction l with\n  | nil => contradiction\n  | cons hd tl ih =>\n    by_cases htl : tl = []\n    \u00b7 subst htl\n      exact \u27e8hd, by simp, by rw [helper_maxDepth_cons3]; simp [maxDepth]\u27e9\n    \u00b7 have htl_ne : tl \u2260 [] := htl\n      obtain \u27e8e0, he0, heq\u27e9 := ih htl_ne\n      by_cases hle : decide (hd.path.length \u2264 maxDepth tl) = true\n      \u00b7 have hle' : hd.path.length \u2264 maxDepth tl := of_decide_eq_true hle\n        refine \u27e8e0, List.Mem.tail _ he0, ?_\u27e9\n        rw [helper_maxDepth_cons3, Nat.max_eq_right hle', heq]\n      \u00b7 have hle_false : decide (hd.path.length \u2264 maxDepth tl) = false := by\n          cases hc : decide (hd.path.length \u2264 maxDepth tl) <;> simp_all\n        have hlt : maxDepth tl < hd.path.length := by\n          have h' : \u00ac hd.path.length \u2264 maxDepth tl := by intro h; simp [h] at hle_false\n          exact Nat.lt_of_not_ge h'\n        refine \u27e8hd, by simp, ?_\u27e9\n        rw [helper_maxDepth_cons3, Nat.max_eq_left (Nat.le_of_lt hlt)]",
+   "deps": [
+    "helper_maxDepth_cons3",
+    "maxDepth"
+   ],
+   "statement": "theorem helper_maxDepth_exists3 (l : List Entry) : l \u2260 [] \u2192 \u2203 e \u2208 l, e.path.length = maxDepth l",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "helper_maxDepth_le3",
+   "kind": "theorem",
+   "text": "theorem helper_maxDepth_le3 (l : List Entry) (e : Entry) : e \u2208 l \u2192 e.path.length \u2264 maxDepth l := by\n  intro he\n  induction l with\n  | nil => simp at he\n  | cons hd tl ih =>\n    rcases List.mem_cons.mp he with rfl | hmem\n    \u00b7 rw [helper_maxDepth_cons3]; exact Nat.le_max_left _ _\n    \u00b7 rw [helper_maxDepth_cons3]; exact Nat.le_trans (ih hmem) (Nat.le_max_right _ _)",
+   "deps": [
+    "helper_maxDepth_cons3",
+    "maxDepth"
+   ],
+   "statement": "theorem helper_maxDepth_le3 (l : List Entry) (e : Entry) : e \u2208 l \u2192 e.path.length \u2264 maxDepth l",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "helper_maxDepth_cons3",
+   "kind": "theorem",
+   "text": "theorem helper_maxDepth_cons3 (hd : Entry) (tl : List Entry) : maxDepth (hd :: tl) = max hd.path.length (maxDepth tl) := by\n  unfold maxDepth\n  simp only [List.foldl_cons]\n  have key : \u2200 (init : Nat) (l : List Entry), List.foldl (fun acc e => max acc e.path.length) (max init hd.path.length) l = max hd.path.length (List.foldl (fun acc e => max acc e.path.length) init l) := by\n    intro init l\n    induction l generalizing init with\n    | nil => simp [Nat.max_comm]\n    | cons y ys ih =>\n      simp only [List.foldl_cons]\n      calc List.foldl (fun acc e => max acc e.path.length) (max (max init hd.path.length) y.path.length) ys\n          = List.foldl (fun acc e => max acc e.path.length) (max (max init y.path.length) hd.path.length) ys := by\n            have : max (max init hd.path.length) y.path.length = max (max init y.path.length) hd.path.length := by\n              simp [Nat.max_comm, Nat.max_left_comm]\n            rw [this]\n        _ = max hd.path.length (List.foldl (fun acc e => max acc e.path.length) (max init y.path.length) ys) := ih (max init y.path.length)\n        _ = max hd.path.length (List.foldl (fun acc e => max acc e.path.length) init (y :: ys)) := by simp [List.foldl_cons]\n  have h := key 0 tl\n  simp at h\n  exact h",
+   "deps": [
+    "maxDepth"
+   ],
+   "statement": "theorem helper_maxDepth_cons3 (hd : Entry) (tl : List Entry) : maxDepth (hd :: tl) = max hd.path.length (maxDepth tl)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "test_search",
+   "kind": "theorem",
+   "text": "private theorem test_search : True := by\n  have h : [1,2].isPrefixOf [1,2,3] = true := by rfl\n  trivial\n-- check what lemmas exist",
+   "deps": [],
+   "statement": "private theorem test_search : True",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "maxDepth_allows_bound4",
+   "kind": "theorem",
+   "text": "theorem maxDepth_allows_bound4 (l : List Entry) (r : Request) (d : Entry) (hall : \u2200 a \u2208 l, Matches a r \u2192 a.effect = .allow \u2192 depth a \u2264 depth d) :\n  maxDepth (l.filter (fun e => matchesB e r && decide (e.effect = .allow))) \u2264 depth d := by\n  apply maxDepth_le_of_forall_mem4\n  intro e he\n  have h := (mem_filter_matches_allow4 l r e).mp he\n  exact hall e h.1 h.2.1 h.2.2",
+   "deps": [
+    "helper_maxDepth_cons3",
+    "matchesB",
+    "matchesB_correct4",
+    "maxDepth",
+    "maxDepth_le_of_forall_mem4",
+    "mem_filter_matches_allow4"
+   ],
+   "statement": "theorem maxDepth_allows_bound4 (l : List Entry) (r : Request) (d : Entry) (hall : \u2200 a \u2208 l, Matches a r \u2192 a.effect = .allow \u2192 depth a \u2264 depth d) :\n  maxDepth (l.filter (fun e => matchesB e r && decide (e.effect = .allow))) \u2264 depth d",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "maxDepth_le_of_forall_mem4",
+   "kind": "theorem",
+   "text": "theorem maxDepth_le_of_forall_mem4 (l : List Entry) (M : Nat) (h : \u2200 e \u2208 l, e.path.length \u2264 M) : maxDepth l \u2264 M := by\n  induction l with\n  | nil => simp [maxDepth]\n  | cons hd tl ih =>\n    rw [helper_maxDepth_cons3]\n    exact Nat.max_le.mpr \u27e8h hd (by simp), ih (fun e he => h e (List.Mem.tail _ he))\u27e9",
+   "deps": [
+    "helper_maxDepth_cons3",
+    "maxDepth"
+   ],
+   "statement": "theorem maxDepth_le_of_forall_mem4 (l : List Entry) (M : Nat) (h : \u2200 e \u2208 l, e.path.length \u2264 M) : maxDepth l \u2264 M",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "mem_filter_matches_deny4",
+   "kind": "theorem",
+   "text": "theorem mem_filter_matches_deny4 (l : List Entry) (r : Request) (e : Entry) :\n  e \u2208 l.filter (fun e => matchesB e r && decide (e.effect = .deny)) \u2194 e \u2208 l \u2227 Matches e r \u2227 e.effect = .deny := by\n  simp [List.mem_filter, matchesB_correct4, Bool.and_eq_true, decide_eq_true_eq]",
+   "deps": [
+    "matchesB",
+    "matchesB_correct4"
+   ],
+   "statement": "theorem mem_filter_matches_deny4 (l : List Entry) (r : Request) (e : Entry) :\n  e \u2208 l.filter (fun e => matchesB e r && decide (e.effect = .deny)) \u2194 e \u2208 l \u2227 Matches e r \u2227 e.effect = .deny",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "mem_filter_matches_allow4",
+   "kind": "theorem",
+   "text": "theorem mem_filter_matches_allow4 (l : List Entry) (r : Request) (e : Entry) :\n  e \u2208 l.filter (fun e => matchesB e r && decide (e.effect = .allow)) \u2194 e \u2208 l \u2227 Matches e r \u2227 e.effect = .allow := by\n  simp [List.mem_filter, matchesB_correct4, Bool.and_eq_true, decide_eq_true_eq]",
+   "deps": [
+    "matchesB",
+    "matchesB_correct4"
+   ],
+   "statement": "theorem mem_filter_matches_allow4 (l : List Entry) (r : Request) (e : Entry) :\n  e \u2208 l.filter (fun e => matchesB e r && decide (e.effect = .allow)) \u2194 e \u2208 l \u2227 Matches e r \u2227 e.effect = .allow",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "matchesB_correct4",
+   "kind": "theorem",
+   "text": "theorem matchesB_correct4 (e : Entry) (r : Request) : matchesB e r = true \u2194 Matches e r := by\n  unfold matchesB Matches\n  simp",
+   "deps": [
+    "matchesB"
+   ],
+   "statement": "theorem matchesB_correct4 (e : Entry) (r : Request) : matchesB e r = true \u2194 Matches e r",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "req_deny_overrides",
+   "kind": "theorem",
+   "text": "theorem req_deny_overrides : DenyOverrides step := by\n  intro s r \u27e8d, hd_mem, hd_match, hd_eff, hd_max\u27e9\n  unfold step\n  by_cases hv : s.users.contains r.user && r.user != 0\n  \u00b7 simp only [hv, \u2193reduceIte, ne_eq]\n    have hdec_false : decision s.entries r = false := by\n      unfold decision\n      simp only\n      by_cases hallows_empty : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty = true\n      \u00b7 simp only [hallows_empty, \u2193reduceIte]\n      \u00b7 simp only [hallows_empty, \u2193reduceIte]\n        have hden_mem : d \u2208 List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries := by\n          rw [mem_filter_matches_deny4]; exact \u27e8hd_mem, hd_match, hd_eff\u27e9\n        have hden_ne : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) \u2260 [] :=\n          List.ne_nil_of_mem hden_mem\n        have hden_not_empty : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = false := by\n          simp [hden_ne]\n        simp only [hden_not_empty, \u2193reduceIte]\n        -- decision = decide (maxDenies < maxAllows) . Show it's false.\n        have h1 : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) \u2264 depth d :=\n          maxDepth_allows_bound4 s.entries r d hd_max\n        have h2 : depth d \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) := by\n          exact helper_maxDepth_le3 _ d hden_mem\n        have hle : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) := Nat.le_trans h1 h2\n        have hnot : \u00ac maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) < maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) := by omega\n        simp [hnot]\n    simp [hdec_false]\n  \u00b7 simp only [hv, \u2193reduceIte]\n    simp",
+   "deps": [
+    "decision",
+    "helper_maxDepth_cons3",
+    "helper_maxDepth_le3",
+    "matchesB",
+    "matchesB_correct4",
+    "maxDepth",
+    "maxDepth_allows_bound4",
+    "maxDepth_le_of_forall_mem4",
+    "mem_filter_matches_allow4",
+    "mem_filter_matches_deny4",
+    "step"
+   ],
+   "statement": "theorem req_deny_overrides : DenyOverrides step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "decision_perm4",
+   "kind": "theorem",
+   "text": "theorem decision_perm4 {l\u2081 l\u2082 : List Entry} (h : l\u2081.Perm l\u2082) (r : Request) : decision l\u2081 r = decision l\u2082 r := by\n  unfold decision\n  have hA : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))).Perm (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .allow))) := perm_filter3 _ h\n  have hD : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))).Perm (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .deny))) := perm_filter3 _ h\n  have hAemp : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty = (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty := perm_isEmpty4 hA\n  have hDemp : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty = (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty := perm_isEmpty4 hD\n  by_cases hAE : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty = true\n  \u00b7 have hAE2 : (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty = true := hAemp \u25b8 hAE\n    simp [hAE, hAE2]\n  \u00b7 have hAE2 : (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty = false := by\n      have h1 : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty = false := by\n        cases hc : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))).isEmpty <;> simp_all\n      exact hAemp \u25b8 h1\n    simp only [hAE, hAE2, \u2193reduceIte, Bool.false_eq_true]\n    by_cases hDE : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty = true\n    \u00b7 have hDE2 : (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty = true := hDemp \u25b8 hDE\n      simp [hDE, hDE2]\n    \u00b7 have hDE2 : (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty = false := by\n        have h1 : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty = false := by\n          cases hc : (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))).isEmpty <;> simp_all\n        exact hDemp \u25b8 h1\n      simp only [hDE, hDE2]\n      have hmax : maxDepth (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .deny))) = maxDepth (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .deny))) := perm_maxDepth4 hD\n      have hmax2 : maxDepth (l\u2081.filter (fun e => matchesB e r && decide (e.effect = .allow))) = maxDepth (l\u2082.filter (fun e => matchesB e r && decide (e.effect = .allow))) := perm_maxDepth4 hA\n      simp [hmax, hmax2]",
+   "deps": [
+    "decision",
+    "helper_maxDepth_cons3",
+    "matchesB",
+    "maxDepth",
+    "perm_filter3",
+    "perm_isEmpty4",
+    "perm_maxDepth4"
+   ],
+   "statement": "theorem decision_perm4 {l\u2081 l\u2082 : List Entry} (h : l\u2081.Perm l\u2082) (r : Request) : decision l\u2081 r = decision l\u2082 r",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "perm_maxDepth4",
+   "kind": "theorem",
+   "text": "theorem perm_maxDepth4 {l\u2081 l\u2082 : List Entry} (h : l\u2081.Perm l\u2082) : maxDepth l\u2081 = maxDepth l\u2082 := by\n  induction h with\n  | nil => rfl\n  | cons x _ ih => rw [helper_maxDepth_cons3, helper_maxDepth_cons3, ih]\n  | swap x y l =>\n      rw [helper_maxDepth_cons3, helper_maxDepth_cons3, helper_maxDepth_cons3, helper_maxDepth_cons3]\n      simp only [Nat.max_comm, Nat.max_left_comm]\n  | trans ha hb iha ihb => rw [iha, ihb]",
+   "deps": [
+    "helper_maxDepth_cons3",
+    "maxDepth"
+   ],
+   "statement": "theorem perm_maxDepth4 {l\u2081 l\u2082 : List Entry} (h : l\u2081.Perm l\u2082) : maxDepth l\u2081 = maxDepth l\u2082",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "perm_isEmpty4",
+   "kind": "theorem",
+   "text": "theorem perm_isEmpty4 {l\u2081 l\u2082 : List Entry} (h : l\u2081.Perm l\u2082) : l\u2081.isEmpty = l\u2082.isEmpty := by\n  have hlen : l\u2081.length = l\u2082.length := h.length_eq\n  cases l\u2081 <;> cases l\u2082 <;> simp_all [List.isEmpty]",
+   "deps": [],
+   "statement": "theorem perm_isEmpty4 {l\u2081 l\u2082 : List Entry} (h : l\u2081.Perm l\u2082) : l\u2081.isEmpty = l\u2082.isEmpty",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "perm_filter3",
+   "kind": "theorem",
+   "text": "theorem perm_filter3 (p : Entry \u2192 Bool) {l\u2081 l\u2082 : List Entry} (h : l\u2081.Perm l\u2082) : (l\u2081.filter p).Perm (l\u2082.filter p) := by\n  induction h with\n  | nil => exact List.Perm.rfl\n  | cons x _ ih =>\n    by_cases hx : p x <;> simp [hx, ih]\n  | swap x y l =>\n    by_cases hx : p x <;> by_cases hy : p y <;> simp [hx, hy]\n    \u00b7 exact (List.Perm.swap x y (List.filter p l))\n  | trans ha hb iha ihb => exact iha.trans ihb",
+   "deps": [],
+   "statement": "theorem perm_filter3 (p : Entry \u2192 Bool) {l\u2081 l\u2082 : List Entry} (h : l\u2081.Perm l\u2082) : (l\u2081.filter p).Perm (l\u2082.filter p)",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "req_order_independent",
+   "kind": "theorem",
+   "text": "theorem req_order_independent : OrderIndependent step := by\n  intro s r l hperm\n  unfold step\n  simp only\n  have hperm_symm : s.entries.Perm l := hperm.symm\n  have hdec : decision s.entries r = decision l r := decision_perm4 hperm_symm r\n  by_cases hmem : r.user \u2208 s.users\n  \u00b7 by_cases hzero : r.user = 0\n    \u00b7 have hv : (s.users.contains r.user && r.user != 0) = false := by simp [List.contains_eq_mem, hmem, hzero]\n      simp [hv, hmem, hzero, hdec]\n    \u00b7 have hv : (s.users.contains r.user && r.user != 0) = true := by simp [List.contains_eq_mem, hmem, hzero]\n      have hv2 : r.user \u2208 s.users \u2227 r.user \u2260 0 := \u27e8hmem, hzero\u27e9\n      simp [hv, hv2, hdec]\n  \u00b7 by_cases hzero : r.user = 0\n    \u00b7 have hv : (s.users.contains r.user && r.user != 0) = false := by simp [List.contains_eq_mem, hzero]\n      have hnot : \u00ac (r.user \u2208 s.users \u2227 r.user \u2260 0) := by simp [hmem]\n      simp [hv, hnot]\n    \u00b7 have hv : (s.users.contains r.user && r.user != 0) = false := by simp [List.contains_eq_mem, hmem]\n      have hnot : \u00ac (r.user \u2208 s.users \u2227 r.user \u2260 0) := by simp [hmem]\n      simp [hv, hnot]",
+   "deps": [
+    "decision",
+    "decision_perm4",
+    "helper_maxDepth_cons3",
+    "matchesB",
+    "maxDepth",
+    "perm_filter3",
+    "perm_isEmpty4",
+    "perm_maxDepth4",
+    "step"
+   ],
+   "statement": "theorem req_order_independent : OrderIndependent step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "req_default_deny",
+   "kind": "theorem",
+   "text": "theorem req_default_deny : DefaultDeny step := by\n  intro s r hNoAllow\n  unfold step\n  by_cases hv : s.users.contains r.user && r.user != 0\n  \u00b7 simp only [hv, \u2193reduceIte]\n    have hdec_false : decision s.entries r = false := by\n      unfold decision\n      have hallows_nil : List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries = [] := by\n        rw [List.filter_eq_nil_iff]\n        intro e he hfi\n        have hb : (matchesB e r && decide (e.effect = .allow)) = true := hfi\n        have h1 : matchesB e r = true := by\n          have := Bool.and_eq_true_iff.mp hb; exact this.1\n        have h2 : decide (e.effect = .allow) = true := by\n          have := Bool.and_eq_true_iff.mp hb; exact this.2\n        have hm : Matches e r := (matchesB_correct4 e r).mp h1\n        have heq : e.effect = .allow := of_decide_eq_true h2\n        exact hNoAllow \u27e8e, he, hm, heq\u27e9\n      simp [hallows_nil]\n    simp only [hdec_false]\n    simp\n  \u00b7 simp only [hv, \u2193reduceIte]\n    simp",
+   "deps": [
+    "decision",
+    "matchesB",
+    "matchesB_correct4",
+    "maxDepth",
+    "step"
+   ],
+   "statement": "theorem req_default_deny : DefaultDeny step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "helper_maxDepth_lt_of_forall_lt3",
+   "kind": "theorem",
+   "text": "theorem helper_maxDepth_lt_of_forall_lt3 (l : List Entry) (M : Nat) (hne : l \u2260 []) (h : \u2200 e \u2208 l, e.path.length < M) : maxDepth l < M := by\n  induction l with\n  | nil => contradiction\n  | cons hd tl ih =>\n    rw [helper_maxDepth_cons3]\n    have hhd : hd.path.length < M := h hd (by simp)\n    by_cases htl_empty : tl = []\n    \u00b7 subst htl_empty\n      simp [maxDepth] at *\n      omega\n    \u00b7 have htl_ne : tl \u2260 [] := htl_empty\n      have htl_forall : \u2200 e \u2208 tl, e.path.length < M := fun e he => h e (List.Mem.tail _ he)\n      have ih' : maxDepth tl < M := ih htl_ne htl_forall\n      omega",
+   "deps": [
+    "helper_maxDepth_cons3",
+    "maxDepth"
+   ],
+   "statement": "theorem helper_maxDepth_lt_of_forall_lt3 (l : List Entry) (M : Nat) (hne : l \u2260 []) (h : \u2200 e \u2208 l, e.path.length < M) : maxDepth l < M",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "req_grant_justified",
+   "kind": "theorem",
+   "text": "theorem req_grant_justified : GrantJustified step := by\n  intro s r hgranted\n  unfold step at hgranted\n  by_cases hv : s.users.contains r.user && r.user != 0\n  \u00b7 simp only [hv] at hgranted\n    have hg : decision s.entries r = true := by\n      cases hd : decision s.entries r with\n      | true => rfl\n      | false => simp [hd] at hgranted\n    unfold decision at hg\n    have hallows_notEmpty : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty = false := by\n      cases he : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty with\n      | true => simp [he] at hg\n      | false => rfl\n    have hallows_ne : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) \u2260 [] := by\n      intro heq; simp [heq] at hallows_notEmpty\n    obtain \u27e8a0, ha0_mem, ha0_eq\u27e9 := helper_maxDepth_exists3 _ hallows_ne\n    have ha0_decomp := (mem_filter_matches_allow4 s.entries r a0).mp ha0_mem\n    refine \u27e8a0, ha0_decomp.1, ha0_decomp.2.1, ha0_decomp.2.2, ?_\u27e9\n    intro d hd_mem hd_match hd_eff\n    have hden_mem : d \u2208 List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries := by\n      rw [mem_filter_matches_deny4]; exact \u27e8hd_mem, hd_match, hd_eff\u27e9\n    have hden_ne : List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries \u2260 [] := List.ne_nil_of_mem hden_mem\n    have hden_notEmpty : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = false := by simp [hden_ne]\n    simp only [hallows_notEmpty, hden_notEmpty] at hg\n    have hlt : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) < maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) := of_decide_eq_true hg\n    rw [\u2190 ha0_eq] at hlt\n    have hd_le : d.path.length \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) := helper_maxDepth_le3 _ d hden_mem\n    show d.path.length < a0.path.length\n    omega\n  \u00b7 have hvF : (s.users.contains r.user && r.user != 0) = false := by\n      cases h : s.users.contains r.user && r.user != 0 <;> simp_all\n    simp only [hvF] at hgranted\n    simp at hgranted",
+   "deps": [
+    "decision",
+    "helper_maxDepth_cons3",
+    "helper_maxDepth_exists3",
+    "helper_maxDepth_le3",
+    "matchesB",
+    "matchesB_correct4",
+    "maxDepth",
+    "mem_filter_matches_allow4",
+    "mem_filter_matches_deny4",
+    "step"
+   ],
+   "statement": "theorem req_grant_justified : GrantJustified step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "req_effects",
+   "kind": "theorem",
+   "text": "theorem req_effects : Effects step := by\n  intro s r h\n  unfold step at h \u22a2\n  by_cases hv : s.users.contains r.user && r.user != 0\n  \u00b7 simp only [hv] at h \u22a2\n    simp at h \u22a2\n  \u00b7 simp only [hv] at h\n    simp at h",
+   "deps": [
+    "decision",
+    "matchesB",
+    "maxDepth",
+    "step"
+   ],
+   "statement": "theorem req_effects : Effects step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "req_specific_allow",
+   "kind": "theorem",
+   "text": "theorem req_specific_allow : SpecificAllow step := by\n  intro s r hvalid hperm\n  obtain \u27e8a, ha_mem, ha_match, ha_eff, ha_spec\u27e9 := hperm\n  have hmem : r.user \u2208 s.users := hvalid.1\n  have hne : r.user \u2260 0 := hvalid.2\n  have hv : (s.users.contains r.user && r.user != 0) = true := by simp [List.contains_eq_mem, hmem, hne]\n  unfold step\n  simp only [hv, \u2193reduceIte]\n  suffices hdec : decision s.entries r = true by simp [hdec]\n  unfold decision\n  have ha_filt : a \u2208 List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries := by\n    rw [mem_filter_matches_allow4]; exact \u27e8ha_mem, ha_match, ha_eff\u27e9\n  have hallows_ne : List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries \u2260 [] :=\n    List.ne_nil_of_mem ha_filt\n  have hallows_notEmpty : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty = false := by\n    simp [hallows_ne]\n  simp only [hallows_notEmpty]\n  by_cases hden_empty : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = true\n  \u00b7 simp [hden_empty]\n  \u00b7 have hden_nf : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = false := by\n      have : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = false := by\n        cases h : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty <;> simp_all\n      exact this\n    simp only [hden_nf]\n    have ha_le_max : a.path.length \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) :=\n      helper_maxDepth_le3 _ a ha_filt\n    have hden_ne : List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries \u2260 [] := by\n      intro heq; simp [heq] at hden_nf\n    have hmax_den_lt : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) < a.path.length := by\n      apply helper_maxDepth_lt_of_forall_lt3 _ a.path.length hden_ne\n      intro e he\n      have hmem2 := (mem_filter_matches_deny4 s.entries r e).mp he\n      exact ha_spec e hmem2.1 hmem2.2.1 hmem2.2.2\n    have hlt : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) < maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) := by omega\n    simp [hlt]",
+   "deps": [
+    "decision",
+    "helper_maxDepth_cons3",
+    "helper_maxDepth_le3",
+    "helper_maxDepth_lt_of_forall_lt3",
+    "matchesB",
+    "matchesB_correct4",
+    "maxDepth",
+    "mem_filter_matches_allow4",
+    "mem_filter_matches_deny4",
+    "step"
+   ],
+   "statement": "theorem req_specific_allow : SpecificAllow step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  },
+  {
+   "name": "req_denial_explained",
+   "kind": "theorem",
+   "text": "theorem req_denial_explained : DenialExplained step := by\n  intro s r hden\n  unfold step at hden\n  by_cases hv : s.users.contains r.user && r.user != 0\n  \u00b7 simp only [hv] at hden\n    have hdec_false : decision s.entries r = false := by\n      cases hd : decision s.entries r with\n      | true => simp [hd] at hden\n      | false => rfl\n    unfold decision at hdec_false\n    by_cases hallows_empty : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty = true\n    \u00b7 simp only [hallows_empty] at hdec_false\n      left\n      intro \u27e8a, ha_mem, ha_match, ha_eq\u27e9\n      have ha_filt : a \u2208 List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries := by\n        rw [mem_filter_matches_allow4]; exact \u27e8ha_mem, ha_match, ha_eq\u27e9\n      have hne : List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries \u2260 [] := List.ne_nil_of_mem ha_filt\n      simp [hne] at hallows_empty\n    \u00b7 have hallows_notEmpty : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty = false := by\n        cases h : (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries).isEmpty <;> simp_all\n      simp only [hallows_notEmpty] at hdec_false\n      right\n      have hden_nemp : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) \u2260 [] := by\n        intro heq\n        have h1 : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = true := by simp [heq]\n        simp [h1] at hdec_false\n      have hden_notEmpty : (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries).isEmpty = false := by simp [hden_nemp]\n      simp only [hden_notEmpty] at hdec_false\n      have hge : \u00ac (maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) < maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries)) := by\n        intro hlt\n        simp [hlt] at hdec_false\n      have hle : maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) := by omega\n      obtain \u27e8d0, hd0_mem, hd0_eq\u27e9 := helper_maxDepth_exists3 _ hden_nemp\n      have hd0_decomp := (mem_filter_matches_deny4 s.entries r d0).mp hd0_mem\n      refine \u27e8d0, hd0_decomp.1, hd0_decomp.2.1, hd0_decomp.2.2, ?_\u27e9\n      intro a ha_mem ha_match ha_eff\n      have ha_filt : a \u2208 List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries := by\n        rw [mem_filter_matches_allow4]; exact \u27e8ha_mem, ha_match, ha_eff\u27e9\n      have ha_le : a.path.length \u2264 maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .allow)) s.entries) := helper_maxDepth_le3 _ a ha_filt\n      have hd_eq : d0.path.length = maxDepth (List.filter (fun e => matchesB e r && decide (e.effect = .deny)) s.entries) := hd0_eq\n      show depth a \u2264 depth d0\n      unfold depth\n      omega\n  \u00b7 simp only [hv] at hden\n    simp at hden",
+   "deps": [
+    "decision",
+    "helper_maxDepth_cons3",
+    "helper_maxDepth_exists3",
+    "helper_maxDepth_le3",
+    "matchesB",
+    "matchesB_correct4",
+    "maxDepth",
+    "mem_filter_matches_allow4",
+    "mem_filter_matches_deny4",
+    "step"
+   ],
+   "statement": "theorem req_denial_explained : DenialExplained step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "permissions-acl-b2",
+   "spec_sha256": "7eea6a1815787f12a44c429a20a7f2d52432d782a39e11913a560ec81901e193"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [
+  {
+   "name": "req_invalid_noop",
+   "required": true,
+   "statement": "theorem req_invalid_noop       : InvalidNoop step",
+   "scope": "goal",
+   "dialogs": 4,
+   "turns": 48,
+   "usd_list": 0.2818,
+   "tried": [
+    {
+     "tool": "try_snippet",
+     "code": "theorem req_invalid_noop : InvalidNoop step := by\n  intro s r h\n  have hv : (s.users.contains r.user && (r.user != 0)) = false := by\n    by_contra hT\n    have htrue : (s.users.contains r.user && (r.user != 0)) = true := by\n      cases hc : s.users.contains r.user && (r.user != 0) <;> simp_all\n    have h1 : s.users.contains r.user = true := by\n      have := Bool.and_eq_true_iff.mp htrue\n      exact this.1\n    have h2 : (r.user != 0) = true := by\n      have := Bool.and_eq_true_iff.mp htrue\n      exact this.2\n    have hmem : r.user \u2208 s.users := List.contains_eq_mem.mp h1\n    have hne : r.user \u2260 0 := by\n      simp at h2\n      exact h2\n    exact h \u27e8hmem, hne\u27e9\n  have hstep : step s r = (if s.users.contains r.user && r.user != 0 then (if decision s.entries r then Outcome.granted else Outcome.denied, { s with log := s.log ++ [\u27e8r.user, r.path, decision s.entries r\u27e9] }) else (Outcome.rejected, s)) := by unfold step; rfl\n  rw [hstep, hv]\n",
+     "lean": "snippet:1:47: error: unsolved goals"
+    },
+    {
+     "tool": "try_snippet",
+     "code": "theorem req_invalid_noop : InvalidNoop step := by\n  intro s r h\n  unfold step\n  have hv : (s.users.contains r.user && (r.user != 0)) = false := by\n    by_contra hT\n    have htrue : (s.users.contains r.user && (r.user != 0)) = true := by\n      have hne : s.users.contains r.user && (r.user != 0) \u2260 false := hT\n      cases hc : s.users.contains r.user && (r.user != 0) <;> simp_all\n    have h1 : s.users.contains r.user = true := (Bool.and_eq_true_iff.mp htrue).1\n    have h2 : (r.user != 0) = true := (Bool.and_eq_true_iff.mp htrue).2\n    have hmem : r.user \u2208 s.users := by\n      rwa [List.contains_eq_mem] at h1\n    have hne : r.user \u2260 0 := by\n      simp at h2\n      exact h2\n    exact h \u27e8hmem, hne\u27e9\n  simp [hv]\n\n",
+     "lean": "snippet:1:47: error: unsolved goals"
+    },
+    {
+     "tool": "try_snippet",
+     "code": "theorem req_invalid_noop : InvalidNoop step := by\n  intro s r h\n  unfold step\n  have hv : (s.users.contains r.user && (r.user != 0)) = false := by\n    simp only [Bool.and_eq_false_imp]\n    intro h1 h2\n    exact False.elim (h \u27e8List.contains_eq_mem.mp h1, by intro heq; simp [heq] at h2\u27e9)\n  simp [hv]\n",
+     "lean": "snippet:1:47: error: unsolved goals"
+    },
+    {
+     "tool": "try_snippet",
+     "code": "theorem req_invalid_noop : InvalidNoop step := by\n  intro s r h\n  unfold step\n  have hv : (s.users.contains r.user && (r.user != 0)) = false := by\n    by_contra hT\n    have htrue : (s.users.contains r.user && (r.user != 0)) = true := by\n      cases hc : s.users.contains r.user && (r.user != 0) <;> simp_all\n    have h1 : s.users.contains r.user = true := (Bool.and_eq_true_iff.mp htrue).1\n    have h2 : (r.user != 0) = true := (Bool.and_eq_true_iff.mp htrue).2\n    have hmem : r.user \u2208 s.users := by\n      rwa [List.contains_eq_mem] at h1\n    have hne : r.user \u2260 0 := by\n      simp at h2\n      exact h2\n    exact h \u27e8hmem, hne\u27e9\n  simp only [decide_eq_true_eq] at hv\n  simp only [step, hv]\n",
+     "lean": "snippet:1:47: error: unsolved goals"
+    }
+   ],
+   "last_lean": "snippet:1:47: error: unsolved goals\ns : State\nr : Request\nh : \u00acValidQuery s r\nhv : (s.users.contains r.user && r.user != 0) = false\n\u22a2 (if (s.users.contains r.user && r.user != 0) = true then\n      have g := decision s.entries r;\n      (if g = true then Outcome.granted else Outcome.denied,\n        { users := s.users, entries := s.entries, log := s.log ++ [{ user := r.user, path := r.path, granted := g }] })\n    else (Outcome.rejected, s)) =\n    (Outcome.rejected, s)\nsnippet:4:66: error: unsolved goals\ns : State\nr : Request\nh : \u00acValidQuery s r\n\u22a2 (s.users.contains r.user && r.user != 0) = false\nsnippet:5:5: error: unknown tactic",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [
+    "decide",
+    "exact?",
+    "grind",
+    "grind_defs",
+    "omega",
+    "simp_all",
+    "simp_all_omega",
+    "try?",
+    "unfold_grind"
+   ],
+   "refuted": false
+  }
+ ],
+ "budget": {
+  "usd_cap": 3.0,
+  "wall_cap_s": 3600.0,
+  "stop": "usd",
+  "usd_list": 2.8624,
+  "usd_actual": 2.8624,
+  "elapsed_s": 1642.9,
+  "unknown_usage_calls": 0,
+  "lost_attempts": 2,
+  "input_bound_violations": 0,
+  "wall_overrun_s": 0.0,
+  "by_model": {
+   "meta-models/muse-spark-open-1026": {
+    "calls": 278,
+    "prompt": 4702495,
+    "cached": 4245248,
+    "completion": 287385,
+    "usd_list": 2.8624,
+    "usd_actual": 2.8624
+   }
+  }
+ },
+ "resumed_from": []
+}

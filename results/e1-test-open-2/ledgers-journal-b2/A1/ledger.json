@@ -1,0 +1,290 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "ledgers-journal-b2",
+ "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93",
+ "run_dir": "results/e1-test-open-2/ledgers-journal-b2/A1",
+ "arm": "A1",
+ "loop": "orchestrated",
+ "model": "meta-models/muse-spark-open-1026",
+ "created": "2026-11-01T18:11:14-0500",
+ "reconstructed": false,
+ "final": {
+  "text": "import Journal.Spec\nimport Journal.Lemmas\nnamespace Journal\n\ndef adjust (bal : AccountId \u2192 Int) (a : AccountId) (amt : Int) : AccountId \u2192 Int :=\n  fun b => if b = a then bal b + amt else bal b\n\ndef acceptable (s : State) (e : Entry) : Bool :=\n  decide s.accounts.Nodup && !e.lines.isEmpty && e.lines.all (fun l => s.accounts.contains l.1) && e.lines.all (fun l => l.2 != 0) &&\n  decide (lineSum e.lines = 0) && !s.posted.contains e.id\n\ndef step : Impl := fun s e =>\n  if acceptable s e then\n    (.ok, { accounts := s.accounts,\n            balance := e.lines.foldl (fun b l => adjust b l.1 l.2) s.balance,\n            posted := e.id :: s.posted })\n  else (.rejected, s)\n\ntheorem fold_balance_aux (bal : AccountId \u2192 Int) (ls : List Line) (a : AccountId) :\n    (ls.foldl (fun b l => adjust b l.1 l.2) bal) a = bal a + netOf ls a := by\n  induction ls generalizing bal with\n  | nil =>\n    simp [netOf, sumOver_nil]\n  | cons hd tl ih =>\n    -- unfold netOf cons\n    have hNet : netOf (hd :: tl) a = (if hd.1 = a then hd.2 else 0) + netOf tl a := by\n      unfold netOf; simp\n    rw [hNet]\n    have hAdj : (adjust bal hd.1 hd.2) a = bal a + if hd.1 = a then hd.2 else 0 := by\n      unfold adjust\n      by_cases ha : a = hd.1\n      \u00b7 subst ha; simp\n      \u00b7 have h1 : \u00ac (a = hd.1) := ha\n        have h2 : \u00ac (hd.1 = a) := fun h => h1 h.symm\n        simp [h1, h2]\n    have ih2 := ih (adjust bal hd.1 hd.2)\n    simp only [List.foldl_cons] at *\n    rw [ih2, hAdj]\n    omega\n\ntheorem step_ok_acc (s : State) (e : Entry) (hOk : (step s e).1 = .ok) : acceptable s e = true := by\n  unfold step at hOk\n  by_cases ha : acceptable s e = true\n  \u00b7 exact ha\n  \u00b7 have hf : acceptable s e = false := by cases hc : acceptable s e <;> simp_all\n    simp [hf] at hOk\n\ndef dummyX : Nat := 1\n\ntheorem myLemmaTest : 1 + 1 = 2 := by rfl\n\ntheorem sumOver_zero (l : List \u03b1) : sumOver l (fun _ => (0 : Int)) = 0 := by\n  induction l with\n  | nil => simp\n  | cons _ _ ih => simp [ih]\n\ntheorem sumOver_netOf_known (acc : List AccountId) (hNodup : acc.Nodup) (ls : List Line) (hK : \u2200 l \u2208 ls, l.1 \u2208 acc) :\n    sumOver acc (fun a => netOf ls a) = lineSum ls := by\n  induction ls with\n  | nil =>\n    have h : \u2200 a, netOf ([] : List Line) a = 0 := by intro a; simp [netOf]\n    have : sumOver acc (fun a => netOf ([] : List Line) a) = sumOver acc (fun _ => (0 : Int)) := by\n      apply sumOver_congr; intro a _; rw [h]\n    rw [this, sumOver_zero]\n    simp [lineSum]\n  | cons hd tl ih =>\n    have hNetCons : \u2200 a, netOf (hd :: tl) a = (if hd.1 = a then hd.2 else 0) + netOf tl a := by\n      intro a; unfold netOf; simp\n    have h1 : sumOver acc (fun a => netOf (hd :: tl) a) = sumOver acc (fun a => (if hd.1 = a then hd.2 else 0) + netOf tl a) := by\n      apply sumOver_congr; intro a _; exact hNetCons a\n    rw [h1, sumOver_add]\n    have hSingle : sumOver acc (fun a => if hd.1 = a then hd.2 else 0) = hd.2 := by\n      have hcomm : (fun a => if hd.1 = a then hd.2 else 0) = (fun a => if a = hd.1 then hd.2 else 0) := by\n        funext a\n        by_cases ha : a = hd.1\n        \u00b7 simp [ha]\n        \u00b7 have hb : \u00ac (hd.1 = a) := fun h => ha h.symm\n          simp [ha, hb]\n      rw [hcomm, sumOver_ite_eq hNodup hd.1 hd.2, if_pos (hK hd (by simp))]\n    rw [hSingle]\n    have hKtl : \u2200 l \u2208 tl, l.1 \u2208 acc := fun l hl => hK l (by simp [hl])\n    rw [ih hKtl]\n    unfold lineSum\n    simp\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s e hV\n  obtain \u27e8hNodup, hNe, hMem, hNz, hSum, hNotPosted\u27e9 := hV\n  have h1 : decide s.accounts.Nodup = true := by simp [hNodup]\n  have h2 : (!e.lines.isEmpty) = true := by\n    cases he : e.lines\n    \u00b7 contradiction\n    \u00b7 simp\n  have h3 : e.lines.all (fun l => s.accounts.contains l.1) = true := by\n    simp only [List.all_eq_true]\n    intro l hl\n    simp [List.contains_eq_mem, hMem l hl]\n  have h4 : e.lines.all (fun l => l.2 != 0) = true := by\n    simp only [List.all_eq_true]\n    intro l hl\n    simp [hNz l hl]\n  have h5 : decide (lineSum e.lines = 0) = true := by simp [hSum]\n  have h6 : (!s.posted.contains e.id) = true := by\n    simp [List.contains_eq_mem, hNotPosted]\n  have hAcc : acceptable s e = true := by\n    unfold acceptable\n    simp only [h1, h2, h3, h4, h5, h6, Bool.true_and, Bool.and_true]\n  unfold step\n  simp [hAcc]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s e hInv\n  unfold step\n  cases hc : acceptable s e with\n  | true =>\n    exfalso\n    apply hInv\n    unfold acceptable at hc\n    simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true,\n      List.contains_eq_mem] at hc\n    obtain \u27e8\u27e8\u27e8\u27e8\u27e8hNodup, hNotEmpty\u27e9, hMem\u27e9, hNonZero\u27e9, hSum\u27e9, hNotPosted\u27e9 := hc\n    refine \u27e8hNodup, ?_, ?_, ?_, hSum, ?_\u27e9\n    \u00b7 intro hNil\n      simp [hNil] at hNotEmpty\n    \u00b7 intro l hl; exact hMem l hl\n    \u00b7 intro l hl; have := hNonZero l hl; simpa using this\n    \u00b7 simpa using hNotPosted\n  | false =>\n    simp [hc]\n\ntheorem req_known_accounts : KnownAccounts step := by\n  intro s e hOk\n  unfold step at hOk\n  split at hOk\n  \u00b7 next hc =>\n    unfold acceptable at hc\n    simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true, List.contains_eq_mem] at hc\n    obtain \u27e8\u27e8\u27e8\u27e8\u27e8hNodup, hNotEmpty\u27e9, hMem\u27e9, hNonZero\u27e9, hSum\u27e9, hNotPosted\u27e9 := hc\n    intro l hl\n    exact hMem l hl\n  \u00b7 simp at hOk\n\ntheorem req_balanced : Balanced step := by\n  intro s e hOk\n  unfold step at hOk\n  split at hOk\n  \u00b7 next hAcc =>\n    unfold acceptable at hAcc\n    simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true, List.contains_eq_mem] at hAcc\n    obtain \u27e8\u27e8\u27e8\u27e8\u27e8_, _\u27e9, _\u27e9, _\u27e9, hSum\u27e9, _\u27e9 := hAcc\n    exact hSum\n  \u00b7 simp at hOk\n\ntheorem req_effects : Effects step := by\n  intro s e hOk\n  have hAcc := step_ok_acc s e hOk\n  constructor\n  \u00b7 show (step s e).2.accounts = s.accounts\n    unfold step; simp [hAcc]\n  \u00b7 intro a\n    show (step s e).2.balance a = s.balance a + netOf e.lines a\n    unfold step; simp [hAcc, fold_balance_aux]\n\ntheorem req_idempotency : Idempotent step := by\n  intro s e hOk\n  have hAcc : acceptable s e = true := step_ok_acc s e hOk\n  have hS2_eq : (step s e).2 = { accounts := s.accounts, balance := e.lines.foldl (fun b l => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted } := by\n    unfold step\n    simp [hAcc]\n  constructor\n  \u00b7 intro x\n    rw [hS2_eq]\n    simp\n  \u00b7 have hNotAccept2 : acceptable ({ accounts := s.accounts, balance := e.lines.foldl (fun b l => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted } : State) e = false := by\n      unfold acceptable\n      simp\n    have hEq : (step s e).2 = { accounts := s.accounts, balance := e.lines.foldl (fun b l => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted } := hS2_eq\n    rw [hEq] at *\n    unfold step\n    simp [hNotAccept2]\n\ntheorem req_trial_balance : TrialBalance step := by\n  intro s e hOk\n  have hAcc := step_ok_acc s e hOk\n  have hEff := req_effects s e hOk\n  obtain \u27e8hAccEq, hBal\u27e9 := hEff\n  have hNodup : s.accounts.Nodup := by\n    unfold acceptable at hAcc\n    simp only [Bool.and_eq_true, decide_eq_true_eq] at hAcc\n    obtain \u27e8\u27e8\u27e8\u27e8\u27e8h, _\u27e9, _\u27e9, _\u27e9, _\u27e9, _\u27e9 := hAcc\n    exact h\n  have hKnown : \u2200 l \u2208 e.lines, l.1 \u2208 s.accounts := fun l hl => req_known_accounts s e hOk l hl\n  have hBalanced : lineSum e.lines = 0 := req_balanced s e hOk\n  show total (step s e).2 = total s\n  unfold total\n  rw [hAccEq]\n  have hSum : sumOver s.accounts (step s e).2.balance = sumOver s.accounts (fun a => s.balance a + netOf e.lines a) := by\n    apply sumOver_congr; intro a _; exact hBal a\n  rw [hSum, sumOver_add, sumOver_netOf_known s.accounts hNodup e.lines hKnown, hBalanced, Int.add_zero]\n\nend Journal\n",
+  "sha256": "49540c8bfb24049f190bcff2304deb525421cdfe1e7f999752d68aaee269dfb1",
+  "proved_required": [
+   "req_balanced",
+   "req_effects",
+   "req_idempotency",
+   "req_invalid_noop",
+   "req_known_accounts",
+   "req_trial_balance",
+   "req_valid_succeeds"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_balanced",
+   "req_effects",
+   "req_idempotency",
+   "req_invalid_noop",
+   "req_known_accounts",
+   "req_trial_balance",
+   "req_valid_succeeds"
+  ],
+  "text": "import Journal.Spec\nimport Journal.Lemmas\nnamespace Journal\n\ndef adjust (bal : AccountId \u2192 Int) (a : AccountId) (amt : Int) : AccountId \u2192 Int :=\n  fun b => if b = a then bal b + amt else bal b\n\ndef acceptable (s : State) (e : Entry) : Bool :=\n  decide s.accounts.Nodup && !e.lines.isEmpty && e.lines.all (fun l => s.accounts.contains l.1) && e.lines.all (fun l => l.2 != 0) &&\n  decide (lineSum e.lines = 0) && !s.posted.contains e.id\n\ndef step : Impl := fun s e =>\n  if acceptable s e then\n    (.ok, { accounts := s.accounts,\n            balance := e.lines.foldl (fun b l => adjust b l.1 l.2) s.balance,\n            posted := e.id :: s.posted })\n  else (.rejected, s)\n\ntheorem fold_balance_aux (bal : AccountId \u2192 Int) (ls : List Line) (a : AccountId) :\n    (ls.foldl (fun b l => adjust b l.1 l.2) bal) a = bal a + netOf ls a := by\n  induction ls generalizing bal with\n  | nil =>\n    simp [netOf, sumOver_nil]\n  | cons hd tl ih =>\n    -- unfold netOf cons\n    have hNet : netOf (hd :: tl) a = (if hd.1 = a then hd.2 else 0) + netOf tl a := by\n      unfold netOf; simp\n    rw [hNet]\n    have hAdj : (adjust bal hd.1 hd.2) a = bal a + if hd.1 = a then hd.2 else 0 := by\n      unfold adjust\n      by_cases ha : a = hd.1\n      \u00b7 subst ha; simp\n      \u00b7 have h1 : \u00ac (a = hd.1) := ha\n        have h2 : \u00ac (hd.1 = a) := fun h => h1 h.symm\n        simp [h1, h2]\n    have ih2 := ih (adjust bal hd.1 hd.2)\n    simp only [List.foldl_cons] at *\n    rw [ih2, hAdj]\n    omega\n\ntheorem step_ok_acc (s : State) (e : Entry) (hOk : (step s e).1 = .ok) : acceptable s e = true := by\n  unfold step at hOk\n  by_cases ha : acceptable s e = true\n  \u00b7 exact ha\n  \u00b7 have hf : acceptable s e = false := by cases hc : acceptable s e <;> simp_all\n    simp [hf] at hOk\n\ndef dummyX : Nat := 1\n\ntheorem myLemmaTest : 1 + 1 = 2 := by rfl\n\ntheorem sumOver_zero (l : List \u03b1) : sumOver l (fun _ => (0 : Int)) = 0 := by\n  induction l with\n  | nil => simp\n  | cons _ _ ih => simp [ih]\n\ntheorem sumOver_netOf_known (acc : List AccountId) (hNodup : acc.Nodup) (ls : List Line) (hK : \u2200 l \u2208 ls, l.1 \u2208 acc) :\n    sumOver acc (fun a => netOf ls a) = lineSum ls := by\n  induction ls with\n  | nil =>\n    have h : \u2200 a, netOf ([] : List Line) a = 0 := by intro a; simp [netOf]\n    have : sumOver acc (fun a => netOf ([] : List Line) a) = sumOver acc (fun _ => (0 : Int)) := by\n      apply sumOver_congr; intro a _; rw [h]\n    rw [this, sumOver_zero]\n    simp [lineSum]\n  | cons hd tl ih =>\n    have hNetCons : \u2200 a, netOf (hd :: tl) a = (if hd.1 = a then hd.2 else 0) + netOf tl a := by\n      intro a; unfold netOf; simp\n    have h1 : sumOver acc (fun a => netOf (hd :: tl) a) = sumOver acc (fun a => (if hd.1 = a then hd.2 else 0) + netOf tl a) := by\n      apply sumOver_congr; intro a _; exact hNetCons a\n    rw [h1, sumOver_add]\n    have hSingle : sumOver acc (fun a => if hd.1 = a then hd.2 else 0) = hd.2 := by\n      have hcomm : (fun a => if hd.1 = a then hd.2 else 0) = (fun a => if a = hd.1 then hd.2 else 0) := by\n        funext a\n        by_cases ha : a = hd.1\n        \u00b7 simp [ha]\n        \u00b7 have hb : \u00ac (hd.1 = a) := fun h => ha h.symm\n          simp [ha, hb]\n      rw [hcomm, sumOver_ite_eq hNodup hd.1 hd.2, if_pos (hK hd (by simp))]\n    rw [hSingle]\n    have hKtl : \u2200 l \u2208 tl, l.1 \u2208 acc := fun l hl => hK l (by simp [hl])\n    rw [ih hKtl]\n    unfold lineSum\n    simp\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s e hV\n  obtain \u27e8hNodup, hNe, hMem, hNz, hSum, hNotPosted\u27e9 := hV\n  have h1 : decide s.accounts.Nodup = true := by simp [hNodup]\n  have h2 : (!e.lines.isEmpty) = true := by\n    cases he : e.lines\n    \u00b7 contradiction\n    \u00b7 simp\n  have h3 : e.lines.all (fun l => s.accounts.contains l.1) = true := by\n    simp only [List.all_eq_true]\n    intro l hl\n    simp [List.contains_eq_mem, hMem l hl]\n  have h4 : e.lines.all (fun l => l.2 != 0) = true := by\n    simp only [List.all_eq_true]\n    intro l hl\n    simp [hNz l hl]\n  have h5 : decide (lineSum e.lines = 0) = true := by simp [hSum]\n  have h6 : (!s.posted.contains e.id) = true := by\n    simp [List.contains_eq_mem, hNotPosted]\n  have hAcc : acceptable s e = true := by\n    unfold acceptable\n    simp only [h1, h2, h3, h4, h5, h6, Bool.true_and, Bool.and_true]\n  unfold step\n  simp [hAcc]\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s e hInv\n  unfold step\n  cases hc : acceptable s e with\n  | true =>\n    exfalso\n    apply hInv\n    unfold acceptable at hc\n    simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true,\n      List.contains_eq_mem] at hc\n    obtain \u27e8\u27e8\u27e8\u27e8\u27e8hNodup, hNotEmpty\u27e9, hMem\u27e9, hNonZero\u27e9, hSum\u27e9, hNotPosted\u27e9 := hc\n    refine \u27e8hNodup, ?_, ?_, ?_, hSum, ?_\u27e9\n    \u00b7 intro hNil\n      simp [hNil] at hNotEmpty\n    \u00b7 intro l hl; exact hMem l hl\n    \u00b7 intro l hl; have := hNonZero l hl; simpa using this\n    \u00b7 simpa using hNotPosted\n  | false =>\n    simp [hc]\n\ntheorem req_known_accounts : KnownAccounts step := by\n  intro s e hOk\n  unfold step at hOk\n  split at hOk\n  \u00b7 next hc =>\n    unfold acceptable at hc\n    simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true, List.contains_eq_mem] at hc\n    obtain \u27e8\u27e8\u27e8\u27e8\u27e8hNodup, hNotEmpty\u27e9, hMem\u27e9, hNonZero\u27e9, hSum\u27e9, hNotPosted\u27e9 := hc\n    intro l hl\n    exact hMem l hl\n  \u00b7 simp at hOk\n\ntheorem req_balanced : Balanced step := by\n  intro s e hOk\n  unfold step at hOk\n  split at hOk\n  \u00b7 next hAcc =>\n    unfold acceptable at hAcc\n    simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true, List.contains_eq_mem] at hAcc\n    obtain \u27e8\u27e8\u27e8\u27e8\u27e8_, _\u27e9, _\u27e9, _\u27e9, hSum\u27e9, _\u27e9 := hAcc\n    exact hSum\n  \u00b7 simp at hOk\n\ntheorem req_effects : Effects step := by\n  intro s e hOk\n  have hAcc := step_ok_acc s e hOk\n  constructor\n  \u00b7 show (step s e).2.accounts = s.accounts\n    unfold step; simp [hAcc]\n  \u00b7 intro a\n    show (step s e).2.balance a = s.balance a + netOf e.lines a\n    unfold step; simp [hAcc, fold_balance_aux]\n\ntheorem req_idempotency : Idempotent step := by\n  intro s e hOk\n  have hAcc : acceptable s e = true := step_ok_acc s e hOk\n  have hS2_eq : (step s e).2 = { accounts := s.accounts, balance := e.lines.foldl (fun b l => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted } := by\n    unfold step\n    simp [hAcc]\n  constructor\n  \u00b7 intro x\n    rw [hS2_eq]\n    simp\n  \u00b7 have hNotAccept2 : acceptable ({ accounts := s.accounts, balance := e.lines.foldl (fun b l => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted } : State) e = false := by\n      unfold acceptable\n      simp\n    have hEq : (step s e).2 = { accounts := s.accounts, balance := e.lines.foldl (fun b l => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted } := hS2_eq\n    rw [hEq] at *\n    unfold step\n    simp [hNotAccept2]\n\ntheorem req_trial_balance : TrialBalance step := by\n  intro s e hOk\n  have hAcc := step_ok_acc s e hOk\n  have hEff := req_effects s e hOk\n  obtain \u27e8hAccEq, hBal\u27e9 := hEff\n  have hNodup : s.accounts.Nodup := by\n    unfold acceptable at hAcc\n    simp only [Bool.and_eq_true, decide_eq_true_eq] at hAcc\n    obtain \u27e8\u27e8\u27e8\u27e8\u27e8h, _\u27e9, _\u27e9, _\u27e9, _\u27e9, _\u27e9 := hAcc\n    exact h\n  have hKnown : \u2200 l \u2208 e.lines, l.1 \u2208 s.accounts := fun l hl => req_known_accounts s e hOk l hl\n  have hBalanced : lineSum e.lines = 0 := req_balanced s e hOk\n  show total (step s e).2 = total s\n  unfold total\n  rw [hAccEq]\n  have hSum : sumOver s.accounts (step s e).2.balance = sumOver s.accounts (fun a => s.balance a + netOf e.lines a) := by\n    apply sumOver_congr; intro a _; exact hBal a\n  rw [hSum, sumOver_add, sumOver_netOf_known s.accounts hNodup e.lines hKnown, hBalanced, Int.add_zero]\n\nend Journal\n"
+ },
+ "proved": [
+  {
+   "name": "step",
+   "kind": "def",
+   "text": "def step : Impl := fun s e =>\n  if acceptable s e then\n    (.ok, { accounts := s.accounts,\n            balance := e.lines.foldl (fun b l => adjust b l.1 l.2) s.balance,\n            posted := e.id :: s.posted })\n  else (.rejected, s)",
+   "deps": [
+    "acceptable",
+    "adjust"
+   ],
+   "statement": "def step : Impl := fun s e =>\n  if acceptable s e then\n    (.ok, { accounts := s.accounts,\n            balance := e.lines.foldl (fun b l => adjust b l.1 l.2) s.balance,\n            posted := e.id :: s.posted })\n  else (.rejected, s)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "ledgers-journal-b2",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "acceptable",
+   "kind": "def",
+   "text": "def acceptable (s : State) (e : Entry) : Bool :=\n  decide s.accounts.Nodup && !e.lines.isEmpty && e.lines.all (fun l => s.accounts.contains l.1) && e.lines.all (fun l => l.2 != 0) &&\n  decide (lineSum e.lines = 0) && !s.posted.contains e.id",
+   "deps": [],
+   "statement": "def acceptable (s : State) (e : Entry) : Bool :=\n  decide s.accounts.Nodup && !e.lines.isEmpty && e.lines.all (fun l => s.accounts.contains l.1) && e.lines.all (fun l => l.2 != 0) &&\n  decide (lineSum e.lines = 0) && !s.posted.contains e.id",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b2",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "adjust",
+   "kind": "def",
+   "text": "def adjust (bal : AccountId \u2192 Int) (a : AccountId) (amt : Int) : AccountId \u2192 Int :=\n  fun b => if b = a then bal b + amt else bal b",
+   "deps": [],
+   "statement": "def adjust (bal : AccountId \u2192 Int) (a : AccountId) (amt : Int) : AccountId \u2192 Int :=\n  fun b => if b = a then bal b + amt else bal b",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b2",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "req_invalid_noop",
+   "kind": "theorem",
+   "text": "theorem req_invalid_noop : InvalidNoop step := by\n  intro s e hInv\n  unfold step\n  cases hc : acceptable s e with\n  | true =>\n    exfalso\n    apply hInv\n    unfold acceptable at hc\n    simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true,\n      List.contains_eq_mem] at hc\n    obtain \u27e8\u27e8\u27e8\u27e8\u27e8hNodup, hNotEmpty\u27e9, hMem\u27e9, hNonZero\u27e9, hSum\u27e9, hNotPosted\u27e9 := hc\n    refine \u27e8hNodup, ?_, ?_, ?_, hSum, ?_\u27e9\n    \u00b7 intro hNil\n      simp [hNil] at hNotEmpty\n    \u00b7 intro l hl; exact hMem l hl\n    \u00b7 intro l hl; have := hNonZero l hl; simpa using this\n    \u00b7 simpa using hNotPosted\n  | false =>\n    simp [hc]",
+   "deps": [
+    "acceptable",
+    "adjust",
+    "step"
+   ],
+   "statement": "theorem req_invalid_noop : InvalidNoop step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-journal-b2",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "req_known_accounts",
+   "kind": "theorem",
+   "text": "theorem req_known_accounts : KnownAccounts step := by\n  intro s e hOk\n  unfold step at hOk\n  split at hOk\n  \u00b7 next hc =>\n    unfold acceptable at hc\n    simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true, List.contains_eq_mem] at hc\n    obtain \u27e8\u27e8\u27e8\u27e8\u27e8hNodup, hNotEmpty\u27e9, hMem\u27e9, hNonZero\u27e9, hSum\u27e9, hNotPosted\u27e9 := hc\n    intro l hl\n    exact hMem l hl\n  \u00b7 simp at hOk",
+   "deps": [
+    "acceptable",
+    "adjust",
+    "step"
+   ],
+   "statement": "theorem req_known_accounts : KnownAccounts step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-journal-b2",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "req_balanced",
+   "kind": "theorem",
+   "text": "theorem req_balanced : Balanced step := by\n  intro s e hOk\n  unfold step at hOk\n  split at hOk\n  \u00b7 next hAcc =>\n    unfold acceptable at hAcc\n    simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true, List.contains_eq_mem] at hAcc\n    obtain \u27e8\u27e8\u27e8\u27e8\u27e8_, _\u27e9, _\u27e9, _\u27e9, hSum\u27e9, _\u27e9 := hAcc\n    exact hSum\n  \u00b7 simp at hOk",
+   "deps": [
+    "acceptable",
+    "adjust",
+    "step"
+   ],
+   "statement": "theorem req_balanced : Balanced step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-journal-b2",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "step_ok_acc",
+   "kind": "theorem",
+   "text": "theorem step_ok_acc (s : State) (e : Entry) (hOk : (step s e).1 = .ok) : acceptable s e = true := by\n  unfold step at hOk\n  by_cases ha : acceptable s e = true\n  \u00b7 exact ha\n  \u00b7 have hf : acceptable s e = false := by cases hc : acceptable s e <;> simp_all\n    simp [hf] at hOk",
+   "deps": [
+    "acceptable",
+    "adjust",
+    "step"
+   ],
+   "statement": "theorem step_ok_acc (s : State) (e : Entry) (hOk : (step s e).1 = .ok) : acceptable s e = true",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b2",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "fold_balance_aux",
+   "kind": "theorem",
+   "text": "theorem fold_balance_aux (bal : AccountId \u2192 Int) (ls : List Line) (a : AccountId) :\n    (ls.foldl (fun b l => adjust b l.1 l.2) bal) a = bal a + netOf ls a := by\n  induction ls generalizing bal with\n  | nil =>\n    simp [netOf, sumOver_nil]\n  | cons hd tl ih =>\n    -- unfold netOf cons\n    have hNet : netOf (hd :: tl) a = (if hd.1 = a then hd.2 else 0) + netOf tl a := by\n      unfold netOf; simp\n    rw [hNet]\n    have hAdj : (adjust bal hd.1 hd.2) a = bal a + if hd.1 = a then hd.2 else 0 := by\n      unfold adjust\n      by_cases ha : a = hd.1\n      \u00b7 subst ha; simp\n      \u00b7 have h1 : \u00ac (a = hd.1) := ha\n        have h2 : \u00ac (hd.1 = a) := fun h => h1 h.symm\n        simp [h1, h2]\n    have ih2 := ih (adjust bal hd.1 hd.2)\n    simp only [List.foldl_cons] at *\n    rw [ih2, hAdj]\n    omega",
+   "deps": [
+    "adjust"
+   ],
+   "statement": "theorem fold_balance_aux (bal : AccountId \u2192 Int) (ls : List Line) (a : AccountId) :\n    (ls.foldl (fun b l => adjust b l.1 l.2) bal) a = bal a + netOf ls a",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b2",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "req_effects",
+   "kind": "theorem",
+   "text": "theorem req_effects : Effects step := by\n  intro s e hOk\n  have hAcc := step_ok_acc s e hOk\n  constructor\n  \u00b7 show (step s e).2.accounts = s.accounts\n    unfold step; simp [hAcc]\n  \u00b7 intro a\n    show (step s e).2.balance a = s.balance a + netOf e.lines a\n    unfold step; simp [hAcc, fold_balance_aux]",
+   "deps": [
+    "acceptable",
+    "adjust",
+    "fold_balance_aux",
+    "step",
+    "step_ok_acc"
+   ],
+   "statement": "theorem req_effects : Effects step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-journal-b2",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "req_valid_succeeds",
+   "kind": "theorem",
+   "text": "theorem req_valid_succeeds : ValidSucceeds step := by\n  intro s e hV\n  obtain \u27e8hNodup, hNe, hMem, hNz, hSum, hNotPosted\u27e9 := hV\n  have h1 : decide s.accounts.Nodup = true := by simp [hNodup]\n  have h2 : (!e.lines.isEmpty) = true := by\n    cases he : e.lines\n    \u00b7 contradiction\n    \u00b7 simp\n  have h3 : e.lines.all (fun l => s.accounts.contains l.1) = true := by\n    simp only [List.all_eq_true]\n    intro l hl\n    simp [List.contains_eq_mem, hMem l hl]\n  have h4 : e.lines.all (fun l => l.2 != 0) = true := by\n    simp only [List.all_eq_true]\n    intro l hl\n    simp [hNz l hl]\n  have h5 : decide (lineSum e.lines = 0) = true := by simp [hSum]\n  have h6 : (!s.posted.contains e.id) = true := by\n    simp [List.contains_eq_mem, hNotPosted]\n  have hAcc : acceptable s e = true := by\n    unfold acceptable\n    simp only [h1, h2, h3, h4, h5, h6, Bool.true_and, Bool.and_true]\n  unfold step\n  simp [hAcc]",
+   "deps": [
+    "acceptable",
+    "adjust",
+    "step"
+   ],
+   "statement": "theorem req_valid_succeeds : ValidSucceeds step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-journal-b2",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "dummyX",
+   "kind": "def",
+   "text": "def dummyX : Nat := 1",
+   "deps": [],
+   "statement": "def dummyX : Nat := 1",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b2",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "myLemmaTest",
+   "kind": "theorem",
+   "text": "theorem myLemmaTest : 1 + 1 = 2 := by rfl",
+   "deps": [],
+   "statement": "theorem myLemmaTest : 1 + 1 = 2",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b2",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "req_idempotency",
+   "kind": "theorem",
+   "text": "theorem req_idempotency : Idempotent step := by\n  intro s e hOk\n  have hAcc : acceptable s e = true := step_ok_acc s e hOk\n  have hS2_eq : (step s e).2 = { accounts := s.accounts, balance := e.lines.foldl (fun b l => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted } := by\n    unfold step\n    simp [hAcc]\n  constructor\n  \u00b7 intro x\n    rw [hS2_eq]\n    simp\n  \u00b7 have hNotAccept2 : acceptable ({ accounts := s.accounts, balance := e.lines.foldl (fun b l => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted } : State) e = false := by\n      unfold acceptable\n      simp\n    have hEq : (step s e).2 = { accounts := s.accounts, balance := e.lines.foldl (fun b l => adjust b l.1 l.2) s.balance, posted := e.id :: s.posted } := hS2_eq\n    rw [hEq] at *\n    unfold step\n    simp [hNotAccept2]",
+   "deps": [
+    "acceptable",
+    "adjust",
+    "step",
+    "step_ok_acc"
+   ],
+   "statement": "theorem req_idempotency : Idempotent step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-journal-b2",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "sumOver_netOf_known",
+   "kind": "theorem",
+   "text": "theorem sumOver_netOf_known (acc : List AccountId) (hNodup : acc.Nodup) (ls : List Line) (hK : \u2200 l \u2208 ls, l.1 \u2208 acc) :\n    sumOver acc (fun a => netOf ls a) = lineSum ls := by\n  induction ls with\n  | nil =>\n    have h : \u2200 a, netOf ([] : List Line) a = 0 := by intro a; simp [netOf]\n    have : sumOver acc (fun a => netOf ([] : List Line) a) = sumOver acc (fun _ => (0 : Int)) := by\n      apply sumOver_congr; intro a _; rw [h]\n    rw [this, sumOver_zero]\n    simp [lineSum]\n  | cons hd tl ih =>\n    have hNetCons : \u2200 a, netOf (hd :: tl) a = (if hd.1 = a then hd.2 else 0) + netOf tl a := by\n      intro a; unfold netOf; simp\n    have h1 : sumOver acc (fun a => netOf (hd :: tl) a) = sumOver acc (fun a => (if hd.1 = a then hd.2 else 0) + netOf tl a) := by\n      apply sumOver_congr; intro a _; exact hNetCons a\n    rw [h1, sumOver_add]\n    have hSingle : sumOver acc (fun a => if hd.1 = a then hd.2 else 0) = hd.2 := by\n      have hcomm : (fun a => if hd.1 = a then hd.2 else 0) = (fun a => if a = hd.1 then hd.2 else 0) := by\n        funext a\n        by_cases ha : a = hd.1\n        \u00b7 simp [ha]\n        \u00b7 have hb : \u00ac (hd.1 = a) := fun h => ha h.symm\n          simp [ha, hb]\n      rw [hcomm, sumOver_ite_eq hNodup hd.1 hd.2, if_pos (hK hd (by simp))]\n    rw [hSingle]\n    have hKtl : \u2200 l \u2208 tl, l.1 \u2208 acc := fun l hl => hK l (by simp [hl])\n    rw [ih hKtl]\n    unfold lineSum\n    simp",
+   "deps": [
+    "sumOver_zero"
+   ],
+   "statement": "theorem sumOver_netOf_known (acc : List AccountId) (hNodup : acc.Nodup) (ls : List Line) (hK : \u2200 l \u2208 ls, l.1 \u2208 acc) :\n    sumOver acc (fun a => netOf ls a) = lineSum ls",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b2",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "sumOver_zero",
+   "kind": "theorem",
+   "text": "theorem sumOver_zero (l : List \u03b1) : sumOver l (fun _ => (0 : Int)) = 0 := by\n  induction l with\n  | nil => simp\n  | cons _ _ ih => simp [ih]",
+   "deps": [],
+   "statement": "theorem sumOver_zero (l : List \u03b1) : sumOver l (fun _ => (0 : Int)) = 0",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "ledgers-journal-b2",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  },
+  {
+   "name": "req_trial_balance",
+   "kind": "theorem",
+   "text": "theorem req_trial_balance : TrialBalance step := by\n  intro s e hOk\n  have hAcc := step_ok_acc s e hOk\n  have hEff := req_effects s e hOk\n  obtain \u27e8hAccEq, hBal\u27e9 := hEff\n  have hNodup : s.accounts.Nodup := by\n    unfold acceptable at hAcc\n    simp only [Bool.and_eq_true, decide_eq_true_eq] at hAcc\n    obtain \u27e8\u27e8\u27e8\u27e8\u27e8h, _\u27e9, _\u27e9, _\u27e9, _\u27e9, _\u27e9 := hAcc\n    exact h\n  have hKnown : \u2200 l \u2208 e.lines, l.1 \u2208 s.accounts := fun l hl => req_known_accounts s e hOk l hl\n  have hBalanced : lineSum e.lines = 0 := req_balanced s e hOk\n  show total (step s e).2 = total s\n  unfold total\n  rw [hAccEq]\n  have hSum : sumOver s.accounts (step s e).2.balance = sumOver s.accounts (fun a => s.balance a + netOf e.lines a) := by\n    apply sumOver_congr; intro a _; exact hBal a\n  rw [hSum, sumOver_add, sumOver_netOf_known s.accounts hNodup e.lines hKnown, hBalanced, Int.add_zero]",
+   "deps": [
+    "acceptable",
+    "adjust",
+    "fold_balance_aux",
+    "req_balanced",
+    "req_effects",
+    "req_known_accounts",
+    "step",
+    "step_ok_acc",
+    "sumOver_netOf_known",
+    "sumOver_zero"
+   ],
+   "statement": "theorem req_trial_balance : TrialBalance step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "ledgers-journal-b2",
+   "spec_sha256": "62559f1297478a8adcd8fd177bb226630ba01a550557498f4d12dd2cf245bd93"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [],
+ "budget": {
+  "usd_cap": 3.0,
+  "wall_cap_s": 3600.0,
+  "stop": null,
+  "usd_list": 0.4433,
+  "usd_actual": 0.4433,
+  "elapsed_s": 557.4,
+  "unknown_usage_calls": 0,
+  "lost_attempts": 0,
+  "input_bound_violations": 0,
+  "wall_overrun_s": 0.0,
+  "by_model": {
+   "meta-models/muse-spark-open-1026": {
+    "calls": 62,
+    "prompt": 872040,
+    "cached": 784640,
+    "completion": 50913,
+    "usd_list": 0.4433,
+    "usd_actual": 0.4433
+   }
+  }
+ },
+ "resumed_from": []
+}

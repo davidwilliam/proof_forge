@@ -1,0 +1,245 @@
+{
+ "schema": 1,
+ "kind": "proofforge-attempt-ledger",
+ "task": "queues-prio-b2",
+ "spec_sha256": "eb5618b49e88196a67ad38dbb3302e6034df5043a14b0bf2393d9e2ad175372e",
+ "run_dir": "results/e1-test-open-2-rerun/queues-prio-b2/A1",
+ "arm": "A1",
+ "loop": "orchestrated",
+ "model": "meta-models/muse-spark-open",
+ "created": "2026-11-03T00:03:28-0500",
+ "reconstructed": false,
+ "final": {
+  "text": "import PrioQueue.Spec\nnamespace PrioQueue\n\ninstance instDecidableValid (s : State) (op : Op) : Decidable (Valid s op) := by\n  cases op <;> unfold Valid Sorted <;> infer_instance\n\ndef ins (e : Entry) : List Entry \u2192 List Entry\n  | [] => [e]\n  | x :: xs => if e.prio < x.prio then e :: x :: xs else x :: ins e xs\n\ndef step : Impl := fun s op =>\n  if Valid s op then\n    match op with\n    | .insert e => (.ok, { s with items := ins e s.items })\n    | .pop =>\n      match s.items with\n      | [] => (.rejected, s)\n      | x :: xs => (.got x, { s with items := xs })\n  else (.rejected, s)\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s op hV\n  unfold Valid at hV\n  unfold step\n  split\n  \u00b7 next h =>\n    cases op with\n    | insert e =>\n      simp\n    | pop =>\n      -- h : Valid s pop, so Sorted \u2227 items \u2260 []\n      have hne : s.items \u2260 [] := hV.2\n      cases hitems : s.items with\n      | nil => contradiction\n      | cons hd tl => simp [hitems]\n  \u00b7 contradiction\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s op h\n  unfold step\n  simp only [ite_eq_right_iff]\n  intro hV\n  exact absurd hV h\n\ntheorem req_capacity : CapacityBound step := by\n  intro s op hle\n  unfold step\n  split\n  \u00b7 next hV =>\n    cases op with\n    | insert e =>\n      simp only\n      have hlt : s.items.length < s.capacity := by\n        have hValid : Valid s (Op.insert e) := hV\n        unfold Valid at hValid\n        exact hValid.2\n      have hlen : (ins e s.items).length = s.items.length + 1 := by\n        induction s.items with\n        | nil => simp [ins]\n        | cons x xs ih =>\n          simp [ins]\n          split\n          \u00b7 simp\n          \u00b7 simp [ih, Nat.add_assoc]\n      simp [hlen]\n      omega\n    | pop =>\n      simp only\n      cases hitems : s.items with\n      | nil =>\n        have hValid : Valid s Op.pop := hV\n        unfold Valid at hValid\n        have hne : s.items \u2260 [] := hValid.2\n        rw [hitems] at hne\n        contradiction\n      | cons hd tl =>\n        simp\n        have : tl.length \u2264 s.items.length := by simp [hitems]\n        omega\n  \u00b7 simp [hle]\n\ntheorem req_pop_min : PopMin step := by\n  intro s h\n  unfold step at h \u22a2\n  by_cases hV : Valid s Op.pop\n  \u00b7 simp only [hV, ite_true] at h \u22a2\n    cases hitems : s.items with\n    | nil =>\n      exfalso\n      unfold Valid at hV\n      simp [hitems] at hV\n    | cons hd tl =>\n      simp only [hitems] at h \u22a2\n      simp\n      intro x hx\n      have hSorted : Sorted s.items := by\n        unfold Valid at hV; exact hV.1\n      rw [hitems] at hSorted\n      unfold Sorted at hSorted\n      have hp := (List.pairwise_cons.mp hSorted)\n      exact hp.1 x hx\n  \u00b7 simp only [hV, ite_false] at h\n    simp at h\n\ntheorem req_sorted : KeepsSorted step := by\n  intro s op hS\n  unfold step\n  by_cases hV : Valid s op\n  \u00b7 simp only [hV, ite_true]\n    cases op with\n    | insert e =>\n      simp only\n      have go : \u2200 (l : List Entry), l.Pairwise (fun a b => a.prio \u2264 b.prio) \u2192 (ins e l).Pairwise (fun a b => a.prio \u2264 b.prio) := by\n        intro l\n        induction l with\n        | nil => intro _; simp [ins]\n        | cons x xs ih =>\n          intro hPair\n          have hp := List.pairwise_cons.mp hPair\n          simp only [ins]\n          split\n          \u00b7 next hlt =>\n            apply List.Pairwise.cons\n            \u00b7 intro y hy\n              simp at hy\n              rcases hy with rfl | hy2\n              \u00b7 exact Nat.le_of_lt hlt\n              \u00b7 exact Nat.le_trans (Nat.le_of_lt hlt) (hp.1 y hy2)\n            \u00b7 exact hPair\n          \u00b7 next hge =>\n            have hle_xe : x.prio \u2264 e.prio := Nat.le_of_not_gt hge\n            apply List.Pairwise.cons\n            \u00b7 intro y hy\n              have hmem_cases : \u2200 (ys : List Entry) (z : Entry), z \u2208 ins e ys \u2192 z = e \u2228 z \u2208 ys := by\n                intro ys\n                induction ys with\n                | nil => intro z hz; simp [ins] at hz; exact Or.inl hz\n                | cons a as ih2 =>\n                  intro z hz\n                  simp only [ins] at hz\n                  split at hz\n                  \u00b7 simp at hz\n                    rcases hz with rfl | rfl | hz2\n                    \u00b7 exact Or.inl rfl\n                    \u00b7 exact Or.inr (List.mem_cons.mpr (Or.inl rfl))\n                    \u00b7 exact Or.inr (List.mem_cons.mpr (Or.inr hz2))\n                  \u00b7 simp at hz\n                    rcases hz with rfl | hz2\n                    \u00b7 exact Or.inr (List.mem_cons.mpr (Or.inl rfl))\n                    \u00b7 have h2 := ih2 z hz2\n                      rcases h2 with rfl | hm\n                      \u00b7 exact Or.inl rfl\n                      \u00b7 exact Or.inr (List.mem_cons.mpr (Or.inr hm))\n              have hc := hmem_cases xs y hy\n              rcases hc with rfl | hIn\n              \u00b7 exact hle_xe\n              \u00b7 exact hp.1 y hIn\n            \u00b7 exact ih hp.2\n      exact go s.items hS\n    | pop =>\n      cases hs : s.items with\n      | nil => unfold Valid at hV; simp [hs] at hV\n      | cons hd tl =>\n        have hPair : (hd :: tl).Pairwise (fun a b => a.prio \u2264 b.prio) := by rw [\u2190 hs]; exact hS\n        exact (List.pairwise_cons.mp hPair).2\n  \u00b7 simp only [hV, ite_false]\n    exact hS\n\ntheorem req_insert_effects : InsertEffects step := by\n  intro s e hNe\n  by_cases hV : Valid s (Op.insert e)\n  \u00b7 have hStepEq : step s (Op.insert e) = (.ok, { s with items := ins e s.items }) := by\n      unfold step; simp [hV]\n    have hFst : (step s (Op.insert e)).1 = .ok := by rw [hStepEq]\n    have hCap : (step s (Op.insert e)).2.capacity = s.capacity := by rw [hStepEq]\n    refine \u27e8hFst, hCap, ?_\u27e9\n    have hSorted : Sorted s.items := hV.1\n    have hItems : (step s (Op.insert e)).2.items = ins e s.items := by rw [hStepEq]\n    have aux : \u2200 (l : List Entry), l.Pairwise (fun a b => a.prio \u2264 b.prio) \u2192\n        \u2203 l\u2081 l\u2082, l = l\u2081 ++ l\u2082 \u2227 ins e l = l\u2081 ++ e :: l\u2082 \u2227 (\u2200 x \u2208 l\u2081, x.prio \u2264 e.prio) \u2227 (\u2200 x \u2208 l\u2082, e.prio < x.prio) := by\n      intro l\n      induction l with\n      | nil =>\n        intro _\n        exact \u27e8[], [], by simp, by simp [ins], by simp, by simp\u27e9\n      | cons x xs ih =>\n        intro hP\n        have hPair := List.pairwise_cons.mp hP\n        by_cases he : e.prio < x.prio\n        \u00b7 have hIns : ins e (x :: xs) = e :: x :: xs := by simp [ins, he]\n          refine \u27e8[], x :: xs, by simp, hIns, by simp, ?_\u27e9\n          intro y hy\n          have hxle : x.prio \u2264 y.prio := by\n            rcases List.mem_cons.mp (show y \u2208 x :: xs by simp [hy]) with rfl | hym\n            \u00b7 exact Nat.le_refl _\n            \u00b7 exact hPair.1 y hym\n          omega\n        \u00b7 have hIns : ins e (x :: xs) = x :: ins e xs := by simp [ins, he]\n          have hle_xe : x.prio \u2264 e.prio := Nat.le_of_not_gt he\n          obtain \u27e8l\u2081, l\u2082, hEq, hInsEq, hL\u2081, hL\u2082\u27e9 := ih hPair.2\n          refine \u27e8x :: l\u2081, l\u2082, by simp [hEq], by simp [hIns, hInsEq], ?_, hL\u2082\u27e9\n          \u00b7 intro y hy\n            simp at hy\n            rcases hy with rfl | hm\n            \u00b7 exact hle_xe\n            \u00b7 exact hL\u2081 y hm\n    obtain \u27e8l\u2081, l\u2082, hEq, hInsEq, h1, h2\u27e9 := aux s.items hSorted\n    exact \u27e8l\u2081, l\u2082, hEq, by rw [hItems, hInsEq], h1, h2\u27e9\n  \u00b7 exfalso\n    have : (step s (Op.insert e)).1 = .rejected := by unfold step; simp [hV]\n    exact hNe this\n\ntheorem req_pop_effects : PopEffects step := by\n  intro s hNe\n  have hV : Valid s Op.pop := by\n    by_cases hc : Valid s Op.pop\n    \u00b7 exact hc\n    \u00b7 exfalso\n      have hStep : (step s Op.pop).1 = .rejected := by unfold step; simp [hc]\n      exact hNe hStep\n  unfold step\n  simp only [hV, ite_true]\n  cases hitems : s.items with\n  | nil =>\n    unfold Valid at hV\n    simp [hitems] at hV\n  | cons hd tl =>\n    simp\n    refine \u27e8[], hd, tl, by simp [hitems], rfl, rfl, ?_, ?_\u27e9\n    \u00b7 intro x hx; cases hx\n    \u00b7 intro x hx\n      have hSorted : Sorted s.items := hV.1\n      rw [hitems] at hSorted\n      exact (List.pairwise_cons.mp hSorted).1 x hx\n\ntheorem req_fifo_ties      : FifoTies step := sorry\n\nend PrioQueue\n",
+  "sha256": "8ee6785057fcc3ee650296b2ef20ccb140858f9b6d6d68b1fcf3ca463f399015",
+  "proved_required": [
+   "req_capacity",
+   "req_insert_effects",
+   "req_invalid_noop",
+   "req_pop_effects",
+   "req_pop_min",
+   "req_sorted",
+   "req_valid_succeeds"
+  ]
+ },
+ "best_candidate": {
+  "version": "final",
+  "proved_required": [
+   "req_capacity",
+   "req_insert_effects",
+   "req_invalid_noop",
+   "req_pop_effects",
+   "req_pop_min",
+   "req_sorted",
+   "req_valid_succeeds"
+  ],
+  "text": "import PrioQueue.Spec\nnamespace PrioQueue\n\ninstance instDecidableValid (s : State) (op : Op) : Decidable (Valid s op) := by\n  cases op <;> unfold Valid Sorted <;> infer_instance\n\ndef ins (e : Entry) : List Entry \u2192 List Entry\n  | [] => [e]\n  | x :: xs => if e.prio < x.prio then e :: x :: xs else x :: ins e xs\n\ndef step : Impl := fun s op =>\n  if Valid s op then\n    match op with\n    | .insert e => (.ok, { s with items := ins e s.items })\n    | .pop =>\n      match s.items with\n      | [] => (.rejected, s)\n      | x :: xs => (.got x, { s with items := xs })\n  else (.rejected, s)\n\ntheorem req_valid_succeeds : ValidSucceeds step := by\n  intro s op hV\n  unfold Valid at hV\n  unfold step\n  split\n  \u00b7 next h =>\n    cases op with\n    | insert e =>\n      simp\n    | pop =>\n      -- h : Valid s pop, so Sorted \u2227 items \u2260 []\n      have hne : s.items \u2260 [] := hV.2\n      cases hitems : s.items with\n      | nil => contradiction\n      | cons hd tl => simp [hitems]\n  \u00b7 contradiction\n\ntheorem req_invalid_noop : InvalidNoop step := by\n  intro s op h\n  unfold step\n  simp only [ite_eq_right_iff]\n  intro hV\n  exact absurd hV h\n\ntheorem req_capacity : CapacityBound step := by\n  intro s op hle\n  unfold step\n  split\n  \u00b7 next hV =>\n    cases op with\n    | insert e =>\n      simp only\n      have hlt : s.items.length < s.capacity := by\n        have hValid : Valid s (Op.insert e) := hV\n        unfold Valid at hValid\n        exact hValid.2\n      have hlen : (ins e s.items).length = s.items.length + 1 := by\n        induction s.items with\n        | nil => simp [ins]\n        | cons x xs ih =>\n          simp [ins]\n          split\n          \u00b7 simp\n          \u00b7 simp [ih, Nat.add_assoc]\n      simp [hlen]\n      omega\n    | pop =>\n      simp only\n      cases hitems : s.items with\n      | nil =>\n        have hValid : Valid s Op.pop := hV\n        unfold Valid at hValid\n        have hne : s.items \u2260 [] := hValid.2\n        rw [hitems] at hne\n        contradiction\n      | cons hd tl =>\n        simp\n        have : tl.length \u2264 s.items.length := by simp [hitems]\n        omega\n  \u00b7 simp [hle]\n\ntheorem req_pop_min : PopMin step := by\n  intro s h\n  unfold step at h \u22a2\n  by_cases hV : Valid s Op.pop\n  \u00b7 simp only [hV, ite_true] at h \u22a2\n    cases hitems : s.items with\n    | nil =>\n      exfalso\n      unfold Valid at hV\n      simp [hitems] at hV\n    | cons hd tl =>\n      simp only [hitems] at h \u22a2\n      simp\n      intro x hx\n      have hSorted : Sorted s.items := by\n        unfold Valid at hV; exact hV.1\n      rw [hitems] at hSorted\n      unfold Sorted at hSorted\n      have hp := (List.pairwise_cons.mp hSorted)\n      exact hp.1 x hx\n  \u00b7 simp only [hV, ite_false] at h\n    simp at h\n\ntheorem req_sorted : KeepsSorted step := by\n  intro s op hS\n  unfold step\n  by_cases hV : Valid s op\n  \u00b7 simp only [hV, ite_true]\n    cases op with\n    | insert e =>\n      simp only\n      have go : \u2200 (l : List Entry), l.Pairwise (fun a b => a.prio \u2264 b.prio) \u2192 (ins e l).Pairwise (fun a b => a.prio \u2264 b.prio) := by\n        intro l\n        induction l with\n        | nil => intro _; simp [ins]\n        | cons x xs ih =>\n          intro hPair\n          have hp := List.pairwise_cons.mp hPair\n          simp only [ins]\n          split\n          \u00b7 next hlt =>\n            apply List.Pairwise.cons\n            \u00b7 intro y hy\n              simp at hy\n              rcases hy with rfl | hy2\n              \u00b7 exact Nat.le_of_lt hlt\n              \u00b7 exact Nat.le_trans (Nat.le_of_lt hlt) (hp.1 y hy2)\n            \u00b7 exact hPair\n          \u00b7 next hge =>\n            have hle_xe : x.prio \u2264 e.prio := Nat.le_of_not_gt hge\n            apply List.Pairwise.cons\n            \u00b7 intro y hy\n              have hmem_cases : \u2200 (ys : List Entry) (z : Entry), z \u2208 ins e ys \u2192 z = e \u2228 z \u2208 ys := by\n                intro ys\n                induction ys with\n                | nil => intro z hz; simp [ins] at hz; exact Or.inl hz\n                | cons a as ih2 =>\n                  intro z hz\n                  simp only [ins] at hz\n                  split at hz\n                  \u00b7 simp at hz\n                    rcases hz with rfl | rfl | hz2\n                    \u00b7 exact Or.inl rfl\n                    \u00b7 exact Or.inr (List.mem_cons.mpr (Or.inl rfl))\n                    \u00b7 exact Or.inr (List.mem_cons.mpr (Or.inr hz2))\n                  \u00b7 simp at hz\n                    rcases hz with rfl | hz2\n                    \u00b7 exact Or.inr (List.mem_cons.mpr (Or.inl rfl))\n                    \u00b7 have h2 := ih2 z hz2\n                      rcases h2 with rfl | hm\n                      \u00b7 exact Or.inl rfl\n                      \u00b7 exact Or.inr (List.mem_cons.mpr (Or.inr hm))\n              have hc := hmem_cases xs y hy\n              rcases hc with rfl | hIn\n              \u00b7 exact hle_xe\n              \u00b7 exact hp.1 y hIn\n            \u00b7 exact ih hp.2\n      exact go s.items hS\n    | pop =>\n      cases hs : s.items with\n      | nil => unfold Valid at hV; simp [hs] at hV\n      | cons hd tl =>\n        have hPair : (hd :: tl).Pairwise (fun a b => a.prio \u2264 b.prio) := by rw [\u2190 hs]; exact hS\n        exact (List.pairwise_cons.mp hPair).2\n  \u00b7 simp only [hV, ite_false]\n    exact hS\n\ntheorem req_insert_effects : InsertEffects step := by\n  intro s e hNe\n  by_cases hV : Valid s (Op.insert e)\n  \u00b7 have hStepEq : step s (Op.insert e) = (.ok, { s with items := ins e s.items }) := by\n      unfold step; simp [hV]\n    have hFst : (step s (Op.insert e)).1 = .ok := by rw [hStepEq]\n    have hCap : (step s (Op.insert e)).2.capacity = s.capacity := by rw [hStepEq]\n    refine \u27e8hFst, hCap, ?_\u27e9\n    have hSorted : Sorted s.items := hV.1\n    have hItems : (step s (Op.insert e)).2.items = ins e s.items := by rw [hStepEq]\n    have aux : \u2200 (l : List Entry), l.Pairwise (fun a b => a.prio \u2264 b.prio) \u2192\n        \u2203 l\u2081 l\u2082, l = l\u2081 ++ l\u2082 \u2227 ins e l = l\u2081 ++ e :: l\u2082 \u2227 (\u2200 x \u2208 l\u2081, x.prio \u2264 e.prio) \u2227 (\u2200 x \u2208 l\u2082, e.prio < x.prio) := by\n      intro l\n      induction l with\n      | nil =>\n        intro _\n        exact \u27e8[], [], by simp, by simp [ins], by simp, by simp\u27e9\n      | cons x xs ih =>\n        intro hP\n        have hPair := List.pairwise_cons.mp hP\n        by_cases he : e.prio < x.prio\n        \u00b7 have hIns : ins e (x :: xs) = e :: x :: xs := by simp [ins, he]\n          refine \u27e8[], x :: xs, by simp, hIns, by simp, ?_\u27e9\n          intro y hy\n          have hxle : x.prio \u2264 y.prio := by\n            rcases List.mem_cons.mp (show y \u2208 x :: xs by simp [hy]) with rfl | hym\n            \u00b7 exact Nat.le_refl _\n            \u00b7 exact hPair.1 y hym\n          omega\n        \u00b7 have hIns : ins e (x :: xs) = x :: ins e xs := by simp [ins, he]\n          have hle_xe : x.prio \u2264 e.prio := Nat.le_of_not_gt he\n          obtain \u27e8l\u2081, l\u2082, hEq, hInsEq, hL\u2081, hL\u2082\u27e9 := ih hPair.2\n          refine \u27e8x :: l\u2081, l\u2082, by simp [hEq], by simp [hIns, hInsEq], ?_, hL\u2082\u27e9\n          \u00b7 intro y hy\n            simp at hy\n            rcases hy with rfl | hm\n            \u00b7 exact hle_xe\n            \u00b7 exact hL\u2081 y hm\n    obtain \u27e8l\u2081, l\u2082, hEq, hInsEq, h1, h2\u27e9 := aux s.items hSorted\n    exact \u27e8l\u2081, l\u2082, hEq, by rw [hItems, hInsEq], h1, h2\u27e9\n  \u00b7 exfalso\n    have : (step s (Op.insert e)).1 = .rejected := by unfold step; simp [hV]\n    exact hNe this\n\ntheorem req_pop_effects : PopEffects step := by\n  intro s hNe\n  have hV : Valid s Op.pop := by\n    by_cases hc : Valid s Op.pop\n    \u00b7 exact hc\n    \u00b7 exfalso\n      have hStep : (step s Op.pop).1 = .rejected := by unfold step; simp [hc]\n      exact hNe hStep\n  unfold step\n  simp only [hV, ite_true]\n  cases hitems : s.items with\n  | nil =>\n    unfold Valid at hV\n    simp [hitems] at hV\n  | cons hd tl =>\n    simp\n    refine \u27e8[], hd, tl, by simp [hitems], rfl, rfl, ?_, ?_\u27e9\n    \u00b7 intro x hx; cases hx\n    \u00b7 intro x hx\n      have hSorted : Sorted s.items := hV.1\n      rw [hitems] at hSorted\n      exact (List.pairwise_cons.mp hSorted).1 x hx\n\ntheorem req_fifo_ties      : FifoTies step := sorry\n\nend PrioQueue\n"
+ },
+ "proved": [
+  {
+   "name": "step",
+   "kind": "def",
+   "text": "def step : Impl := fun s op =>\n  if Valid s op then\n    match op with\n    | .insert e => (.ok, { s with items := ins e s.items })\n    | .pop =>\n      match s.items with\n      | [] => (.rejected, s)\n      | x :: xs => (.got x, { s with items := xs })\n  else (.rejected, s)",
+   "deps": [
+    "ins"
+   ],
+   "statement": "def step : Impl := fun s op =>\n  if Valid s op then\n    match op with\n    | .insert e => (.ok, { s with items := ins e s.items })\n    | .pop =>\n      match s.items with\n      | [] => (.rejected, s)\n      | x :: xs => (.got x, { s with items := xs })\n  else (.rejected, s)",
+   "required_definition": true,
+   "required_theorem": false,
+   "task": "queues-prio-b2",
+   "spec_sha256": "eb5618b49e88196a67ad38dbb3302e6034df5043a14b0bf2393d9e2ad175372e"
+  },
+  {
+   "name": "ins",
+   "kind": "def",
+   "text": "def ins (e : Entry) : List Entry \u2192 List Entry\n  | [] => [e]\n  | x :: xs => if e.prio < x.prio then e :: x :: xs else x :: ins e xs",
+   "deps": [],
+   "statement": "def ins (e : Entry) : List Entry \u2192 List Entry\n  | [] => [e]\n  | x :: xs => if e.prio < x.prio then e :: x :: xs else x :: ins e xs",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "queues-prio-b2",
+   "spec_sha256": "eb5618b49e88196a67ad38dbb3302e6034df5043a14b0bf2393d9e2ad175372e"
+  },
+  {
+   "name": "instDecidableValid",
+   "kind": "instance",
+   "text": "instance instDecidableValid (s : State) (op : Op) : Decidable (Valid s op) := by\n  cases op <;> unfold Valid Sorted <;> infer_instance",
+   "deps": [],
+   "statement": "instance instDecidableValid (s : State) (op : Op) : Decidable (Valid s op) := by\n  cases op <;> unfold Valid Sorted <;> infer_instance",
+   "required_definition": false,
+   "required_theorem": false,
+   "task": "queues-prio-b2",
+   "spec_sha256": "eb5618b49e88196a67ad38dbb3302e6034df5043a14b0bf2393d9e2ad175372e"
+  },
+  {
+   "name": "req_valid_succeeds",
+   "kind": "theorem",
+   "text": "theorem req_valid_succeeds : ValidSucceeds step := by\n  intro s op hV\n  unfold Valid at hV\n  unfold step\n  split\n  \u00b7 next h =>\n    cases op with\n    | insert e =>\n      simp\n    | pop =>\n      -- h : Valid s pop, so Sorted \u2227 items \u2260 []\n      have hne : s.items \u2260 [] := hV.2\n      cases hitems : s.items with\n      | nil => contradiction\n      | cons hd tl => simp [hitems]\n  \u00b7 contradiction",
+   "deps": [
+    "ins",
+    "step"
+   ],
+   "statement": "theorem req_valid_succeeds : ValidSucceeds step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-prio-b2",
+   "spec_sha256": "eb5618b49e88196a67ad38dbb3302e6034df5043a14b0bf2393d9e2ad175372e"
+  },
+  {
+   "name": "req_invalid_noop",
+   "kind": "theorem",
+   "text": "theorem req_invalid_noop : InvalidNoop step := by\n  intro s op h\n  unfold step\n  simp only [ite_eq_right_iff]\n  intro hV\n  exact absurd hV h",
+   "deps": [
+    "ins",
+    "step"
+   ],
+   "statement": "theorem req_invalid_noop : InvalidNoop step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-prio-b2",
+   "spec_sha256": "eb5618b49e88196a67ad38dbb3302e6034df5043a14b0bf2393d9e2ad175372e"
+  },
+  {
+   "name": "req_capacity",
+   "kind": "theorem",
+   "text": "theorem req_capacity : CapacityBound step := by\n  intro s op hle\n  unfold step\n  split\n  \u00b7 next hV =>\n    cases op with\n    | insert e =>\n      simp only\n      have hlt : s.items.length < s.capacity := by\n        have hValid : Valid s (Op.insert e) := hV\n        unfold Valid at hValid\n        exact hValid.2\n      have hlen : (ins e s.items).length = s.items.length + 1 := by\n        induction s.items with\n        | nil => simp [ins]\n        | cons x xs ih =>\n          simp [ins]\n          split\n          \u00b7 simp\n          \u00b7 simp [ih, Nat.add_assoc]\n      simp [hlen]\n      omega\n    | pop =>\n      simp only\n      cases hitems : s.items with\n      | nil =>\n        have hValid : Valid s Op.pop := hV\n        unfold Valid at hValid\n        have hne : s.items \u2260 [] := hValid.2\n        rw [hitems] at hne\n        contradiction\n      | cons hd tl =>\n        simp\n        have : tl.length \u2264 s.items.length := by simp [hitems]\n        omega\n  \u00b7 simp [hle]",
+   "deps": [
+    "ins",
+    "step"
+   ],
+   "statement": "theorem req_capacity : CapacityBound step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-prio-b2",
+   "spec_sha256": "eb5618b49e88196a67ad38dbb3302e6034df5043a14b0bf2393d9e2ad175372e"
+  },
+  {
+   "name": "req_pop_min",
+   "kind": "theorem",
+   "text": "theorem req_pop_min : PopMin step := by\n  intro s h\n  unfold step at h \u22a2\n  by_cases hV : Valid s Op.pop\n  \u00b7 simp only [hV, ite_true] at h \u22a2\n    cases hitems : s.items with\n    | nil =>\n      exfalso\n      unfold Valid at hV\n      simp [hitems] at hV\n    | cons hd tl =>\n      simp only [hitems] at h \u22a2\n      simp\n      intro x hx\n      have hSorted : Sorted s.items := by\n        unfold Valid at hV; exact hV.1\n      rw [hitems] at hSorted\n      unfold Sorted at hSorted\n      have hp := (List.pairwise_cons.mp hSorted)\n      exact hp.1 x hx\n  \u00b7 simp only [hV, ite_false] at h\n    simp at h",
+   "deps": [
+    "ins",
+    "step"
+   ],
+   "statement": "theorem req_pop_min : PopMin step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-prio-b2",
+   "spec_sha256": "eb5618b49e88196a67ad38dbb3302e6034df5043a14b0bf2393d9e2ad175372e"
+  },
+  {
+   "name": "req_sorted",
+   "kind": "theorem",
+   "text": "theorem req_sorted : KeepsSorted step := by\n  intro s op hS\n  unfold step\n  by_cases hV : Valid s op\n  \u00b7 simp only [hV, ite_true]\n    cases op with\n    | insert e =>\n      simp only\n      have go : \u2200 (l : List Entry), l.Pairwise (fun a b => a.prio \u2264 b.prio) \u2192 (ins e l).Pairwise (fun a b => a.prio \u2264 b.prio) := by\n        intro l\n        induction l with\n        | nil => intro _; simp [ins]\n        | cons x xs ih =>\n          intro hPair\n          have hp := List.pairwise_cons.mp hPair\n          simp only [ins]\n          split\n          \u00b7 next hlt =>\n            apply List.Pairwise.cons\n            \u00b7 intro y hy\n              simp at hy\n              rcases hy with rfl | hy2\n              \u00b7 exact Nat.le_of_lt hlt\n              \u00b7 exact Nat.le_trans (Nat.le_of_lt hlt) (hp.1 y hy2)\n            \u00b7 exact hPair\n          \u00b7 next hge =>\n            have hle_xe : x.prio \u2264 e.prio := Nat.le_of_not_gt hge\n            apply List.Pairwise.cons\n            \u00b7 intro y hy\n              have hmem_cases : \u2200 (ys : List Entry) (z : Entry), z \u2208 ins e ys \u2192 z = e \u2228 z \u2208 ys := by\n                intro ys\n                induction ys with\n                | nil => intro z hz; simp [ins] at hz; exact Or.inl hz\n                | cons a as ih2 =>\n                  intro z hz\n                  simp only [ins] at hz\n                  split at hz\n                  \u00b7 simp at hz\n                    rcases hz with rfl | rfl | hz2\n                    \u00b7 exact Or.inl rfl\n                    \u00b7 exact Or.inr (List.mem_cons.mpr (Or.inl rfl))\n                    \u00b7 exact Or.inr (List.mem_cons.mpr (Or.inr hz2))\n                  \u00b7 simp at hz\n                    rcases hz with rfl | hz2\n                    \u00b7 exact Or.inr (List.mem_cons.mpr (Or.inl rfl))\n                    \u00b7 have h2 := ih2 z hz2\n                      rcases h2 with rfl | hm\n                      \u00b7 exact Or.inl rfl\n                      \u00b7 exact Or.inr (List.mem_cons.mpr (Or.inr hm))\n              have hc := hmem_cases xs y hy\n              rcases hc with rfl | hIn\n              \u00b7 exact hle_xe\n              \u00b7 exact hp.1 y hIn\n            \u00b7 exact ih hp.2\n      exact go s.items hS\n    | pop =>\n      cases hs : s.items with\n      | nil => unfold Valid at hV; simp [hs] at hV\n      | cons hd tl =>\n        have hPair : (hd :: tl).Pairwise (fun a b => a.prio \u2264 b.prio) := by rw [\u2190 hs]; exact hS\n        exact (List.pairwise_cons.mp hPair).2\n  \u00b7 simp only [hV, ite_false]\n    exact hS",
+   "deps": [
+    "ins",
+    "step"
+   ],
+   "statement": "theorem req_sorted : KeepsSorted step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-prio-b2",
+   "spec_sha256": "eb5618b49e88196a67ad38dbb3302e6034df5043a14b0bf2393d9e2ad175372e"
+  },
+  {
+   "name": "req_insert_effects",
+   "kind": "theorem",
+   "text": "theorem req_insert_effects : InsertEffects step := by\n  intro s e hNe\n  by_cases hV : Valid s (Op.insert e)\n  \u00b7 have hStepEq : step s (Op.insert e) = (.ok, { s with items := ins e s.items }) := by\n      unfold step; simp [hV]\n    have hFst : (step s (Op.insert e)).1 = .ok := by rw [hStepEq]\n    have hCap : (step s (Op.insert e)).2.capacity = s.capacity := by rw [hStepEq]\n    refine \u27e8hFst, hCap, ?_\u27e9\n    have hSorted : Sorted s.items := hV.1\n    have hItems : (step s (Op.insert e)).2.items = ins e s.items := by rw [hStepEq]\n    have aux : \u2200 (l : List Entry), l.Pairwise (fun a b => a.prio \u2264 b.prio) \u2192\n        \u2203 l\u2081 l\u2082, l = l\u2081 ++ l\u2082 \u2227 ins e l = l\u2081 ++ e :: l\u2082 \u2227 (\u2200 x \u2208 l\u2081, x.prio \u2264 e.prio) \u2227 (\u2200 x \u2208 l\u2082, e.prio < x.prio) := by\n      intro l\n      induction l with\n      | nil =>\n        intro _\n        exact \u27e8[], [], by simp, by simp [ins], by simp, by simp\u27e9\n      | cons x xs ih =>\n        intro hP\n        have hPair := List.pairwise_cons.mp hP\n        by_cases he : e.prio < x.prio\n        \u00b7 have hIns : ins e (x :: xs) = e :: x :: xs := by simp [ins, he]\n          refine \u27e8[], x :: xs, by simp, hIns, by simp, ?_\u27e9\n          intro y hy\n          have hxle : x.prio \u2264 y.prio := by\n            rcases List.mem_cons.mp (show y \u2208 x :: xs by simp [hy]) with rfl | hym\n            \u00b7 exact Nat.le_refl _\n            \u00b7 exact hPair.1 y hym\n          omega\n        \u00b7 have hIns : ins e (x :: xs) = x :: ins e xs := by simp [ins, he]\n          have hle_xe : x.prio \u2264 e.prio := Nat.le_of_not_gt he\n          obtain \u27e8l\u2081, l\u2082, hEq, hInsEq, hL\u2081, hL\u2082\u27e9 := ih hPair.2\n          refine \u27e8x :: l\u2081, l\u2082, by simp [hEq], by simp [hIns, hInsEq], ?_, hL\u2082\u27e9\n          \u00b7 intro y hy\n            simp at hy\n            rcases hy with rfl | hm\n            \u00b7 exact hle_xe\n            \u00b7 exact hL\u2081 y hm\n    obtain \u27e8l\u2081, l\u2082, hEq, hInsEq, h1, h2\u27e9 := aux s.items hSorted\n    exact \u27e8l\u2081, l\u2082, hEq, by rw [hItems, hInsEq], h1, h2\u27e9\n  \u00b7 exfalso\n    have : (step s (Op.insert e)).1 = .rejected := by unfold step; simp [hV]\n    exact hNe this",
+   "deps": [
+    "ins",
+    "step"
+   ],
+   "statement": "theorem req_insert_effects : InsertEffects step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-prio-b2",
+   "spec_sha256": "eb5618b49e88196a67ad38dbb3302e6034df5043a14b0bf2393d9e2ad175372e"
+  },
+  {
+   "name": "req_pop_effects",
+   "kind": "theorem",
+   "text": "theorem req_pop_effects : PopEffects step := by\n  intro s hNe\n  have hV : Valid s Op.pop := by\n    by_cases hc : Valid s Op.pop\n    \u00b7 exact hc\n    \u00b7 exfalso\n      have hStep : (step s Op.pop).1 = .rejected := by unfold step; simp [hc]\n      exact hNe hStep\n  unfold step\n  simp only [hV, ite_true]\n  cases hitems : s.items with\n  | nil =>\n    unfold Valid at hV\n    simp [hitems] at hV\n  | cons hd tl =>\n    simp\n    refine \u27e8[], hd, tl, by simp [hitems], rfl, rfl, ?_, ?_\u27e9\n    \u00b7 intro x hx; cases hx\n    \u00b7 intro x hx\n      have hSorted : Sorted s.items := hV.1\n      rw [hitems] at hSorted\n      exact (List.pairwise_cons.mp hSorted).1 x hx",
+   "deps": [
+    "ins",
+    "step"
+   ],
+   "statement": "theorem req_pop_effects : PopEffects step",
+   "required_definition": false,
+   "required_theorem": true,
+   "task": "queues-prio-b2",
+   "spec_sha256": "eb5618b49e88196a67ad38dbb3302e6034df5043a14b0bf2393d9e2ad175372e"
+  }
+ ],
+ "skeletons": [],
+ "open_goals": [
+  {
+   "name": "req_fifo_ties",
+   "required": true,
+   "statement": "theorem req_fifo_ties      : FifoTies step",
+   "scope": "goal",
+   "dialogs": 2,
+   "turns": 24,
+   "usd_list": 0.399,
+   "tried": [
+    {
+     "tool": "try_snippet",
+     "code": "theorem req_fifo_ties : FifoTies step := by\n  unfold FifoTies\n  intro s ops p\n  have hca : \u2200 (a b : List Entry), classOf p (a ++ b) = classOf p a ++ classOf p b := by\n    intro a b; unfold classOf; simp\n  have hcs : \u2200 (x : Entry) (xs : List Entry), classOf p (x :: xs) = classOf p [x] ++ classOf p xs := by\n    intro x xs; unfold classOf; simp\n  have hIns_sorted : \u2200 (e : Entry) (l : List Entry), Sorted l \u2192 classOf p (ins e l) = classOf p l ++ classOf p [e] := by\n    intro e l hS\n    induction l with\n    | nil => unfold classOf ins; simp\n    | cons x xs ih =>\n      have hPair := List.pairwise_cons.mp hS\n      simp only [ins]\n      split\n      \u00b7 next hlt =>\n        have h1 : classOf p (e :: x :: xs) = classOf p [e] ++ classOf p (x :: xs) := hcs e (x :: xs)\n        rw [h1]\n        by_cases he : (e.prio == p) = true\n        \u00b7 have hxNot : (x.prio == p) = false := by\n            have heq : e.prio = p := by rwa [beq_iff_eq] at he\n            subst heq; simp [beq_iff_eq]; omega\n          have hall : \u2200 y \u2208 xs, (y.prio == p) = false := by\n            intro y hy\n            have hle : x.prio \u2264 y.prio := hPair.1 y hy\n            have heq : e.prio = p := by rwa [beq_iff_eq] at he\n            sub",
+     "lean": "snippet:7:32: error: `simp` made no progress"
+    },
+    {
+     "tool": "try_snippet",
+     "code": "theorem req_fifo_ties : FifoTies step := by\n  unfold FifoTies\n  intro s ops p\n  have hca : \u2200 (a b : List Entry), classOf p (a ++ b) = classOf p a ++ classOf p b := by\n    intro a b; unfold classOf; simp\n  have hcs : \u2200 (x : Entry) (xs : List Entry), classOf p (x :: xs) = classOf p [x] ++ classOf p xs := by\n    intro x xs; unfold classOf; simp\n  have hIns_sorted : \u2200 (e : Entry) (l : List Entry), Sorted l \u2192 classOf p (ins e l) = classOf p l ++ classOf p [e] := by\n    intro e l hS\n    induction l with\n    | nil => unfold classOf ins; simp\n    | cons x xs ih =>\n      have hPair := List.pairwise_cons.mp hS\n      simp only [ins]\n      split\n      \u00b7 next hlt =>\n        have h1 : classOf p (e :: x :: xs) = classOf p [e] ++ classOf p (x :: xs) := hcs e (x :: xs)\n        rw [h1]\n        by_cases he : (e.prio == p) = true\n        \u00b7 have hxNot : (x.prio == p) = false := by\n            have heq : e.prio = p := by rwa [beq_iff_eq] at he\n            subst heq; simp [beq_iff_eq]; omega\n          have hall : \u2200 y \u2208 xs, (y.prio == p) = false := by\n            intro y hy\n            have hle : x.prio \u2264 y.prio := hPair.1 y hy\n            have heq : e.prio = p := by rwa [beq_iff_eq] at he\n            sub",
+     "lean": "snippet:7:32: error: `simp` made no progress"
+    },
+    {
+     "tool": "try_snippet",
+     "code": "theorem req_fifo_ties : FifoTies step := by\n  unfold FifoTies\n  intro s ops p\n  have hca : \u2200 (a b : List Entry), classOf p (a ++ b) = classOf p a ++ classOf p b := by\n    intro a b; unfold classOf; simp\n  have hcs : \u2200 (x : Entry) (xs : List Entry), classOf p (x :: xs) = classOf p [x] ++ classOf p xs := by\n    intro x xs; unfold classOf; simp\n  have hIns_sorted : \u2200 (e : Entry) (l : List Entry), Sorted l \u2192 classOf p (ins e l) = classOf p l ++ classOf p [e] := by\n    intro e l hS\n    induction l with\n    | nil => unfold classOf ins; simp\n    | cons x xs ih =>\n      have hPair := List.pairwise_cons.mp hS\n      simp only [ins]\n      split\n      \u00b7 next hlt =>\n        have h1 : classOf p (e :: x :: xs) = classOf p [e] ++ classOf p (x :: xs) := hcs e (x :: xs)\n        rw [h1]\n        by_cases he : (e.prio == p) = true\n        \u00b7 have hxNot : (x.prio == p) = false := by\n            have heq : e.prio = p := by rwa [beq_iff_eq] at he\n            subst heq\n            simp [beq_iff_eq]\n            omega\n          have hall : \u2200 y \u2208 xs, (y.prio == p) = false := by\n            intro y hy\n            have hle : x.prio \u2264 y.prio := hPair.1 y hy\n            have heq : e.prio = p := by rwa [beq_iff_eq]",
+     "lean": "snippet:7:32: error: `simp` made no progress"
+    },
+    {
+     "tool": "try_snippet",
+     "code": "theorem req_fifo_ties : FifoTies step := by\n  unfold FifoTies\n  intro s ops p\n  have hca : \u2200 (a b : List Entry), classOf p (a ++ b) = classOf p a ++ classOf p b := by\n    intro a b; simp [classOf]\n  have hcs : \u2200 (x : Entry) (xs : List Entry), classOf p (x :: xs) = classOf p [x] ++ classOf p xs := by\n    intro x xs; simp [classOf, hca]\n  have hIns_sorted : \u2200 (e : Entry) (l : List Entry), Sorted l \u2192 classOf p (ins e l) = classOf p l ++ classOf p [e] := by\n    intro e l hS\n    induction l with\n    | nil => simp [classOf, ins]\n    | cons x xs ih =>\n      have hPair := List.pairwise_cons.mp hS\n      simp only [ins]\n      split\n      \u00b7 next hlt =>\n        have h1 : classOf p (e :: x :: xs) = classOf p [e] ++ classOf p (x :: xs) := hcs e (x :: xs)\n        rw [h1]\n        by_cases he : (e.prio == p) = true\n        \u00b7 have hxNot : (x.prio == p) = false := by\n            have heq : e.prio = p := by rwa [beq_iff_eq] at he\n            subst heq; simp [beq_iff_eq]; omega\n          have hall : \u2200 y \u2208 xs, (y.prio == p) = false := by\n            intro y hy\n            have hle : x.prio \u2264 y.prio := hPair.1 y hy\n            have heq : e.prio = p := by rwa [beq_iff_eq] at he\n            subst heq\n     ",
+     "lean": "snippet:6:101: error: unsolved goals"
+    }
+   ],
+   "last_lean": "s\ne x : Entry\nxs : List Entry\nih : Sorted xs \u2192 classOf p (ins e xs) = classOf p xs ++ classOf p [e]\nhS : Sorted (x :: xs)\nhPair : (\u2200 (a' : Entry), a' \u2208 xs \u2192 x.prio \u2264 a'.prio) \u2227 List.Pairwise (fun a b => a.prio \u2264 b.prio) xs\nhlt : e.prio < x.prio\nh1 : classOf p (e :: x :: xs) = classOf p [e] ++ classOf p (x :: xs)\nhe : (e.prio == p) = true\nhxNot : (x.prio == p) = false\nhall : \u2200 (y : Entry), y \u2208 xs \u2192 (y.prio == p) = false\nhcx : classOf p (x :: xs) = []\nhce : classOf p [e] = [e]\n\u22a2 [e] ++ [] = [] ++ [e]\nsnippet:34:12: error: `simp` made no progress\nsnippet:50:19: error: unsolved goals\ncase neg\np : Nat\nhca : \u2200 (a b : List Entry), classOf p (a ++ b) = classOf p a ++ classOf p b\nhcs : \u2200 (x : Entry) (xs : List Entry), classOf p (x :: xs) = classOf p [x] ++ classOf p xs\nhIns_sorted : \u2200 (e : Entry) (l : List Entry), Sorted l \u2192 classOf p (ins e l) = classOf p l ++ classOf p [e]\nhNil : classOf p [] = []\nop : Op\nops : List Op\nih :\n  \u2200 (s : State),\n    classOf p s.items ++ classOf p (inflow (run step s ops).fst) =\n      classOf p (outflow (run step s ops).fst) ++ classOf p (run step s ops).snd.items\ns : State\nhV : \u00acValid s op\n\u22a2 classOf p s.items ++ classOf p (inflow ((op, (step s op).fst) :: (run step (step s op).snd ops).fst)) =\n    classOf p (outflow ((op, (step s op).fst) :: (run step (step s op).snd ops).fst)) ++\n      classOf p (run step (step s op).snd ops).snd.items\nsnippet:53:6: error: Alternative `pop` has not been provided\nsnippet:65:150: error: unexpected token ')'; expected ':='",
+   "last_words": "",
+   "plans": [],
+   "portfolio": [
+    "decide",
+    "exact?",
+    "grind",
+    "grind_defs",
+    "omega",
+    "simp_all",
+    "simp_all_omega",
+    "try?",
+    "unfold_grind"
+   ],
+   "refuted": false
+  }
+ ],
+ "budget": {
+  "usd_cap": 3.0,
+  "wall_cap_s": 3600.0,
+  "stop": "usd",
+  "usd_list": 2.7904,
+  "usd_actual": 2.7904,
+  "elapsed_s": 1353.0,
+  "unknown_usage_calls": 0,
+  "lost_attempts": 0,
+  "input_bound_violations": 0,
+  "wall_overrun_s": 0.0,
+  "by_model": {
+   "meta-models/muse-spark-open": {
+    "calls": 106,
+    "prompt": 2570419,
+    "cached": 1645696,
+    "completion": 326501,
+    "usd_list": 2.7904,
+    "usd_actual": 2.7904
+   }
+  }
+ },
+ "resumed_from": []
+}
