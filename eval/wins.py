@@ -10,11 +10,8 @@ the file that states it.
     python3 eval/wins.py            # writes results/wins/ledger.json and results/wins/README.md
     python3 eval/wins.py --check    # exits 1 if the committed files differ from a fresh build
 
-Two sources are optional and handled when present:
-- results/vyper-replication-1 with runs/ and judged/ laid out as in results/hard-task-1;
-- feedback-measure-1, read from results/feedback-measure-1 when it is on this branch, else
-  read only from the measure-2 worktree (.claude/worktrees/measure-2/results/feedback-measure-1).
-The ledger records which sources were found.
+Optional sources are handled when present (results/vyper-replication-1 with runs/ and judged/
+laid out as in results/hard-task-1, and the later experiments); the ledger records which were found.
 """
 import argparse, datetime, json, math, pathlib, sys
 
@@ -43,9 +40,6 @@ def rel(p):
     try:
         return str(p.relative_to(ROOT))
     except ValueError:
-        parts = p.parts
-        if ".claude" in parts:
-            return str(pathlib.Path(*parts[parts.index(".claude"):]))
         return str(p)
 
 
@@ -746,34 +740,30 @@ def frontier_1(bl):
 
 
 def feedback_measure_1():
-    cands = [RES / "feedback-measure-1", ROOT / ".claude/worktrees/measure-2/results/feedback-measure-1"]
-    if ROOT.parent.name == "worktrees" and ROOT.parent.parent.name == ".claude":
-        cands.append(ROOT.parent / "measure-2/results/feedback-measure-1")
-    base = next((c for c in cands if (c / "rw-compound-comp").is_dir()), None)
-    if base is None:
-        return [], {"source": "feedback-measure-1", "found": False, "note": "neither results/feedback-measure-1 nor the measure-2 worktree is present"}
-    on_branch = base == RES / "feedback-measure-1"
-    src = "results/feedback-measure-1" if on_branch else ".claude/worktrees/measure-2/results/feedback-measure-1"
+    base = RES / "feedback-measure-1"
+    if not (base / "rw-compound-comp").is_dir():
+        return [], {"source": "results/feedback-measure-1", "found": False}
+    src = "results/feedback-measure-1"
     t = base / "rw-compound-comp"
     a0r = [agent_run(t / "A0-resume-1", "passport")]
     a2r = [agent_run(t / "A2-resume-1", "passport")]
     a2f = [agent_run(t / "A2-full-1", "passport")]
     for r in a0r + a2r + a2f:
         r["dir"] = f"{src}/rw-compound-comp/{pathlib.Path(r['dir']).name}"
-    cav = ([] if on_branch else ["Read from the measure-2 worktree, which is not on main: these files are not committed on this branch, and the directory has no README."]) + [
+    cav = [
         "No Passport was issued for these runs; requirements proved are the run's ledger.json best candidate.",
         "Library version 5552fae3 with the portfolio, the goal tool and refutation by sampling on; variants off.", A2_NOTE]
     out = [comparison("feedback-measure-1/rw-compound-comp/A2-resume-vs-A0-resume", "feedback-measure-1", "rw-compound-comp", SPARK,
                       arm("A0-resume", a0r, label="A0 resumed from library-1 A0-1 and A0-2 (base proves 5 of 8)"),
                       arm("A2-resume", a2r, label="A2 resumed from the five library-1 A2 runs (base proves 4 of 8)"),
                       caveats=cav + ["Both runs start from earlier runs' candidates: A0 from a base that already proves 5 of 8, A2 from a base that proves 4 of 8."],
-                      flags=["resumed runs with different starting points"] + ([] if on_branch else ["not committed on main"]), sources=[src]),
+                      flags=["resumed runs with different starting points"], sources=[src]),
            comparison("feedback-measure-1+library-1/rw-compound-comp/A2-full-vs-A0", "feedback-measure-1 + library-1", "rw-compound-comp", SPARK,
                       arm("A0", [agent_run(RES / "library-1/rw-compound-comp/A0-1", "passport"), agent_run(RES / "library-1/rw-compound-comp/A0-2", "passport")]),
                       arm("A2-full", a2f, label="A2 with every feedback feature (fresh start)"),
                       caveats=cav + ["Cross-experiment pairing: the fresh A2 run against the two library-1 A0 runs at the same caps."],
-                      flags=["pools runs across experiments"] + ([] if on_branch else ["not committed on main"]), sources=[src, "results/library-1/README.md"])]
-    return out, {"source": src, "found": True, "on_branch": on_branch}
+                      flags=["pools runs across experiments"], sources=[src, "results/library-1/README.md"])]
+    return out, {"source": src, "found": True}
 
 
 def e2_all_1():
@@ -1025,7 +1015,7 @@ def tag(c):
     if "development tasks" in c["flags"]:
         t.append("development tasks")
     for f in c["flags"]:
-        if f in ("pools runs across experiments", "experimental harness, not the default", "not committed on main", "resumed runs with different starting points", "harness changed between runs"):
+        if f in ("pools runs across experiments", "experimental harness, not the default", "resumed runs with different starting points", "harness changed between runs"):
             t.append(f)
     if c.get("test"):
         p = c["test"]["p"]
@@ -1230,8 +1220,7 @@ def readme(L):
             lines.append(f"- `{c['id']}`: alone {caps_text(c['alone'])}; with ProofForge {caps_text(c['proofforge'])}.")
     lines += ["", "### Incomplete or optional sources", ""]
     for k, v in L["optional_sources"].items():
-        lines.append(f"- {k}: " + ("found at `" + v["source"] + "`" if v.get("found") else "not found") + (f"; {v['note']}" if v.get("note") else "")
-                     + ("; not committed on main" if v.get("found") and v.get("on_branch") is False else "") + ".")
+        lines.append(f"- {k}: " + ("found at `" + v["source"] + "`" if v.get("found") else "not found") + (f"; {v['note']}" if v.get("note") else "") + ".")
     lines.append("- e1-test-glimmer-1: incomplete, 31 of 60 runs scored before the host paused the workspace; outage runs excluded as its README states.")
     lines += ["", "### Per experiment", ""]
     seen = {}

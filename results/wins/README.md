@@ -260,7 +260,7 @@ Verified more often where the model alone also verified some runs; more requirem
 
 ### feedback-measure-1 + library-1
 
-- `feedback-measure-1+library-1/rw-compound-comp/A2-full-vs-A0`: muse-spark-1.3-contributor, A0 against A2-full: more requirements proved with ProofForge, mean 4 of 8 per run (per run [4]) against 2.5 (per run [5, 0]); verified 0 of 1 against 0 of 2 (pools runs across experiments; not committed on main).
+- `feedback-measure-1+library-1/rw-compound-comp/A2-full-vs-A0`: muse-spark-1.3-contributor, A0 against A2-full: more requirements proved with ProofForge, mean 4 of 8 per run (per run [4]) against 2.5 (per run [5, 0]); verified 0 of 1 against 0 of 2 (pools runs across experiments).
 
 ### e1-test-1
 
@@ -701,7 +701,7 @@ p below 0.05:
 - frontier-3: found at `results/frontier-3`.
 - frontier-4: found at `results/frontier-4`.
 - hard-task-2: found at `results/hard-task-2`.
-- feedback-measure-1: found at `.claude/worktrees/measure-2/results/feedback-measure-1`; not committed on main.
+- feedback-measure-1: found at `results/feedback-measure-1`.
 - e1-test-glimmer-1: incomplete, 31 of 60 runs scored before the host paused the workspace; outage runs excluded as its README states.
 
 ### Per experiment
@@ -813,7 +813,6 @@ frontier-1 + baseline-flagships-1:
 
 feedback-measure-1:
 
-- Read from the measure-2 worktree, which is not on main: these files are not committed on this branch, and the directory has no README.
 - No Passport was issued for these runs; requirements proved are the run's ledger.json best candidate.
 - Library version 5552fae3 with the portfolio, the goal tool and refutation by sampling on; variants off.
 - A2 adds Muse Wonder 1.0 as lemma planner, a second Meta model charged to the same budget, so A2 is not the same model with ProofForge alone.
@@ -821,7 +820,6 @@ feedback-measure-1:
 
 feedback-measure-1 + library-1:
 
-- Read from the measure-2 worktree, which is not on main: these files are not committed on this branch, and the directory has no README.
 - No Passport was issued for these runs; requirements proved are the run's ledger.json best candidate.
 - Library version 5552fae3 with the portfolio, the goal tool and refutation by sampling on; variants off.
 - A2 adds Muse Wonder 1.0 as lemma planner, a second Meta model charged to the same budget, so A2 is not the same model with ProofForge alone.

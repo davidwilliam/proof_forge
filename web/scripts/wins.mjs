@@ -24,7 +24,7 @@ const tableAnchor = (c) => (c.experiment.startsWith("e1-") && c.scope === "task"
 
 /** Reports of a comparison: the committed READMEs and E1 reports among its sources, else its experiment's E1 report. */
 function reports(c) {
-  const committed = (p) => !p.startsWith(".claude/") && fs.existsSync(path.join(ROOT, p));
+  const committed = (p) => fs.existsSync(path.join(ROOT, p));
   const md = c.sources.filter((p) => /\/(README|e1)\.md$/.test(p) && committed(p));
   if (md.length) return [...new Set(md)];
   const e1 = `results/${c.experiment}/e1.md`;
