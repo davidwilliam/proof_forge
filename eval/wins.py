@@ -495,6 +495,27 @@ def frontier_3():
     return out, {"source": "results/frontier-3", "found": True, "complete": len(al) == 10 and len(pf) == 10}
 
 
+def hard_task_2():
+    base = RES / "hard-task-2"
+    task = "rw-kyber-swapstep"
+    src = ["results/hard-task-2/README.md", "results/hard-task-2/PREREGISTRATION.md"]
+    cav = ["Preregistered (results/hard-task-2/PREREGISTRATION.md, frozen at commit 0b70403): 10 runs per arm, one-sided Fisher exact test, alpha 0.05.",
+           "ProofForgeFin.QuadRoot was written for this task by the build team before any model call on it; a gap between the arms measures ProofForge including that library work.",
+           "Final candidates judged again outside the budget from commit 0b70403 (judged/<task>/<run>/passport.json); every Passport reproduced; no run set aside, none rerun."]
+    if not (base / "judged" / task).is_dir():
+        return [], {"source": "results/hard-task-2", "found": False, "note": "no judged run"}
+    runs = hard_task_runs(base, task)
+    al, pf = runs["alone"], runs["proofforge-full"]
+    if not al or not pf:
+        return [], {"source": "results/hard-task-2", "found": False, "note": "no judged run of both arms"}
+    p = fisher_one_sided(sum(r["verified"] for r in pf), len(pf), sum(r["verified"] for r in al), len(al))
+    out = [comparison(f"hard-task-2/{task}", "hard-task-2", task, SPARK, arm("alone", al), arm("proofforge-full", pf),
+                      test={"name": "one-sided Fisher exact", "p": rp(p), "preregistered": True, "alpha": 0.05,
+                            "stated_in": "results/hard-task-2/PREREGISTRATION.md", "significant_at_0_05": p < 0.05},
+                      caveats=cav, sources=src)]
+    return out, {"source": "results/hard-task-2", "found": True, "complete": len(al) == 10 and len(pf) == 10}
+
+
 E1 = {
     "e1-test-1": {"pf_arms": ("A1", "A2"), "price": "list", "caveats": [
         "The 30 test tasks are 9 base specifications with 3 or 4 variants each, so the tasks are not independent problems.",
@@ -797,6 +818,15 @@ def claims(L):
         claim(f3r, "requirements per run 4.5 of 8 with ProofForge", 4.5, g(f3, "proofforge", "req_proved_mean"), 0.005)
         claim(f3r, "pooled with frontier-2 on its own: 0 of 20", 0, g("frontier-3+frontier-2/rw-compound-comp", "alone", "verified"))
         claim(f3r, "pooled one-sided Fisher exact p = 0.10", 0.10, by["frontier-3+frontier-2/rw-compound-comp"]["test"]["p"], 0.005)
+    if "hard-task-2/rw-kyber-swapstep" in by:
+        h2r, h2 = "results/hard-task-2/README.md", "hard-task-2/rw-kyber-swapstep"
+        claim(h2r, "with ProofForge verified 0 of 10", 0, g(h2, "proofforge", "verified"))
+        claim(h2r, "on its own verified 0 of 10", 0, g(h2, "alone", "verified"))
+        claim(h2r, "one-sided Fisher exact p = 1", 1.0, by[h2]["test"]["p"], 0.005)
+        claim(h2r, "list dollars total $94.66 on its own", 94.66, g(h2, "alone", "list_usd_total"), 0.005)
+        claim(h2r, "list dollars total $90.61 with ProofForge", 90.61, g(h2, "proofforge", "list_usd_total"), 0.005)
+        claim(h2r, "requirements per run 1.9 of 8 on its own", 1.9, g(h2, "alone", "req_proved_mean"), 0.005)
+        claim(h2r, "requirements per run 3.1 of 8 with ProofForge", 3.1, g(h2, "proofforge", "req_proved_mean"), 0.005)
     claim(h, "rw-oz-sqrt alone list dollars $48.53", 48.53, g("hard-task-1/rw-oz-sqrt", "alone", "list_usd_total"), 0.005)
     claim(h, "rw-oz-sqrt ProofForge list dollars $46.06", 46.06, g("hard-task-1/rw-oz-sqrt", "proofforge", "list_usd_total"), 0.005)
     claim(h, "rw-vyper-sqrt runs stopped by the $10 cap: 3 of 5 alone", 3, by["hard-task-1/rw-vyper-sqrt"]["alone"]["cap_stops"]["usd"])
@@ -966,6 +996,8 @@ def build():
     comps += f2
     f3, f3info = frontier_3()
     comps += f3
+    h2, h2info = hard_task_2()
+    comps += h2
     comps += muse_code_1()
     f, bl = flagship_pairs()
     comps += f
@@ -986,7 +1018,7 @@ def build():
                    "requirements": "mean required theorems proved per run: the Passport count for a verified run, else the last compiling version where the run records it (last_compiling.json, ledger.json best_candidate), else the run's own check of its final snapshot",
                    "cap_stops": "fraction of runs stopped by the dollar or wall cap",
                    "first_verified_s": "A0, A1, A2: first accepted judge event in events.jsonl; Muse Code with ProofForge: end of the first check_candidate call returning VERIFIED; Muse Code alone: end of run, when the runner's judge accepted"},
-         "optional_sources": {"vyper-replication-1": vinfo, "frontier-2": f2info, "frontier-3": f3info, "feedback-measure-1": finfo},
+         "optional_sources": {"vyper-replication-1": vinfo, "frontier-2": f2info, "frontier-3": f3info, "hard-task-2": h2info, "feedback-measure-1": finfo},
          "comparisons": comps, "catches": [e2_all_1()],
          "not_comparisons": [{"source": s, "why": w} for s, w in NOT_COMPARISONS],
          "_e1_runs": e1_runs, "_baseline": bl}
