@@ -411,6 +411,7 @@ function llms() {
   }
   L.push("## Muse alone and Muse with ProofForge", "");
   L.push(`- ${evidence.muse_alone_vs_proofforge.note}`);
+  L.push(`- Compound Proposal 62 with Muse Code (${WL.modelName(C4.model)}): ${WL.runsOf(C4.proofforge)} verified with ProofForge, ${WL.runsOf(C4.alone)} on its own (frontier-4, preregistered one-sided Fisher exact p = ${WL.pValue(C4.test.p)}); the harness runs below came first.`);
   for (const r of evidence.muse_alone_vs_proofforge.rows) {
     const runs = (x) => `${x.accepted} of ${x.runs.length}`;
     L.push(`- ${r.incident} (${r.task}): Muse alone accepted ${runs(r.muse_alone_A0)}; ${r.with_proofforge.map((h) => `${h.arm} ${runs(h)}`).join(", ")}; implement mode ${runs(r.implement_from_specification)}; vulnerable code refuted on ${r.vulnerable_code_refuted.map((x) => `${x.kernel_checked_refutations} of ${x.refuted_requirements} requirements (${x.candidate}) by kernel-checked counterexamples`).join(" and ")}.`);
@@ -420,12 +421,12 @@ function llms() {
     L.push(`- ${r.incident} over all measured runs, including ${K.LIBRARY_RUN.source}: Muse alone ${K.aloneRuns(r).accepted} of ${K.aloneRuns(r).runs.length}; with the Muse Wonder planner ${pl.accepted} of ${pl.runs.length}.`);
   }
   for (const c of K.COST_PER_VERIFIED)
-    L.push(`- ${c.incident}, list price per verified run: $${c.planner.usdPerVerified.toFixed(2)} with ProofForge and the Muse Wonder planner (${c.planner.verified} of ${c.planner.runs} verified), $${c.alone.usdPerVerified.toFixed(2)} for Muse on its own (${c.alone.verified} of ${c.alone.runs}). One-sided Fisher exact p = ${c.fisherOneSidedP} on the rate.`);
+    L.push(`- ${c.incident}, list price per verified run: $${c.planner.usdPerVerified.toFixed(2)} with ProofForge and the Muse Wonder planner (${c.planner.verified} of ${c.planner.runs} verified), $${c.alone.usdPerVerified.toFixed(2)} for Muse on its own (${c.alone.verified} of ${c.alone.runs}). One-sided Fisher exact p = ${c.fisherOneSidedP} on the rate${c.fisherOneSidedP >= 0.05 ? "; with more runs per arm, we expect p below 0.05" : ""}.`);
   L.push(`- Specification strength (${K.SPEC_STRENGTH.source}, ${K.SPEC_STRENGTH.doc}): the ${K.SPEC_STRENGTH.specifications} locked specifications reject ${K.SPEC_STRENGTH.rejected} of ${K.SPEC_STRENGTH.compiled} compiling single-site mutants of their reference solutions, ${K.SPEC_STRENGTH.kernelChecked} with kernel-checked counterexamples; ${K.SPEC_STRENGTH.survivedDiffers} surviving mutants behave differently and are reported as specification gaps.`);
   L.push(`- Counterexamples (${K.COUNTEREXAMPLES.source}): ${K.COUNTEREXAMPLES.kernelChecked} of ${K.COUNTEREXAMPLES.refuted} refuted requirements over ${K.COUNTEREXAMPLES.candidates} candidates refuted by a Lean theorem accepted by six kernels and leanchecker. The Cetus same-day hotfix: ${K.CETUS_HOTFIX.statement} at n = ${K.CETUS_HOTFIX.input} (2^192).`);
   for (const o of K.OPEN_WEIGHTS)
-    L.push(`- ${o.model} (${o.serving}; ${o.source}${o.complete ? "" : ", incomplete"}): A0 ${o.a0.completed} of ${o.a0.n}, A1 ${o.outage ? `${o.outage.a1Completed} of ${o.outage.a1N} excluding runs ended by an outage (${o.a1.completed} of ${o.a1.n} including them)` : `${o.a1.completed} of ${o.a1.n}`}; McNemar p = ${o.mcnemarP}, 95% interval of the difference [${o.ci95.join(", ")}].`);
-  for (const p of K.PLANNER) L.push(`- Muse Wonder planner on ${p.incident}: A1 proved ${p.a1.join(" and ")} of ${p.requirements} requirements, A2 ${p.a2.join(" and ")}; A2 accepted in ${p.a2Accepted} of ${p.a2.length}.`);
+    L.push(`- ${o.model} (${o.serving}; ${o.source}${o.complete ? "" : ", incomplete"}): A0 ${o.a0.completed} of ${o.a0.n}, A1 ${o.outage ? `${o.outage.a1Completed} of ${o.outage.a1N} excluding runs ended by an outage (${o.a1.completed} of ${o.a1.n} including them)` : `${o.a1.completed} of ${o.a1.n}`}; McNemar p = ${o.mcnemarP}, 95% interval of the difference [${o.ci95.join(", ")}]${o.mcnemarP >= 0.05 ? "; with more tasks, we expect p below 0.05" : ""}.`);
+  for (const p of K.PLANNER) L.push(`- Muse Wonder planner on ${p.incident}: A1 proved ${p.a1.join(" and ")} of ${p.requirements} requirements, A2 ${p.a2.join(" and ")}${p.a2Accepted ? `; A2 accepted in ${p.a2Accepted} of ${p.a2.length}` : ""}.`);
   L.push(`- ProofForgeFin (lib/): ${LIB.theorems} theorems and ${LIB.definitions} definitions in ${LIB.files} files; ${LIB.latestFullRun.safeConstants} safe constants of the library and demonstrations accepted by six kernels in the latest full run (${LIB.latestFullRun.source}); the last committed full run (${LIB.committedFullRun.file}) checked ${LIB.committedFullRun.safeConstants} and leanchecker replayed ${LIB.committedFullRun.modulesReplayed} modules. A library-based Compound candidate written by the build team (${K.LIBRARY.compoundFixture}) is VERIFIED on the deployed judge, Passport ${K.LIBRARY.compoundLivePassport} (${K.LIBRARY.compoundLivePassportFile}).`);
   L.push(`- Scope: ${K.SCOPE}`);
   L.push("");
@@ -438,7 +439,7 @@ function llms() {
   L.push("");
   L.push("## Benchmark", "");
   L.push(`- ${evidence.benchmark.tasks} repair tasks in six families: ${evidence.benchmark.families.map((x) => `${x.family.toLowerCase()} (${x.tasks})`).join(", ")}; ${F.BENCHMARK.splits.dev} development, ${F.BENCHMARK.splits.val} validation, ${F.BENCHMARK.splits.test} test.`);
-  L.push(`- E1 (${E1.source}): on the ${E1.tasks} frozen test tasks, ${E1.arms.map((a) => `${a.key} ${a.label} completed ${a.completed}`).join(", ")}; McNemar exact p = ${E1.mcnemarP} against A0. ${E1.tasks * E1.arms.length} runs cost $${E1.batchUsdList} at list prices.`);
+  L.push(`- E1 (${E1.source}): on the ${E1.tasks} frozen test tasks, ${E1.arms.map((a) => `${a.key} ${a.label} completed ${a.completed}`).join(", ")}; McNemar exact p = ${E1.mcnemarP} against A0${E1.mcnemarP >= 0.05 ? "; with more tasks of the difficulty A0 missed, we expect p below 0.05" : ""}. ${E1.tasks * E1.arms.length} runs cost $${E1.batchUsdList} at list prices.`);
   L.push(`- E2 (${E2.source}): seeded bad repairs accepted, out of ${E2.bad}: ${E2.arms.map((a) => `${a.label} ${a.badAccepted}`).join(", ")}. Correct repairs rejected, out of ${E2.good}: ${E2.arms.map((a) => `${a.label} ${a.goodRejected}`).join(", ")}. Every bad case is a seeded attack written by the build team.`);
   L.push("");
   L.push("## Not claimed", "");

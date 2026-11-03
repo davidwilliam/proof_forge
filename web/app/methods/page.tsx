@@ -159,8 +159,10 @@ const gain = (e: Preregistration) => {
   const b = byGain(e.tasks)[0];
   return b ? b.proofforge.verified - b.alone.verified : -1;
 };
-/** The plan with the largest gain carries the page's one Forge accent. */
-const leadId = [...METHODS.entries].sort((a, b) => gain(b) - gain(a))[0]?.id;
+const bestP = (e: Preregistration) => Math.min(1, ...e.tasks.map((c) => c.test?.p ?? 1));
+/** The plans, largest gain first, then the smaller p; the first carries the page's one Forge accent. */
+const ORDERED = [...METHODS.entries].sort((a, b) => gain(b) - gain(a) || bestP(a) - bestP(b));
+const leadId = ORDERED[0]?.id;
 
 export default function MethodsPage() {
   const d = METHODS;
@@ -170,7 +172,7 @@ export default function MethodsPage() {
       <p className="lead">
         Every experiment below was planned in a file committed before its first run: the question, the arms, the caps, the number of runs and
         the primary test. A plan changes only through dated addenda, and every run is reported whatever its outcome. Results come from each
-        experiment&apos;s README and the wins ledger.
+        experiment&apos;s README and the wins ledger, with the largest gain for ProofForge first.
       </p>
       <KpiStrip
         label="The preregistrations in figures"
@@ -178,14 +180,14 @@ export default function MethodsPage() {
           { value: String(counts.plans), label: "plans committed before their runs" },
           { value: String(counts.runs), label: "runs fixed in advance" },
           { value: String(counts.finished), label: "finished, with every run reported", href: "#plans" },
-          { value: String(counts.running), label: "running now" },
-          { value: String(counts.queued), label: "queued" },
+          ...(counts.running ? [{ value: String(counts.running), label: "running now" }] : []),
+          ...(counts.queued ? [{ value: String(counts.queued), label: "queued" }] : []),
         ]}
       />
 
-      <nav className="mt-rail" aria-label="The preregistrations in order">
+      <nav className="mt-rail" aria-label="The preregistrations, largest gain first">
         <ol>
-          {d.entries.map((e) => (
+          {ORDERED.map((e) => (
             <li key={e.id} className={`mt-rail-${e.status}`}>
               <a href={`#${e.id}`}>
                 <span className="mt-rail-mark" aria-hidden="true" />
@@ -200,7 +202,7 @@ export default function MethodsPage() {
       </nav>
 
       <ol className="mt-list" id="plans" aria-label="Preregistrations">
-        {d.entries.map((e, i) => (
+        {ORDERED.map((e, i) => (
           <Entry key={e.id} e={e} n={i + 1} lead={e.id === leadId} />
         ))}
       </ol>

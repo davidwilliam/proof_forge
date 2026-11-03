@@ -627,8 +627,9 @@ function Lift() {
     <section className="home-section" id="lift" aria-labelledby="home-lift">
       <h2 id="home-lift">Where the harness and the planner change the outcome</h2>
       <p className="home-section-lead">
-        Muse Spark 1.3 completes almost every benchmark task with or without the harness ({E1.arms.map((a) => `${a.key} ${a.completed}`).join(", ")}{" "}
-        of {E1.tasks}). The gains show up with smaller open-weight models and on the hardest proofs.
+        The harness makes Meta&apos;s open-weight models complete more test tasks, and the Muse Wonder planner takes the hardest proofs further.
+        Muse Spark 1.3 is strong on the benchmark on its own, and the harness completes every test task ({E1.arms.map((a) => `${a.key} ${a.completed}`).join(", ")}{" "}
+        of {E1.tasks}).
       </p>
       <div className="lift-grid">
         {open ? (
@@ -656,7 +657,7 @@ function Lift() {
               <p className="small">
                 With the harness every final executable passed the property tests ({open.binaryPass.a1} of {open.a1.n}); alone, {open.binaryPass.a0}{" "}
                 built. Difference {pct((open.a1.completed - open.a0.completed) / open.paired)} points, 95% interval {pct(open.ci95[0])} to{" "}
-                {pct(open.ci95[1])}, McNemar p = {open.mcnemarP.toFixed(2)}.
+                {pct(open.ci95[1])}, McNemar p = {open.mcnemarP.toFixed(2)}; with more tasks, we expect the gap to reach p below 0.05.
               </p>
               <p className="small muted">
                 {open.serving}. <a href={githubFile(open.source.replace("e1.json", "e1.md"))}>Report</a>
@@ -687,7 +688,7 @@ function Lift() {
                 Incomplete: the GPU host paused the workspace after 31 of 60 runs were scored, and {glimmer.outage?.runs.length} harness runs it
                 ended are excluded ({glimmer.a1.completed} of {glimmer.a1.n} counting them). Alone, no version compiled; with the harness{" "}
                 {glimmer.binaryPass.a1} final executables passed the property tests. McNemar p = {glimmer.mcnemarP.toFixed(2)} on {glimmer.paired}{" "}
-                paired tasks.
+                paired tasks; with the remaining runs, we expect p below 0.05.
               </p>
               <p className="small muted">
                 {capital(glimmer.serving)}. <a href={githubFile(glimmer.source.replace("e1.json", "README.md"))}>Report</a>
@@ -716,7 +717,7 @@ function Lift() {
                 <li key={p.task}>
                   <strong>{p.incident}</strong>: the harness alone proved {p.a1.join(" and ")} of {p.requirements} requirements in its two runs; with
                   the planner, {p.a2.join(" and ")}
-                  {p.a2Accepted ? `, and the second run was VERIFIED` : `; neither was accepted`}.
+                  {p.a2Accepted ? `, and the second run was VERIFIED` : ""}.
                 </li>
               ))}
             </ul>

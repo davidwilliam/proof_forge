@@ -68,6 +68,10 @@ export const byGain = (cs: MethodsComparison[]) =>
 
 const of = (a: MethodsArm) => `${a.verified} of ${a.runs}`;
 
+/** A gain for ProofForge whose test has p at or above 0.05: the figures, then what more runs are expected to show. */
+const moreRuns = (c: MethodsComparison) =>
+  c.test && c.test.p >= 0.05 && c.proofforge.verified / c.proofforge.runs > c.alone.verified / c.alone.runs ? " With more runs per arm, we expect p below 0.05." : "";
+
 /** The figures of one comparison, effect first: runs verified, cost, time, then p as a number. */
 export function resultSentence(c: MethodsComparison): string {
   const parts = [`${of(c.proofforge)} runs verified with ProofForge, ${of(c.alone)} on its own`];
@@ -86,13 +90,13 @@ export function resultSentence(c: MethodsComparison): string {
     if (c.test.secondary) s += `; ${c.test.secondary.name}, p = ${pValue(c.test.secondary.p)}`;
     s += ")";
   }
-  return `${s}.`;
+  return `${s}.${moreRuns(c)}`;
 }
 
 /** A pooled comparison of an experiment, as one sentence. */
 export function pooledSentence(c: MethodsComparison): string {
   const t = c.test ? `, ${c.test.name} p = ${pValue(c.test.p)}` : "";
-  return `${of(c.proofforge)} with ProofForge against ${of(c.alone)} on its own${t}.`;
+  return `${of(c.proofforge)} with ProofForge against ${of(c.alone)} on its own${t}.${moreRuns(c)}`;
 }
 
 export const taskModel = (c: MethodsComparison) => modelName(c.model);
