@@ -614,6 +614,7 @@ function ReqRow({ label, proved, of, verified }: { label: string; proved: number
 
 function Lift() {
   const [open, glimmer] = OPEN_WEIGHTS;
+  const repeat = OPEN_WEIGHTS.find((o) => o.key === "spark-open-2");
   const compoundLib = COMPARISON.find((r) => r.key === "compound")!.library!;
   const compoundLibraryRuns = compoundLib.withLibrary.runs.length + (compoundLib.topdown?.runs.length ?? 0);
   const pct = (x: number) => `${x >= 0 ? "+" : ""}${Math.round(x * 100)}`;
@@ -639,6 +640,13 @@ function Lift() {
               <DotRow label="Alone" on={open.a0.completed} n={open.a0.n} note="test tasks completed" />
               <DotRow label="With the harness" on={open.a1.completed} n={open.a1.n} note="test tasks completed" />
             </div>
+            {repeat ? (
+              <p className="small">
+                Preregistered repeat with the improved harness: {repeat.a0.completed} to {repeat.a1.completed} of {repeat.a0.n}, and every
+                final executable with the harness passed the property tests ({repeat.binaryPass.a1} of {repeat.a1.n}).{" "}
+                <a href={githubFile("results/e1-test-open-2/README.md")}>Report</a>
+              </p>
+            ) : null}
             <details className="hm-more">
               <summary>Tests and serving</summary>
               <p className="small">

@@ -67,8 +67,9 @@ describe("the /results page figures", () => {
       "Muse Spark 1.3 completed all 30 with the ProofForge harness (A1) and all 30 with the harness and planner (A2), against 28 of 30 on its own (A0). Paired by task, A1 completed 2 tasks that A0 did not, and A0 none that A1 did not; A2 completed 2 tasks that A0 did not, and A0 none that A2 did not.",
     );
     expect(e1Lead("e1-test-open-1", summary["e1-test-open-1"]!)).toContain("A1 completed 6 tasks that A0 did not, and A0 3 that A1 did not");
+    expect(e1Lead("e1-test-open-2", summary["e1-test-open-2"]!)).toContain("A1 completed 6 tasks that A0 did not, and A0 4 that A1 did not");
     const e2 = JSON.parse(readFileSync(path.join(ROOT, "results/e2-all-1/e2.json"), "utf8")) as E2Data;
     const kpis = resultsKpis(summary, { name: "e2-all-1", agg: aggregateE2(e2) });
-    expect(kpis.map((k) => k.value)).toEqual(["28 → 30", "21 → 24", "0 → 3", "233 → 0", "$0.87 → $0.61"]);
+    expect(kpis.map((k) => k.value)).toEqual(["28 → 30", "22 → 24", "21 → 24", "0 → 3", "233 → 0", "$0.87 → $0.61"]);
   });
 });

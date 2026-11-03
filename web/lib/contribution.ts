@@ -321,6 +321,21 @@ export const OPEN_WEIGHTS: OpenWeightRun[] = [
     // e1-test-glimmer-1/README.md: three A1 runs ended by the Modal outage
     outage: { runs: ["permissions-grants-b1/A1", "permissions-grants-b2/A1", "permissions-grants-b3/A1"], a1Completed: 3, a1N: 13 },
   },
+  {
+    // e1-test-open-2/README.md: preregistered, after the repair-agent changes; twelve tasks from the rerun of Addenda 1 to 3
+    key: "spark-open-2",
+    model: "Muse Spark Open",
+    serving: "meta-models/muse-spark-open-1026 and, for the twelve tasks rerun after HTTP 402 refusals, meta-models/muse-spark-open, on Baseten Model APIs",
+    source: "results/e1-test-open-2/e1.json",
+    paired: 30,
+    a0: { completed: 22, n: 30 },
+    a1: { completed: 24, n: 30 },
+    binaryPass: { a0: 22, a1: 30 },
+    ci95: [-0.187, 0.367],
+    mcnemarP: 0.75,
+    complete: true,
+    outage: null,
+  },
 ];
 
 /** Muse Wonder 1.0 as lemma planner (arm A2) against the harness alone (A1) on the two hardest tasks. */
@@ -391,9 +406,9 @@ export const META_TOOLING = [
     name: "Muse Spark Open",
     kind: "Meta's open-weight model on Baseten Model APIs",
     id: "meta-models/muse-spark-open-1026",
-    how: "Arms A0 and A1 on the 30 frozen E1 test tasks.",
+    how: "Arms A0 and A1 on the 30 frozen E1 test tasks, before and after the repair-agent changes; the second experiment preregistered, with twelve tasks rerun on meta-models/muse-spark-open.",
     paths: ["agents/meta_client.py"],
-    experiments: ["results/e1-test-open-1"],
+    experiments: ["results/e1-test-open-1", "results/e1-test-open-2"],
   },
   {
     key: "muse-glimmer",

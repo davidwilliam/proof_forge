@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { E2 } from "../lib/evidence";
-import { HEADLINE_IDS, countsSentence, headlines, pValue, testPhrase, winDetail, type WinsData } from "../lib/wins";
+import { HEADLINE_IDS, countsSentence, headlines, modelName, pValue, testPhrase, winDetail, type WinsData } from "../lib/wins";
 import { WINS } from "../lib/wins-data";
 import { ROOT } from "../scripts/lib/results.mjs";
 
@@ -122,20 +122,28 @@ describe("the frontier, measured: Meta's models on their own and with ProofForge
     expect(t).not.toContain("preregistered");
   });
 
-  it("Muse Spark Open: six test tasks verified only with ProofForge, 24 of 30 against 21", () => {
-    const six = ledger.wins["1_alone_did_not_verify_proofforge_did"]!.filter((w) => w.id.startsWith("e1-test-open-1/") && lc(w.id).scope === "task");
+  it("Muse Spark Open, preregistered: six test tasks verified only with ProofForge, 24 of 30 against 22", () => {
+    const six = ledger.wins["1_alone_did_not_verify_proofforge_did"]!.filter((w) => w.id.startsWith("e1-test-open-2/") && lc(w.id).scope === "task");
     expect(six).toHaveLength(6);
     for (const w of six) {
       const c = lc(w.id);
-      expect(c.model).toBe("meta-models/muse-spark-open-1026");
+      expect(modelName(c.model)).toBe("Muse Spark Open");
       expect([c.alone.verified, c.proofforge.verified, c.alone.cap_stops.usd + c.alone.cap_stops.wall]).toEqual([0, 1, 1]);
     }
     const agg = lc(HEADLINE_IDS.openAll);
-    expect([agg.alone.verified, agg.proofforge.verified, agg.alone.runs]).toEqual([21, 24, 30]);
-    expect(agg.test).toMatchObject({ p: 0.5078, significant_at_0_05: false });
+    expect(modelName(agg.model)).toBe("Muse Spark Open");
+    expect([agg.alone.verified, agg.proofforge.verified, agg.alone.runs]).toEqual([22, 24, 30]);
+    expect(agg.test).toMatchObject({ p: 0.7539, preregistered: true, significant_at_0_05: false });
     const t = all(H.open!);
-    for (const s of ["6 tasks", "of 30", "24 verified with ProofForge, 21 on its own", "$3 cap"])
+    for (const s of ["6 tasks", "of 30", "preregistered", "24 verified with ProofForge, 22 on its own", "$3 cap"])
       expect(t).toContain(s);
+  });
+
+  it("Muse Spark Open, e1-test-open-1: six test tasks verified only with ProofForge, 24 of 30 against 21", () => {
+    const six = ledger.wins["1_alone_did_not_verify_proofforge_did"]!.filter((w) => w.id.startsWith("e1-test-open-1/") && lc(w.id).scope === "task");
+    expect(six).toHaveLength(6);
+    const agg = lc("e1-test-open-1/all/A1-vs-A0");
+    expect([agg.alone.verified, agg.proofforge.verified, agg.alone.runs]).toEqual([21, 24, 30]);
   });
 
   it("E2: 233 of 247 seeded bad candidates accepted by ordinary checking, 0 by ProofForge", () => {

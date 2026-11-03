@@ -135,9 +135,11 @@ export const GROUPS: { group: 1 | 2 | 3; title: string; text: string }[] = [
 const MODELS: Record<string, string> = {
   "muse-spark-1.3-contributor": "Muse Spark 1.3",
   "meta-models/muse-spark-open-1026": "Muse Spark Open",
+  "meta-models/muse-spark-open": "Muse Spark Open",
   "glimmer/muse-glimmer-30b": "Muse Glimmer 30B",
 };
-export const modelName = (id: string) => MODELS[id] ?? id;
+/** An aggregate over runs on several model IDs names them joined by " and "; IDs of one model collapse to its name. */
+export const modelName = (id: string) => [...new Set(id.split(" and ").map((x) => MODELS[x] ?? x))].join(" and ");
 
 export const fmtInt = (n: number) => n.toLocaleString("en-US");
 export const usd = (n: number | null) => (n === null ? "n/a" : `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
@@ -200,8 +202,8 @@ export const HEADLINE_IDS = {
   vyperFirst: "hard-task-1/rw-vyper-sqrt",
   vyperReplication: "vyper-replication-1/rw-vyper-sqrt",
   balancer: "library-1/rw-balancer-upscale/all-measured/A2-vs-A0",
-  openAll: "e1-test-open-1/all/A1-vs-A0",
-  openExperiment: "e1-test-open-1",
+  openAll: "e1-test-open-2/all/A1-vs-A0",
+  openExperiment: "e1-test-open-2",
 } as const;
 
 export interface Headline {
@@ -265,7 +267,7 @@ export function headlines(d: WinsData): Headline[] {
       key: "open",
       figure: `${openWins.length} tasks`,
       figureAlt: `of ${openAll.alone.runs}`,
-      text: `Where ${modelName(openAll.model)}, Meta's open-weight model, did not verify on its own and verified with ProofForge, on the frozen test tasks; on its own, ${openCapped === openWins.length ? `each of those ${openWins.length} runs` : `${openCapped} of those ${openWins.length} runs`} stopped at the $${openCap.usd} cap.`,
+      text: `Where ${modelName(openAll.model)}, Meta's open-weight model, did not verify on its own and verified with ProofForge, on the frozen test tasks in a preregistered experiment; on its own, ${openCapped === openWins.length ? `each of those ${openWins.length} runs` : `${openCapped} of those ${openWins.length} runs`} stopped at the $${openCap.usd} cap.`,
       note: `Over all ${openAll.alone.runs} tasks: ${openAll.proofforge.verified} verified with ProofForge, ${openAll.alone.verified} on its own.`,
       links: [{ label: "Full comparison", path: comparison(d, openWins[0]!.id).links.comparison }, ...reportLinks(openAll.links.reports)],
     },

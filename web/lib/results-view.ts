@@ -37,6 +37,8 @@ const ARM_PHRASE: Record<string, string> = { A1: "the ProofForge harness", A2: "
 /** The model of each E1 set (results/<set>/config.json, field model) and how its dollars are priced. */
 export const SET_MODEL: Record<string, { model: string; price: "list" | "gpu" }> = {
   "e1-test-1": { model: "Muse Spark 1.3", price: "list" },
+  "e1-test-open-2": { model: "Muse Spark Open", price: "list" },
+  "e1-test-open-2-rerun": { model: "Muse Spark Open", price: "list" },
   "e1-test-open-1": { model: "Muse Spark Open", price: "list" },
   "e1-test-glimmer-1": { model: "Muse Glimmer 30B", price: "gpu" },
   "e1-dev-2": { model: "Muse Spark 1.3", price: "list" },
@@ -44,7 +46,7 @@ export const SET_MODEL: Record<string, { model: string; price: "list" | "gpu" }>
 };
 
 /** Current sets in reading order: complete test sets first, then the incomplete one, then development. */
-export const SET_ORDER = ["e1-test-1", "e1-test-open-1", "e1-test-glimmer-1", "e1-dev-2"];
+export const SET_ORDER = ["e1-test-1", "e1-test-open-2", "e1-test-open-1", "e1-test-glimmer-1", "e1-dev-2"];
 
 /**
  * Runs ended by the GPU host's outage, counted in the summary as recorded

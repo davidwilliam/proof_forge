@@ -130,7 +130,7 @@ export function homeStrips(d: WinsData): Strip[] {
     {
       ...common("open"),
       title: `${modelName(open.model)}, Meta's open-weight model`,
-      context: "The frozen E1 test tasks, one run per arm per task.",
+      context: "The frozen E1 test tasks, one run per arm per task, preregistered.",
       unit: "task",
       alone: open.alone,
       proofforge: open.proofforge,

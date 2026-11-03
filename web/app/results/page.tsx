@@ -33,6 +33,8 @@ const SUPERSEDED: Record<string, string> = {
 const E1_SETS: Record<string, string> = {
   "e1-test-1": "The 30 frozen test tasks (ledgers, permissions, queues), never used in development. $3 at list prices and 60 minutes per run.",
   "e1-dev-2": "The 23 development tasks, used to set the test-run caps. $3 at list prices and 45 minutes per run.",
+  "e1-test-open-2": "Preregistered: the 30 frozen test tasks with Muse Spark Open after the repair-agent changes made following e1-test-open-1, arms A0 and A1. $3 at list prices and 60 minutes per run. Twelve tasks are scored from their rerun (e1-test-open-2-rerun, meta-models/muse-spark-open), after the provider refused their first runs with HTTP 402; the other 18 ran on meta-models/muse-spark-open-1026.",
+  "e1-test-open-2-rerun": "The rerun of e1-test-open-2's twelve tasks whose first runs the provider refused with HTTP 402, both arms, on meta-models/muse-spark-open. These runs replace the refused ones in e1-test-open-2; the other 18 test tasks were not rerun.",
   "e1-test-open-1": "The 30 frozen test tasks with Muse Spark Open, Meta's open-weight model (meta-models/muse-spark-open-1026 on Baseten Model APIs), arms A0 and A1. $3 at list prices and 60 minutes per run.",
   "e1-test-glimmer-1": "Incomplete: the 30 frozen test tasks with Muse Glimmer 30B self-hosted on one Modal H100, arms A0 and A1, stopped when the GPU host paused the workspace after 31 of 60 runs were scored. Three A1 runs counted here were ended by that outage (results/e1-test-glimmer-1/README.md). Dollars are at a GPU-cost price.",
 };
