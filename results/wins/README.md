@@ -664,7 +664,7 @@ V verification, C cost, T time, R requirements, S cap stops: W win, T tie, L los
 - `library-1/rw-balancer-upscale/all-measured/A2-vs-A0`: one-sided Fisher exact, p = 0.1786 (not preregistered; stated in `results/library-1/README.md`).
 - `e1-test-1/all/A1-vs-A0`: two-sided exact McNemar on paired tasks, p = 0.5 (not preregistered; stated in `results/e1-test-1/e1.md`).
 - `e1-test-1/all/A2-vs-A0`: two-sided exact McNemar on paired tasks, p = 0.5 (not preregistered; stated in `results/e1-test-1/e1.md`).
-- `e1-test-open-2/all/A1-vs-A0`: two-sided exact McNemar on paired tasks, p = 0.7539 (preregistered; stated in `results/e1-test-open-2/primary/e1.md`).
+- `e1-test-open-2/all/A1-vs-A0`: two-sided exact McNemar on paired tasks, p = 0.7539 (preregistered; stated in `results/e1-test-open-2/e1.md`).
 - `e1-test-open-1/all/A1-vs-A0`: two-sided exact McNemar on paired tasks, p = 0.5078 (not preregistered; stated in `results/e1-test-open-1/e1.md`).
 - `e1-test-glimmer-1/all/A1-vs-A0`: two-sided exact McNemar on paired tasks, p = 0.25 (not preregistered; stated in `results/e1-test-glimmer-1/e1.md`).
 - `e1-dev-2/all/A1-vs-A0`: two-sided exact McNemar on paired tasks, p = 1 (not preregistered; stated in `results/e1-dev-2/e1.md`).
@@ -822,7 +822,7 @@ e1-test-open-2:
 - Meta's open-weight Muse Spark Open through Baseten Model APIs: 18 tasks on meta-models/muse-spark-open-1026 from a worktree at commit 57d1ed5; the other 12 rerun on meta-models/muse-spark-open from a worktree at b81133a after the provider refused the first runs with HTTP 402 (Addenda 1 to 3 of results/e1-test-open-2/PREREGISTRATION.md). Both arms of each task use the same model ID.
 - The 30 test tasks are 9 base specifications with variants, not independent problems.
 - The repair-agent changes measured here were made knowing these test tasks and A1's failures on them in e1-test-open-1 (PREREGISTRATION.md).
-- Primary analysis as preregistered: two-sided exact McNemar on the 30 paired tasks (results/e1-test-open-2/primary/e1.md). The 24 refused runs stay in results/e1-test-open-2 and are not scored.
+- Primary analysis as preregistered: two-sided exact McNemar on the 30 paired tasks (results/e1-test-open-2/e1.md). The 24 refused runs stay in results/e1-test-open-2 and are not scored.
 - Each task appears twice, once per experiment; the two runs of a task are not independent. e1-test-open-1 ran from commit 36fc8d3, before the repair-agent changes.
 
 e1-test-open-1:

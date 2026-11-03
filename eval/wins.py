@@ -525,12 +525,12 @@ E1 = {
         "Meta's open-weight Muse Spark Open (meta-models/muse-spark-open-1026) through Baseten Model APIs; run from an isolated checkout at commit 36fc8d3; the directory has no README (results/README.md describes it).",
         "The 30 test tasks are 9 base specifications with variants, not independent problems.",
         "McNemar exact p from eval/e1.py (results/e1-test-open-1/e1.md); not preregistered in a committed document."]},
-    "e1-test-open-2": {"pf_arms": ("A1",), "price": "list", "rerun": "e1-test-open-2-rerun", "report": "e1-test-open-2/primary",
+    "e1-test-open-2": {"pf_arms": ("A1",), "price": "list", "rerun": "e1-test-open-2-rerun",
                        "preregistered": True, "caveats": [
         "Meta's open-weight Muse Spark Open through Baseten Model APIs: 18 tasks on meta-models/muse-spark-open-1026 from a worktree at commit 57d1ed5; the other 12 rerun on meta-models/muse-spark-open from a worktree at b81133a after the provider refused the first runs with HTTP 402 (Addenda 1 to 3 of results/e1-test-open-2/PREREGISTRATION.md). Both arms of each task use the same model ID.",
         "The 30 test tasks are 9 base specifications with variants, not independent problems.",
         "The repair-agent changes measured here were made knowing these test tasks and A1's failures on them in e1-test-open-1 (PREREGISTRATION.md).",
-        "Primary analysis as preregistered: two-sided exact McNemar on the 30 paired tasks (results/e1-test-open-2/primary/e1.md). The 24 refused runs stay in results/e1-test-open-2 and are not scored."]},
+        "Primary analysis as preregistered: two-sided exact McNemar on the 30 paired tasks (results/e1-test-open-2/e1.md). The 24 refused runs stay in results/e1-test-open-2 and are not scored."]},
     "e1-test-glimmer-1": {"pf_arms": ("A1",), "price": "GPU-cost price per token (agents/budget.py), not a list price",
                           "outage": {("permissions-grants-b1", "A1"), ("permissions-grants-b2", "A1"), ("permissions-grants-b3", "A1")},
                           "caveats": [
