@@ -11,7 +11,14 @@ import { RoundTrips } from "./RoundTrips";
 import "./challenge.css";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Challenge, ProofForge" };
+const description =
+  "Challenge a hidden payout variant: ProofForge builds its executable and runs property tests derived from the locked Lean 4 requirements, and returns REFUTED with a concrete witness when a requirement breaks.";
+
+export const metadata: Metadata = {
+  title: "Challenge, ProofForge",
+  description,
+  openGraph: { title: "Challenge, ProofForge", description },
+};
 
 const secs = (s: number | null) => (s == null ? "none" : `${s.toFixed(2)} s`);
 

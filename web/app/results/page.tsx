@@ -12,7 +12,14 @@ import { TaskGrid } from "@/components/TaskGrid";
 import { Code, ErrorBox } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Results, ProofForge" };
+const description =
+  "E1: repair completion of Meta's Muse models on the frozen benchmark tasks, on their own and with ProofForge, under the same caps. E2: seeded bad repairs and correct repairs judged by ordinary checking, by a rebuild with property tests and by ProofForge.";
+
+export const metadata: Metadata = {
+  title: "Results, ProofForge",
+  description,
+  openGraph: { title: "Results, ProofForge", description },
+};
 
 const rate = (r: Rate) => `${r.count}/${r.of}`;
 

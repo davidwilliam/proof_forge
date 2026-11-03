@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://proofforge.dev"),
   title: "ProofForge",
   description:
-    "ProofForge checks financial code against locked Lean 4 specifications: kernel-checked counterexamples for code that breaks them, proofs checked by six kernels for fixes, and hash-bound Passports anyone can re-run.",
+    "ProofForge turns Meta's Muse models into provers of financial code. Muse Spark, in the ProofForge harness or in Muse Code with ProofForge as its MCP server, repairs code against locked Lean 4 specifications; ProofForge refutes code that breaks one with a kernel-checked counterexample, accepts a fix only when six kernels check its proof, and records each verdict in a hash-bound Passport anyone can re-run.",
   icons: {
     icon: [
       { url: "/favicon.ico", sizes: "16x16 24x24 32x32 48x48 64x64" },

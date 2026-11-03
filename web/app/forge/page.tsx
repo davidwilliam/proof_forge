@@ -7,7 +7,13 @@ import { ForgeSession, type ReqView } from "../ForgeSession";
 import "./forge.css";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Forge session, ProofForge" };
+const description = "A forge session: the replay of a recorded Muse repair against a locked Lean 4 specification, then a fresh check by the ProofForge judge.";
+
+export const metadata: Metadata = {
+  title: "Forge session, ProofForge",
+  description,
+  openGraph: { title: "Forge session, ProofForge", description },
+};
 
 const DEFAULT_TASK = "payout-flagship";
 

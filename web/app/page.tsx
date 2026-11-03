@@ -49,7 +49,7 @@ import { PROOF_GRAPH, layoutGraph } from "@/lib/proofgraph";
 import { GRAPH_TASK, bellOf, guarantees, layoutLayers } from "@/lib/lenses";
 import { holeRun } from "@/lib/hole";
 import { EXPECTED_PROJECTS, describeInput, listWords, pendingProjects, type RwProject, type RwVersion } from "@/lib/realworld";
-import { countsSentence, headlines, pValue, runsOf } from "@/lib/wins";
+import { HEADLINE_IDS, comparison, countsSentence, headlines, modelName, pValue, runsOf } from "@/lib/wins";
 import { WINS } from "@/lib/wins-data";
 import { CaseViewer } from "./_home/CaseViewer";
 import { CompareMatrix } from "./_home/CompareMatrix";
@@ -64,7 +64,11 @@ const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 const andListOf = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join("; ")}; and ${xs[xs.length - 1]}`);
 
 const pr6 = FEATURED.timeline.find((v) => v.key === "pr6")!;
-const metaDescription = `ProofForge refuted the Cetus same-day hotfix with a counterexample six Lean kernels check, then accepted the final fix and a Muse Spark repair with proofs for every input. Locked specifications of ${count(FLAGSHIPS.length)} real financial failures, kernel-checked counterexamples and hash-bound Passports anyone can re-run.`;
+const metaDescription = (() => {
+  const { f3 } = compoundFrontier(WINS);
+  const oz = comparison(WINS, HEADLINE_IDS.oz);
+  return `With ProofForge as its MCP server, Muse Code, Meta's coding agent, running ${modelName(oz.model)} verified ${runsOf(oz.proofforge)} runs on OpenZeppelin Math.sqrt, against ${runsOf(oz.alone)} on its own, and ${runsOf(f3.proofforge)} on Compound Proposal 62, against ${runsOf(f3.alone)}. Locked Lean 4 specifications of ${count(COMPARISON.length)} real financial failures, kernel-checked counterexamples and hash-bound Passports anyone can re-run.`;
+})();
 
 export const metadata: Metadata = {
   title: `ProofForge: ${HEADLINE.replace(/\.$/, "")}`,
