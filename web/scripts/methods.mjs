@@ -17,13 +17,7 @@ const LEDGER = "results/wins/ledger.json";
 
 const AS_OF = "2026-11-03";
 /** Experiments without a README result yet, as of AS_OF. */
-const STATUS = {
-  "frontier-4": {
-    status: "running",
-    label: "Running",
-    note: "The 20 preregistered runs started on 2026-11-02 at 22:36, after results/hard-task-2 ended, as the preregistration states. Every run is reported in results/frontier-4/README.md when they end.",
-  },
-};
+const STATUS = {};
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 const exists = (rel) => fs.existsSync(path.join(ROOT, rel));

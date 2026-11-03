@@ -151,7 +151,9 @@ export const factor2 = (x: number) => `${x.toFixed(2)}x`;
 export function pValue(p: number): string {
   if (p >= 1) return "1";
   if (p >= 0.1) return String(Number(p.toFixed(2)));
-  return String(Number(p.toPrecision(2)));
+  const n = Number(p.toPrecision(2));
+  // Below 1e-6 String() switches to exponent notation; write the decimal digits instead.
+  return String(n).includes("e") ? n.toFixed(Math.ceil(-Math.log10(n)) + 1) : String(n);
 }
 
 /** The test of a comparison as the ledger states it: its name, whether it was preregistered, and p; the direction only when p < 0.05. */
