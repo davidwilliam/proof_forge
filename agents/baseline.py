@@ -58,14 +58,15 @@ def audit(s):
     return s.accepted, verdict
 
 
-def run(s, a, state="current, buggy", library_text="", resume_text=""):
+def run(s, a, state="current, buggy", library_text="", resume_text="", note=""):
     """Compile-and-retry. `library_text` is appended to the system prompt; A0 passes none (repair.py
     phase 3 passes its library section when the library is on). `resume_text` (a resumed A0) is the
-    prior attempts' failure summary, given after the file."""
+    prior attempts' failure summary, given after the file. `note` ends the first request; A0 passes
+    none (repair.py phase 3 says the definition may be rewritten)."""
     system = repair.task_brief(s.task, getattr(s, "mode", "repair")) + PROTOCOL + library_text
     user = (repair.spec_text(s) + f"\n\n=== candidate/Solution.lean ({state}) ===\n" + s._source()
             + (f"\n\nPrevious attempts on this task ended as follows; do not repeat what failed:\n{resume_text}"
-               if resume_text else ""))
+               if resume_text else "") + (f"\n\n{note}" if note else ""))
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     extra = {} if a.effort == "default" else {"reasoning_effort": a.effort}
     for turn in range(a.max_turns):

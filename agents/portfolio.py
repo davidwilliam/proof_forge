@@ -30,7 +30,9 @@ from ledger import declarations, has_sorry, split_proof  # noqa: E402
 
 # (key, tactic text, library tactic it needs or None), in the order a closing tactic is chosen.
 # `{unfold}` and `{defs}` stand for the definitions the goal's own statement names (goal_of): an
-# entry with one of them is tried only on a goal whose statement names such a definition.
+# entry with one of them is tried only on a goal whose statement names such a definition. A tactic
+# of several lines is written without indentation; proof_body() indents every line of it, in the
+# batch file and in the text banked, so that the proof banked is the proof Lean checked.
 PORTFOLIO = [
     ("grind", "grind", None),
     ("omega", "omega", None),
@@ -39,8 +41,8 @@ PORTFOLIO = [
     ("simp_all_omega", "simp_all <;> omega", None),
     ("generalize_divs_omega", "generalize_divs <;> omega", "generalize_divs"),
     ("machine_norm_grind", "machine_norm <;> grind", "machine_norm"),
-    ("unfold_grind", "unfold {unfold} at *\n  intros\n  grind", None),
-    ("grind_defs", "intros\n  grind [{defs}]", None),
+    ("unfold_grind", "unfold {unfold} at *\nintros\ngrind", None),
+    ("grind_defs", "intros\ngrind [{defs}]", None),
     ("exact?", "exact?", None),
     ("try?", "try?", None),
 ]
@@ -103,6 +105,12 @@ def tactic_for(tac, goal):
     return tac
 
 
+def proof_body(tac):
+    """The lines of a tactic proof after `:= by`: every line of `tac` indented by two spaces (blank
+    lines kept empty). The batch file and the banked text use it alike."""
+    return "\n".join("  " + l if l.strip() else l for l in tac.split("\n"))
+
+
 def available(s, src):
     """Portfolio entries usable on the current candidate: the library tactics only when a module
     the candidate imports (transitively) defines them."""
@@ -151,7 +159,7 @@ def batch_text(s, goals, entries, heartbeats, src=None):
                 continue
             name = f"{PREFIX}{gi}_{[e[0] for e in entries].index(key)}"
             chunk = "\n".join([f"set_option maxHeartbeats {int(heartbeats)} in",
-                               f"{g['open_in']}theorem {name}{g['rest']} := by", f"  {tac}", ""]).split("\n")
+                               f"{g['open_in']}theorem {name}{g['rest']} := by", proof_body(tac), ""]).split("\n")
             start = len(lines) + 1
             lines += chunk
             attempts.append({"goal": g["name"], "key": key, "tactic": tac, "copy": name,
@@ -254,8 +262,7 @@ def bank_text(goal, key, res):
     """The text banked for a goal closed by `key`: its statement with the tactic (or, for a
     search, the first suggestion) as proof."""
     tac = res["suggest"][0] if key in SEARCH else tactic_for(dict((k, t) for k, t, _ in PORTFOLIO)[key], goal)
-    body = "\n".join("  " + l if l.strip() else l for l in tac.split("\n"))
-    return f"{goal['head']} := by\n{body}"
+    return f"{goal['head']} := by\n{proof_body(tac)}"
 
 
 def forbidden(code):
