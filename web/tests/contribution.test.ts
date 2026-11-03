@@ -11,6 +11,7 @@ import {
   LIBRARY,
   LIBRARY_COMPOUND,
   LIBRARY_RUN,
+  META_TOOLING,
   OPEN_WEIGHTS,
   PLANNER,
   SPEC_STRENGTH,
@@ -303,3 +304,46 @@ it("hackathon dates are the ones ORIGIN.md states", () => {
   expect(origin).toContain(`submissions due ${HACKATHON.submissionsDue}`);
   expect(origin).toContain(`Implementation started ${HACKATHON.firstCommit}`);
 });
+
+describe("the Meta models and tools", () => {
+  const budget = text("agents/budget.py");
+  const flat = (s: string) => s.replace(/\s+/g, " ");
+  it("every path and experiment exists", () => {
+    for (const m of META_TOOLING) {
+      for (const p of m.paths) expect(existsSync(path.join(ROOT, p)), p).toBe(true);
+      for (const e of m.experiments) expect(statSync(path.join(ROOT, e)).isDirectory(), e).toBe(true);
+    }
+  });
+  it("every Muse Code run of the listed experiments ran the stated version with Muse Spark 1.3", () => {
+    const mc = META_TOOLING.find((m) => m.key === "muse-code")!;
+    const version = mc.name.replace(/^Muse Code /, "");
+    let runs = 0;
+    for (const e of mc.experiments) {
+      const dirs = existsSync(path.join(ROOT, e, "runs")) ? [path.join(e, "runs")] : [e];
+      for (const d of dirs)
+        for (const task of readdirSync(path.join(ROOT, d)).filter((x) => statSync(path.join(ROOT, d, x)).isDirectory()))
+          for (const run of readdirSync(path.join(ROOT, d, task))) {
+            const f = path.join(d, task, run, "summary.json");
+            if (!existsSync(path.join(ROOT, f))) continue;
+            const s = readExact(f);
+            if (!s.muse_code) continue;
+            expect(s.muse_code, f).toMatch(new RegExp(`^Muse Code ${version.replace(/\./g, "\\.")} `));
+            expect(s.model, f).toBe("muse-spark-1.3-contributor");
+            runs++;
+          }
+    }
+    expect(runs).toBeGreaterThan(50);
+  });
+  it("every model ID is priced in agents/budget.py", () => {
+    for (const id of ["muse-spark-1.3-contributor", "muse-wonder-1.0", "meta-models/muse-spark-open-1026", "glimmer/muse-glimmer-30b"]) {
+      expect(META_TOOLING.some((m) => m.kind.includes(`(${id})`)), id).toBe(true);
+      expect(budget).toContain(`"${id}"`);
+    }
+  });
+  it("the open-weight servings are the ones OPEN_WEIGHTS states", () => {
+    expect(META_TOOLING.find((m) => m.key === "muse-glimmer")!.kind).toContain(OPEN_WEIGHTS.find((o) => o.key === "glimmer")!.serving.replace(/^self-hosted/, "Self-hosted"));
+    expect(OPEN_WEIGHTS.find((o) => o.key === "spark-open")!.serving).toContain("Baseten Model APIs");
+    expect(flat(text("results/frontier-3/PREREGISTRATION.md"))).toContain(`${META_TOOLING[0].name}, \`MUSE_NO_AUTO_UPDATE=1\`, model \`muse-spark-1.3-contributor\``);
+  });
+});
+
