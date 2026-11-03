@@ -399,6 +399,58 @@ export const META_TOOLING = [
   },
 ] as const;
 
+/**
+ * Compound Proposal 62, the sixth real failure. It is not in FLAGSHIPS (lib/flagships.ts), whose
+ * records each carry a Muse repair from the harness runs; its first verified repairs are the
+ * Muse Code runs of frontier-3. Every entry is copied from realworld/tasks/rw-compound-comp/README.md,
+ * results/compound-1/README.md and results/frontier-3/README.md; tests/contribution.test.ts checks them.
+ */
+export const COMPOUND = {
+  key: "compound",
+  task: "rw-compound-comp",
+  incident: "Compound Proposal 62",
+  date: "2021-09-29",
+  readme: "realworld/tasks/rw-compound-comp/README.md",
+  loss: {
+    amount: "at worst 280,000 COMP, about $80 million at the time",
+    basis: "as The Block reports, quoting Robert Leshner; not included in the loss total",
+    sources: ["https://www.theblock.co/post/119086/compound-bug-comp-risk-misreward", "https://compound.substack.com/p/compound-treasury-updates-comp-bug"],
+  },
+  bug: "The upgrade set every reward index still at 0 to compInitialIndex (1e36), but distributeSupplierComp and distributeBorrowerComp started an account with no recorded index from compInitialIndex only when the market's index was above it (`>`), so in six markets an account holding a position from before the upgrade was credited from 0: about one COMP per token borrowed. Proposal 64 changed `>` to `>=`.",
+  property: {
+    requirement: "REQ-REWARDS-BOUNDED",
+    text: "From the upgrade of any well-formed pre-upgrade state, after any sequence of operations, the COMP paid out to accounts plus the COMP accrued to them never exceeds what they held or had accrued before the upgrade, plus what they were owed at the upgrade, plus the COMP emitted since.",
+  },
+  vulnerable: {
+    label: "Proposal 62 port",
+    passport: "results/compound-1/passports/port.json",
+    witness: "realworld/tasks/rw-compound-comp/witnesses/cSUSHI_claim.lean",
+    finding: "The cSUSHI claim made on mainnet 139 blocks after the upgrade: nothing was owed and nothing was emitted to the market, and the port pays 18977306140567618322762 COMP-wei (18,977.35 COMP), as the transaction did.",
+  },
+  fix: { label: "Proposal 64 fix, ported by the build team", passport: "results/compound-1/passports/reference.json" },
+  /** results/frontier-3/README.md, "Every run": the two runs whose Passport is VERIFIED. */
+  museRepairs: ["proofforge-full-5", "proofforge-full-9"].map((run) => ({
+    run,
+    summary: `results/frontier-3/runs/rw-compound-comp/${run}/summary.json`,
+    passport: `results/frontier-3/judged/rw-compound-comp/${run}/passport.json`,
+    candidate: `results/frontier-3/runs/rw-compound-comp/${run}/final.lean`,
+  })),
+  realCode: {
+    report: "results/compound-1/real-code/report.json",
+    method: "Comptrollers compiled from the pinned commits with solc 0.5.16 (identical to the deployed runtime code, metadata hash excluded) ran in Foundry on 503 sequences: the cSUSHI claim, Compound's regression scenario, the Sanity sequence and 500 generated.",
+    sequences: 503,
+    rows: [
+      { code: "Proposal 62", violating: 279, note: "identical to the Lean port on all 503" },
+      { code: "Proposal 64", violating: 104, note: "REQ-CLAIM only, its temporary claim lock; identical to its Lean port on all 503" },
+      { code: "Proposal 65", violating: 0, note: "identical to the proved component on all 503" },
+    ],
+  },
+  notProved: [
+    "The Solidity contracts are not proved; they were compiled from the pinned commits, run on the sequences above and compared operation by operation with the port and the proved component.",
+    "The specification covers one market; it does not cover several markets sharing compAccrued, the oracle and liquidity checks of the hooks, interest accrual or the Proposal 65 corrections.",
+  ],
+} as const;
+
 export const SCOPE =
   "ProofForge proves the logic of code against a written specification. It does not protect keys, servers, oracles, bridges or other infrastructure, and it does not prove the deployed Solidity or Move bytecode itself.";
 

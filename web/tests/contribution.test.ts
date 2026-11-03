@@ -5,6 +5,7 @@ import {
   BASELINE_SOURCE,
   CETUS_HOTFIX,
   COMPARISON,
+  COMPOUND,
   COST_PER_VERIFIED,
   COUNTEREXAMPLES,
   HACKATHON,
@@ -23,6 +24,7 @@ import { FLAGSHIPS, IMPLEMENTED_FLAGSHIPS } from "../lib/flagships";
 import { ROOT, fileSha256, readExact, readPassport, readRunSummary } from "../scripts/lib/results.mjs";
 
 const text = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
+const flatText = (rel: string) => text(rel).replace(/\s+/g, " ");
 
 function checkRuns(task: string, r: Runs) {
   let accepted = 0;
@@ -347,3 +349,43 @@ describe("the Meta models and tools", () => {
   });
 });
 
+describe("Compound Proposal 62", () => {
+  const readme = flatText(COMPOUND.readme);
+  it("the incident facts are the task README's", () => {
+    expect(readme).toContain("280,000 COMP tokens");
+    expect(readme).toContain("worth about $80 million");
+    expect(readme).toContain("2021-09-29");
+    for (const s of COMPOUND.loss.sources) expect(readme).toContain(s);
+    expect(readme).toContain("about one COMP per token borrowed");
+    expect(readme).toContain("changes `>` to `>=` on both lines");
+    expect(readme).toContain(COMPOUND.property.text.replace(/^F/, "f").replace(/\.$/, ""));
+    expect(existsSync(path.join(ROOT, COMPOUND.vulnerable.witness))).toBe(true);
+    expect(readme).toContain("the port pays 18977306140567618322762");
+  });
+  it("the Passports of the port, the fix and the two verified Muse Code runs", () => {
+    const port = readPassport(COMPOUND.vulnerable.passport);
+    expect(port.recomputedSha256).toBe(port.sha256);
+    expect(port.status).toBe("REFUTED");
+    expect(Object.values(port.requirements).filter((s) => s === "REFUTED")).toHaveLength(5);
+    const fix = readPassport(COMPOUND.fix.passport);
+    expect(fix.status).toBe("VERIFIED");
+    const f3 = flatText("results/frontier-3/README.md");
+    for (const r of COMPOUND.museRepairs) {
+      const p = readPassport(r.passport);
+      expect(p.recomputedSha256, r.passport).toBe(p.sha256);
+      expect(p.status, r.passport).toBe("VERIFIED");
+      expect(p.task).toBe(COMPOUND.task);
+      expect(f3).toContain(`| ${r.run} | VERIFIED | VERIFIED | 8 of 8 |`);
+      expect(f3).toContain(`\`${p.sha256.slice(0, 16)}\``);
+      const sol = readExact(r.passport).solution.files["final.lean"];
+      expect(fileSha256(r.candidate), r.candidate).toBe(sol);
+      expect(readExact(r.summary).model).toBe("muse-spark-1.3-contributor");
+    }
+  });
+  it("the real-code comparison is the report's", () => {
+    const c = flatText("results/compound-1/README.md");
+    expect(c).toContain(`| Proposal 62 build identical to the Lean port, every operation | ${COMPOUND.realCode.sequences} of ${COMPOUND.realCode.sequences} sequences |`);
+    for (const row of COMPOUND.realCode.rows) expect(c).toContain(`| ${row.code} build breaks a requirement | ${row.violating}`);
+    expect(existsSync(path.join(ROOT, COMPOUND.realCode.report))).toBe(true);
+  });
+});
