@@ -495,6 +495,41 @@ def frontier_3():
     return out, {"source": "results/frontier-3", "found": True, "complete": len(al) == 10 and len(pf) == 10}
 
 
+def frontier_4():
+    base = RES / "frontier-4"
+    task = "rw-compound-comp"
+    src = ["results/frontier-4/README.md", "results/frontier-4/PREREGISTRATION.md"]
+    cav = ["Preregistered (results/frontier-4/PREREGISTRATION.md, commit dbc2c01): 10 runs per arm, one-sided Fisher exact test, alpha 0.05.",
+           "The full toolset's build feedback, the skill's steps and the ProofForgeFin additions were built from the frontier-3 ProofForge runs on this task; a gap between the arms measures ProofForge including that work. The alone arm has none of it.",
+           "Final candidates judged again outside the budget from commit dbc2c01 (judged/<task>/<run>/passport.json); every Passport reproduced; no run set aside, none rerun."]
+    if not (base / "judged" / task).is_dir():
+        return [], {"source": "results/frontier-4", "found": False, "note": "no judged run"}
+    runs = hard_task_runs(base, task)
+    al, pf = runs["alone"], runs["proofforge-full"]
+    if not al or not pf:
+        return [], {"source": "results/frontier-4", "found": False, "note": "no judged run of both arms"}
+    k = sum(r["verified"] for r in pf)
+    p = fisher_one_sided(k, len(pf), sum(r["verified"] for r in al), len(al))
+    f3 = hard_task_runs(RES / "frontier-3", task)
+    f3pf = f3["proofforge-full"]
+    test = {"name": "one-sided Fisher exact", "p": rp(p), "preregistered": True, "alpha": 0.05,
+            "stated_in": "results/frontier-4/PREREGISTRATION.md", "significant_at_0_05": p < 0.05}
+    if f3pf:
+        test["secondary"] = {"name": "one-sided Fisher exact, this ProofForge arm against the frontier-3 ProofForge arm (two versions of ProofForge run at different times)",
+                             "p": rp(fisher_one_sided(k, len(pf), sum(r["verified"] for r in f3pf), len(f3pf)))}
+    out = [comparison(f"frontier-4/{task}", "frontier-4", task, SPARK, arm("alone", al), arm("proofforge-full", pf),
+                      test=test, caveats=cav, sources=src)]
+    pooled = al + f3["alone"] + hard_task_runs(RES / "frontier-2", task)["alone"]
+    if len(pooled) > len(al):
+        p = fisher_one_sided(k, len(pf), sum(r["verified"] for r in pooled), len(pooled))
+        out.append(comparison(f"frontier-4+frontier-3+frontier-2/{task}", "frontier-4", task, SPARK, arm("alone", pooled), arm("proofforge-full", pf),
+                              scope="aggregate", test={"name": "one-sided Fisher exact (secondary, frontier-2, frontier-3 and frontier-4 runs on its own pooled)", "p": rp(p),
+                                                       "preregistered": True, "stated_in": "results/frontier-4/PREREGISTRATION.md", "significant_at_0_05": p < 0.05},
+                              caveats=cav + ["The runs on its own pool frontier-2 (commit 995ee6e), frontier-3 (commit a3a1307) and frontier-4 (commit dbc2c01); the alone arm is the same in all three."],
+                              sources=src + ["results/frontier-3/README.md", "results/frontier-2/README.md"]))
+    return out, {"source": "results/frontier-4", "found": True, "complete": len(al) == 10 and len(pf) == 10}
+
+
 def hard_task_2():
     base = RES / "hard-task-2"
     task = "rw-kyber-swapstep"
@@ -850,6 +885,19 @@ def claims(L):
         claim(f3r, "requirements per run 4.5 of 8 with ProofForge", 4.5, g(f3, "proofforge", "req_proved_mean"), 0.005)
         claim(f3r, "pooled with frontier-2 on its own: 0 of 20", 0, g("frontier-3+frontier-2/rw-compound-comp", "alone", "verified"))
         claim(f3r, "pooled one-sided Fisher exact p = 0.10", 0.10, by["frontier-3+frontier-2/rw-compound-comp"]["test"]["p"], 0.005)
+    if "frontier-4/rw-compound-comp" in by:
+        f4r, f4 = "results/frontier-4/README.md", "frontier-4/rw-compound-comp"
+        claim(f4r, "with ProofForge verified 8 of 10", 8, g(f4, "proofforge", "verified"))
+        claim(f4r, "on its own verified 0 of 10", 0, g(f4, "alone", "verified"))
+        claim(f4r, "one-sided Fisher exact p = 0.00036", 0.00036, by[f4]["test"]["p"], 0.000005)
+        claim(f4r, "against frontier-3's ProofForge arm p = 0.012", 0.012, by[f4]["test"]["secondary"]["p"], 0.0005)
+        claim(f4r, "list dollars total $91.74 on its own", 91.74, g(f4, "alone", "list_usd_total"), 0.005)
+        claim(f4r, "list dollars total $55.76 with ProofForge", 55.76, g(f4, "proofforge", "list_usd_total"), 0.005)
+        claim(f4r, "list dollars per verified run $6.97 with ProofForge", 6.97, g(f4, "proofforge", "list_usd_per_verified"), 0.005)
+        claim(f4r, "requirements per run 3.8 of 8 on its own", 3.8, g(f4, "alone", "req_proved_mean"), 0.005)
+        claim(f4r, "requirements per run 7.3 of 8 with ProofForge", 7.3, g(f4, "proofforge", "req_proved_mean"), 0.005)
+        claim(f4r, "pooled frontier-2, frontier-3 and frontier-4 on its own: 0 of 30", 0, g("frontier-4+frontier-3+frontier-2/rw-compound-comp", "alone", "verified"))
+        claim(f4r, "pooled one-sided Fisher exact p = 5.9e-7", 5.9e-7, by["frontier-4+frontier-3+frontier-2/rw-compound-comp"]["test"]["p"], 5e-9)
     if "hard-task-2/rw-kyber-swapstep" in by:
         h2r, h2 = "results/hard-task-2/README.md", "hard-task-2/rw-kyber-swapstep"
         claim(h2r, "with ProofForge verified 0 of 10", 0, g(h2, "proofforge", "verified"))
@@ -1047,6 +1095,8 @@ def build():
     comps += f2
     f3, f3info = frontier_3()
     comps += f3
+    f4, f4info = frontier_4()
+    comps += f4
     h2, h2info = hard_task_2()
     comps += h2
     comps += muse_code_1()
@@ -1070,7 +1120,7 @@ def build():
                    "requirements": "mean required theorems proved per run: the Passport count for a verified run, else the last compiling version where the run records it (last_compiling.json, ledger.json best_candidate), else the run's own check of its final snapshot",
                    "cap_stops": "fraction of runs stopped by the dollar or wall cap",
                    "first_verified_s": "A0, A1, A2: first accepted judge event in events.jsonl; Muse Code with ProofForge: end of the first check_candidate call returning VERIFIED; Muse Code alone: end of run, when the runner's judge accepted"},
-         "optional_sources": {"vyper-replication-1": vinfo, "frontier-2": f2info, "frontier-3": f3info, "hard-task-2": h2info, "feedback-measure-1": finfo},
+         "optional_sources": {"vyper-replication-1": vinfo, "frontier-2": f2info, "frontier-3": f3info, "frontier-4": f4info, "hard-task-2": h2info, "feedback-measure-1": finfo},
          "comparisons": comps, "catches": [e2_all_1()],
          "not_comparisons": [{"source": s, "why": w} for s, w in NOT_COMPARISONS],
          "_e1_runs": e1_runs, "_baseline": bl}
