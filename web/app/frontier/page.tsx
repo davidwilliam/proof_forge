@@ -89,7 +89,7 @@ function strips(): Strip[] {
     {
       ...common("oz"),
       title: "OpenZeppelin Math.sqrt",
-      context: `Behind the Aerodrome first deposit, a task no measured run had verified before. ${modelName(oz.model)} in Muse Code.`,
+      context: `Behind the Aerodrome first deposit, repaired from a seeded six-step variant (OpenZeppelin's released code is correct), a task no measured run had verified before. ${modelName(oz.model)} in Muse Code.`,
       unit: "run",
       alone: oz.alone,
       proofforge: oz.proofforge,

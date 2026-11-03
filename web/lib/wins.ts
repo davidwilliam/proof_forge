@@ -246,7 +246,7 @@ export function headlines(d: WinsData): Headline[] {
       lead: true,
       figure: `${oz.alone.verified} → ${oz.proofforge.verified}`,
       figureAlt: `of ${oz.proofforge.runs}`,
-      text: `OpenZeppelin Math.sqrt behind the Aerodrome first deposit, a task no measured run had verified before: ${modelName(oz.model)} in Muse Code verified ${runsOf(oz.proofforge)} runs with ProofForge, at ${usd(oz.proofforge.usdPerVerified)} per verified run, and ${runsOf(oz.alone)} on its own after spending ${usd(oz.alone.usdTotal)}.`,
+      text: `OpenZeppelin Math.sqrt behind the Aerodrome first deposit, repaired from a seeded six-step variant (OpenZeppelin's released code is correct), a task no measured run had verified before: ${modelName(oz.model)} in Muse Code verified ${runsOf(oz.proofforge)} runs with ProofForge, at ${usd(oz.proofforge.usdPerVerified)} per verified run, and ${runsOf(oz.alone)} on its own after spending ${usd(oz.alone.usdTotal)}.`,
       note: `Preregistered one-sided ${oz.test!.name.replace(/^one-sided /, "")} p = ${pValue(oz.test!.p)}. ProofForgeFin now supplies the convergence of Newton's integer square root over any number of steps and the bridge from 256-bit words to natural numbers, neither in Lean's core library; both were built after the first experiment on this task, where neither arm verified (${runsOf(oz1.proofforge)} and ${runsOf(oz1.alone)}). Caps of $${ozCap.usd} and ${ozCap.seconds / 3600} hours per run, list prices.`,
       links: [{ label: "Full comparison", path: oz.links.comparison }, ...reportLinks([...new Set([...oz.links.reports, ...oz1.links.reports])])],
     },
