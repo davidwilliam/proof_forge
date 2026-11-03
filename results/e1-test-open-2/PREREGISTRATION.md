@@ -90,3 +90,27 @@ time, and a card added on the account did not clear it), and the rerun of Addend
 until the account is funded. The machine is otherwise idle, so the order of the two experiments is
 reversed: `results/hard-task-2` runs first, and the rerun starts once it has ended and the account
 answers. Nothing else in Addendum 1 changes; no rerun call has been made.
+
+## Addendum 3, 2026-11-02
+
+The key behind `meta-models/muse-spark-open-1026` was issued by Baseten for the hackathon in an
+organization Baseten manages, with the $100 hackathon credit; that credit is spent (at list price,
+$74.68 in `e1-test-open-1` and $40.29 in this experiment before the 402 refusals), and a card on
+the owner's own Baseten account cannot fund it. A key from the owner's account answers on
+`meta-models/muse-spark-open`, Muse Spark Open under its public Model APIs ID (listed with fp4
+quantization, at the same list price: $1.25 input, $0.15 cached input, $4.25 output per 1M
+tokens), and returns 404 on `meta-models/muse-spark-open-1026`. Whether the two IDs serve the same
+weights and quantization is not known.
+
+- The rerun of Addendum 1 uses `--model meta-models/muse-spark-open`. Everything else in Addendum 1
+  is unchanged: the twelve tasks, arms A0 and A1, caps, `--parallel 2`, `--batch-usd 100`,
+  `--require-clean`, `PF_CONTAINER_SLOTS=1`.
+- It runs from the worktree at commit b81133a: this experiment's code commit 57d1ed5 plus one
+  change, the list price of `meta-models/muse-spark-open` in `agents/budget.py`, so the per-run
+  dollar cap applies to it.
+- Both runs of each rerun task use the same model ID, so every A0 and A1 pair is compared on one
+  endpoint.
+- The primary analysis stays as Addendum 1 states it: the rerun for the 24 runs and the original
+  runs for the other 36, with the model ID of each run reported. The rerun's twelve tasks are also
+  reported alone, A0 against A1.
+- No rerun call has been made when this addendum is committed.
