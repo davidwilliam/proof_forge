@@ -41,8 +41,8 @@ commands are in `eval/vault.py` and `realworld/adapters/hundred`.
   7. the first attacker contract liquidates the loan (repaying 267919888739 wei of ETH and
      seizing the 1 share unit), redeems that unit for 2 satoshi, and the market is empty again.
 - The same transaction repeats this round six more times, borrowing from hSNX, hUSDC, hDAI,
-  hUSDT, hSUSD and hFRAX. Reported losses are about $7 million (rekt.news gives $7.4M; this
-  figure was not checked here).
+  hUSDT, hSUSD and hFRAX. Reported losses are about $7 million (rekt.news and BlockSec give
+  about $7.4M).
 
 Sources: the transaction receipt (Optimism RPC), the verified implementation source
 (https://repo.sourcify.dev/contracts/full_match/10/0x7100CBCa885905F922a19006cF7fD5d0E1bBb26c/),

@@ -1,6 +1,6 @@
 # rw-euler-donate: a donation that skipped the liquidity check
 
-On 13 March 2023 an attacker took about $197M in net profit from Euler Finance v1 (Cyfrin); Zellic puts the loss at "over 190 million USD", and CoinDesk reported on 3 April 2023 that Euler had returned all "recoverable funds". The root cause is `EToken.donateToReserves`: it moves eTokens from an account to the reserves without the liquidity check that `withdraw`, `mint` and `transferFrom` perform, so an account could make its own position insolvent and have a second account liquidate it at the maximum discount.
+On 13 March 2023 an attacker took about $197M in net profit from Euler Finance v1 (Cyfrin); Zellic puts the loss at "over 190 million USD", and CoinDesk reported on 3 April 2023 that the attacker had returned all "recoverable funds" to Euler. The root cause is `EToken.donateToReserves`: it moves eTokens from an account to the reserves without the liquidity check that `withdraw`, `mint` and `transferFrom` perform, so an account could make its own position insolvent and have a second account liquidate it at the maximum discount.
 
 ## What is proved
 

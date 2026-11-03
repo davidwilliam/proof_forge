@@ -512,11 +512,11 @@ const hundred: Flagship = {
   domain: "vault share accounting",
   language: "Solidity",
   loss: {
-    // README: "Reported losses are about $7 million (rekt.news gives $7.4M; this figure was not checked here)."
+    // README: "Reported losses are about $7 million (rekt.news and BlockSec give about $7.4M)."
     amount: "about $7 million",
     usdMillions: 7,
     short: "in reported losses",
-    basis: "in reported losses (rekt.news gives $7.4M; this figure was not checked here)",
+    basis: "in reported losses (rekt.news and BlockSec give about $7.4M)",
     citations: [
       { label: "rekt.news", url: "https://rekt.news/hundred-rekt2" },
       { label: "BlockSec", url: "https://blocksec.com/blog/6-hundred-finance-incident-catalyzing-the-wave-of-precision-related-exploits-in-vulnerable-forked-protocols" },
@@ -625,7 +625,7 @@ const balancer: Flagship = {
     citations: [
       { label: "OpenZeppelin", url: "https://www.openzeppelin.com/news/understanding-the-balancer-v2-exploit" },
       { label: "The Block", url: "https://www.theblock.co/post/377863/balancer-identifies-rounding-error-as-root-cause-of-multi-chain-defi-exploit" },
-      { label: "Certora", url: "https://www.certora.com/blog/breaking-down-the-balancer-hack" },
+      { label: "BlockSec", url: "https://blocksec.com/blog/in-depth-analysis-the-balancer-v2-exploit" },
     ],
   },
   bug: "A swap for an exact amount out rounded that amount down before pricing it, so 17 wei of osETH, worth 17.988 of the pool's units, was priced as 17.",

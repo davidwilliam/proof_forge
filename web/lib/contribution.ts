@@ -448,7 +448,7 @@ export const COMPOUND = {
     label: "Proposal 62 port",
     passport: "results/compound-1/passports/port.json",
     witness: "realworld/tasks/rw-compound-comp/witnesses/cSUSHI_claim.lean",
-    finding: "The cSUSHI claim made on mainnet 139 blocks after the upgrade: nothing was owed and nothing was emitted to the market, and the port pays 18977306140567618322762 COMP-wei (18,977.35 COMP), as the transaction did.",
+    finding: "The cSUSHI claim made on mainnet 139 blocks after the upgrade: nothing was owed and nothing was emitted to the market, and the port pays 18977306140567618322762 COMP-wei (18,977.31 COMP), the amount the transaction credited from cSUSHI (it transferred 18,977.35 COMP in all, with 0.04 COMP accrued in cETH).",
   },
   fix: { label: "Proposal 64 fix, ported by the build team", passport: "results/compound-1/passports/reference.json" },
   /** results/frontier-4/README.md, "Every run": the eight runs whose Passport is VERIFIED. */

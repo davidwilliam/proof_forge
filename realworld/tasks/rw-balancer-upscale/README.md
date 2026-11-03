@@ -14,15 +14,21 @@ From the sources listed at the end:
 
 - On 2025-11-03 attackers drained Balancer V2 Composable Stable Pools and forks of them on several
   chains. The Block reports that estimates "rose from around $70 million to over $128 million"
-  (Nansen and PeckShield) and quotes Balancer's preliminary report: "a rounding error in the
-  upscale function for EXACT_OUT swaps within the v2 vault's batchSwap feature". OpenZeppelin puts
+  (Nansen and PeckShield) and reports that in its preliminary report Balancer attributed the
+  exploit to "a rounding error in the upscale function for EXACT_OUT swaps within the v2 vault's
+  batchSwap feature" (The Block's wording). OpenZeppelin puts
   the loss at "$120+ million across Balancer and its forks", BlockSec at over $125 million. The
   loss figures were not checked here.
 - OpenZeppelin, Certora and BlockSec agree on the mechanism. `BaseGeneralPool._swapGivenOut`
   upscales the requested amount out with `_upscale`, which rounds down (`FixedPoint.mulDown`), so
   the pool math prices less than the trader takes. The attacker first sold BPT for the pool's
-  tokens to push the balances down to a few wei, where one unit of rounding is a large part of a
-  balance, then repeated rounds of three swaps inside one `batchSwap`.
+  tokens to push the balances to very low levels (OpenZeppelin: "≲ 100k"; 67,000 wei of each in the
+  transaction ported here), then repeated rounds of three swaps inside one `batchSwap`, each taking
+  one balance down to a few wei, where one unit of rounding is a large part of a balance.
+- Balancer's audit list (https://github.com/balancer/balancer-v2-monorepo/blob/master/audits/README.md)
+  records audits of the Composable Stable Pool by Trail of Bits (2022-09-02) and Certora
+  (2022-09-23), and of the Vault by OpenZeppelin, Trail of Bits and Certora (2021); it notes that
+  some contracts were modified after they were audited.
 - Certora writes that its 2022 verified properties "did not constrain the relationship between
   individual swaps or rounding behavior".
 
@@ -287,7 +293,7 @@ not proved.
   and https://github.com/balancer/balancer-v2-monorepo/blob/88842344fb5f44d8ed6f8f944acd3be80627df87/pkg/pool-utils/contracts/BaseGeneralPool.sol
 - Balancer's own post-mortem on Medium
   (https://medium.com/balancer-protocol/nov-3-exploit-post-mortem-51dcbeb6b020) returned HTTP 403 and
-  was not read; Balancer's wording here is quoted from The Block.
+  was not read; Balancer's findings here are as The Block paraphrases them.
 
 ## Reproduce
 
