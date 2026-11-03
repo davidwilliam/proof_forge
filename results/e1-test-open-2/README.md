@@ -62,10 +62,11 @@ completed 27 of the 30 tasks at least once, A0 23.
 
 ## Analysis files
 
-- `primary/e1.md`, `primary/e1.json`: the preregistered primary analysis, written by `eval/e1.py`'s
-  report on the 36 original runs of the 18 unaffected tasks and the 24 rerun runs.
-- `e1.md`, `e1.json`, `coverage.json`, `config.json`: the original batch as `eval/e1.py` scored it,
-  including the 24 runs refused with HTTP 402, which the primary analysis does not use.
+- `e1.md`, `e1.json`: the preregistered primary analysis, written by `eval/e1.py`'s report on the
+  36 original runs of the 18 unaffected tasks and the 24 rerun runs.
+- `batch/e1.md`, `batch/e1.json`, with `coverage.json` and `config.json`: the original batch as
+  `eval/e1.py` scored it, including the 24 runs refused with HTTP 402, which the primary analysis
+  does not use.
 - `../e1-test-open-2-rerun/`: the rerun's own report and its 24 run directories.
 - `results/wins/ledger.json`: the comparisons `e1-test-open-2/<task>/A1-vs-A0`,
   `e1-test-open-2/all/A1-vs-A0` and `e1-test-open-2+e1-test-open-1/all/A1-vs-A0`.
