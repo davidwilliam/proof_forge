@@ -13,15 +13,15 @@ Task-level comparisons and aggregates. In E1 one run per arm per task.
 - `frontier-2/rw-oz-sqrt`: muse-spark-1.3-contributor, alone against proofforge-full: alone verified 0 of 10 (8 stopped at a cap, mean 1.4 of 8 requirements proved); with ProofForge 10 of 10 verified at $1.99 per verified run (list prices). 10 Passports, listed in `ledger.json` (one-sided Fisher exact p = 5.413e-06, in favour of ProofForge).
 - `frontier-2/both-tasks`: muse-spark-1.3-contributor, alone against proofforge-full: alone verified 0 of 20 (18 stopped at a cap, mean 1.95 of 8 requirements proved); with ProofForge 10 of 20 verified at $11.24 per verified run (list prices). 10 Passports, listed in `ledger.json` (one-sided Fisher exact (secondary, pooled) p = 0.000218, in favour of ProofForge).
 
-### frontier-3
-
-- `frontier-3/rw-compound-comp`: muse-spark-1.3-contributor, alone against proofforge-full: alone verified 0 of 10 (10 stopped at a cap, mean 2.2 of 8 requirements proved); with ProofForge 2 of 10 verified at $42.72 per verified run (list prices). Passports `b7aca6c04101c9fc`, `4f7e8adfccefae85` (one-sided Fisher exact p = 0.2368).
-- `frontier-3+frontier-2/rw-compound-comp`: muse-spark-1.3-contributor, alone against proofforge-full: alone verified 0 of 20 (20 stopped at a cap, mean 2.35 of 8 requirements proved); with ProofForge 2 of 10 verified at $42.72 per verified run (list prices). Passports `b7aca6c04101c9fc`, `4f7e8adfccefae85` (one-sided Fisher exact (secondary, frontier-2 and frontier-3 runs on its own pooled) p = 0.1034).
-
 ### frontier-4
 
 - `frontier-4/rw-compound-comp`: muse-spark-1.3-contributor, alone against proofforge-full: alone verified 0 of 10 (10 stopped at a cap, mean 3.8 of 8 requirements proved); with ProofForge 8 of 10 verified at $6.97 per verified run (list prices). 8 Passports, listed in `ledger.json` (one-sided Fisher exact p = 0.0003572, in favour of ProofForge).
 - `frontier-4+frontier-3+frontier-2/rw-compound-comp`: muse-spark-1.3-contributor, alone against proofforge-full: alone verified 0 of 30 (30 stopped at a cap, mean 2.83 of 8 requirements proved); with ProofForge 8 of 10 verified at $6.97 per verified run (list prices). 8 Passports, listed in `ledger.json` (one-sided Fisher exact (secondary, frontier-2, frontier-3 and frontier-4 runs on its own pooled) p = 5.851e-07, in favour of ProofForge).
+
+### frontier-3
+
+- `frontier-3/rw-compound-comp`: muse-spark-1.3-contributor, alone against proofforge-full: alone verified 0 of 10 (10 stopped at a cap, mean 2.2 of 8 requirements proved); with ProofForge 2 of 10 verified at $42.72 per verified run (list prices). Passports `b7aca6c04101c9fc`, `4f7e8adfccefae85` (one-sided Fisher exact p = 0.2368).
+- `frontier-3+frontier-2/rw-compound-comp`: muse-spark-1.3-contributor, alone against proofforge-full: alone verified 0 of 20 (20 stopped at a cap, mean 2.35 of 8 requirements proved); with ProofForge 2 of 10 verified at $42.72 per verified run (list prices). Passports `b7aca6c04101c9fc`, `4f7e8adfccefae85` (one-sided Fisher exact (secondary, frontier-2 and frontier-3 runs on its own pooled) p = 0.1034).
 
 ### e1-test-1
 
@@ -213,6 +213,10 @@ The factor is the alone arm's value divided by the ProofForge arm's: list $ per 
 
 Verified more often where the model alone also verified some runs; more requirements proved or fewer cap stops where verification did not differ; bad candidates caught.
 
+### frontier-2
+
+- `frontier-2/rw-compound-comp`: muse-spark-1.3-contributor, alone against proofforge-full: more requirements proved with ProofForge, mean 5 of 8 per run (per run [5, 5, 5, 5, 5, 5, 5, 5, 5, 5]) against 2.5 (per run [4, 0, 4, 0, 0, 3, 0, 5, 5, 4]); verified 0 of 10 against 0 of 10 (one-sided Fisher exact p = 1).
+
 ### hard-task-1
 
 - `hard-task-1/rw-vyper-sqrt`: muse-spark-1.3-contributor, alone against proofforge-full: verified 5 of 5 with ProofForge against 2 of 5 alone; list $ per verified run $5.49 against $22.94. Passports `4f5a15c052197dcf`, `8184ef36fc5a13df`, `869f15d14b4b02c2`, `633c857097c55e39`, `5e872b17ec048114` (one-sided Fisher exact p = 0.08333).
@@ -222,10 +226,6 @@ Verified more often where the model alone also verified some runs; more requirem
 
 - `vyper-replication-1/rw-vyper-sqrt`: muse-spark-1.3-contributor, alone against proofforge-full: verified 9 of 10 with ProofForge against 8 of 10 alone; list $ per verified run $5.69 against $9.00. 9 Passports, listed in `ledger.json` (one-sided Fisher exact p = 0.5).
 - `vyper-replication-1/rw-vyper-sqrt+hard-task-1`: muse-spark-1.3-contributor, alone against proofforge-full: verified 14 of 15 with ProofForge against 10 of 15 alone; list $ per verified run $5.62 against $11.79. 14 Passports, listed in `ledger.json` (one-sided Fisher exact (secondary, includes the motivating hard-task-1 runs) p = 0.08429).
-
-### frontier-2
-
-- `frontier-2/rw-compound-comp`: muse-spark-1.3-contributor, alone against proofforge-full: more requirements proved with ProofForge, mean 5 of 8 per run (per run [5, 5, 5, 5, 5, 5, 5, 5, 5, 5]) against 2.5 (per run [4, 0, 4, 0, 0, 3, 0, 5, 5, 4]); verified 0 of 10 against 0 of 10 (one-sided Fisher exact p = 1).
 
 ### hard-task-2
 
@@ -337,18 +337,18 @@ V verification, C cost, T time, R requirements, S cap stops: W win, T tie, L los
 
 | Comparison | Model | Alone | ProofForge | Verified | List $ per verified | Wall time | Req. proved, mean | Cap stops | Test | V C T R S |
 |---|---|---|---|---|---|---|---|---|---|---|
+| `frontier-2/rw-oz-sqrt` | muse-spark-1.3-contributor | alone, 10 | proofforge-full, 10 | 0 / 10 | n/a / $1.99 | n/a / 746 s | 1.4 / 8 of 8 | 8 / 0 | 5.413e-06 | W W - W W |
+| `frontier-2/rw-compound-comp` | muse-spark-1.3-contributor | alone, 10 | proofforge-full, 10 | 0 / 0 | n/a / n/a | n/a / n/a | 2.5 / 5 of 8 | 10 / 10 | 1 | T - - W T |
+| `frontier-2/both-tasks` | muse-spark-1.3-contributor | alone, 20 | proofforge-full, 20 | 0 / 10 | n/a / $11.24 | n/a / n/a | 1.95 / 6.5 of 8 | 18 / 10 | 0.000218 | W W - W W |
+| `frontier-4/rw-compound-comp` | muse-spark-1.3-contributor | alone, 10 | proofforge-full, 10 | 0 / 8 | n/a / $6.97 | n/a / 1,131 s | 3.8 / 7.3 of 8 | 10 / 2 | 0.0003572 | W W - W W |
+| `frontier-4+frontier-3+frontier-2/rw-compound-comp` | muse-spark-1.3-contributor | alone, 30 | proofforge-full, 10 | 0 / 8 | n/a / $6.97 | n/a / 1,131 s | 2.83 / 7.3 of 8 | 30 / 2 | 5.851e-07 | W W - W W |
 | `hard-task-1/rw-vyper-sqrt` | muse-spark-1.3-contributor | alone, 5 | proofforge-full, 5 | 2 / 5 | $22.94 / $5.49 | 4,031 s / 2,368 s | 2.8 / 5 of 5 | 3 / 0 | 0.08333 | W W W W W |
 | `hard-task-1/rw-oz-sqrt` | muse-spark-1.3-contributor | alone, 5 | proofforge-full, 5 | 0 / 0 | n/a / n/a | n/a / n/a | 2.6 / 1 of 8 | 5 / 5 | 1 | T - - L T |
 | `hard-task-1/both-tasks` | muse-spark-1.3-contributor | alone, 10 | proofforge-full, 10 | 2 / 5 | $47.21 / $14.70 | n/a / n/a | 2.7 / 3 of 8 | 8 / 5 | 0.1749 | W W - W W |
 | `vyper-replication-1/rw-vyper-sqrt` | muse-spark-1.3-contributor | alone, 10 | proofforge-full, 10 | 8 / 9 | $9.00 / $5.69 | 2,986 s / 1,537 s | 4.2 / 4.7 of 5 | 2 / 1 | 0.5 | W W W W W |
 | `vyper-replication-1/rw-vyper-sqrt+hard-task-1` | muse-spark-1.3-contributor | alone, 15 | proofforge-full, 15 | 10 / 14 | $11.79 / $5.62 | 3,195 s / 1,834 s | 3.73 / 4.8 of 5 | 5 / 1 | 0.08429 | W W W W W |
-| `frontier-2/rw-oz-sqrt` | muse-spark-1.3-contributor | alone, 10 | proofforge-full, 10 | 0 / 10 | n/a / $1.99 | n/a / 746 s | 1.4 / 8 of 8 | 8 / 0 | 5.413e-06 | W W - W W |
-| `frontier-2/rw-compound-comp` | muse-spark-1.3-contributor | alone, 10 | proofforge-full, 10 | 0 / 0 | n/a / n/a | n/a / n/a | 2.5 / 5 of 8 | 10 / 10 | 1 | T - - W T |
-| `frontier-2/both-tasks` | muse-spark-1.3-contributor | alone, 20 | proofforge-full, 20 | 0 / 10 | n/a / $11.24 | n/a / n/a | 1.95 / 6.5 of 8 | 18 / 10 | 0.000218 | W W - W W |
 | `frontier-3/rw-compound-comp` | muse-spark-1.3-contributor | alone, 10 | proofforge-full, 10 | 0 / 2 | n/a / $42.72 | n/a / 2,036 s | 2.2 / 4.5 of 8 | 10 / 8 | 0.2368 | W W - W W |
 | `frontier-3+frontier-2/rw-compound-comp` | muse-spark-1.3-contributor | alone, 20 | proofforge-full, 10 | 0 / 2 | n/a / $42.72 | n/a / 2,036 s | 2.35 / 4.5 of 8 | 20 / 8 | 0.1034 | W W - W W |
-| `frontier-4/rw-compound-comp` | muse-spark-1.3-contributor | alone, 10 | proofforge-full, 10 | 0 / 8 | n/a / $6.97 | n/a / 1,131 s | 3.8 / 7.3 of 8 | 10 / 2 | 0.0003572 | W W - W W |
-| `frontier-4+frontier-3+frontier-2/rw-compound-comp` | muse-spark-1.3-contributor | alone, 30 | proofforge-full, 10 | 0 / 8 | n/a / $6.97 | n/a / 1,131 s | 2.83 / 7.3 of 8 | 30 / 2 | 5.851e-07 | W W - W W |
 | `hard-task-2/rw-kyber-swapstep` | muse-spark-1.3-contributor | alone, 10 | proofforge-full, 10 | 0 / 0 | n/a / n/a | n/a / n/a | 1.9 / 3.1 of 8 | 10 / 10 | 1 | T - - W T |
 | `muse-code-1/rw-balancer-upscale` | muse-spark-1.3-contributor | alone, 3 | proofforge, 3 | 1 / 2 | $20.27 / $7.34 | 1,608 s / 1,904 s | 6.67 / 7.33 of 8 | 2 / 1 | 0.5 | W W L W W |
 | `muse-code-1/rc-knight-router` | muse-spark-1.3-contributor | alone, 2 | proofforge, 2 | 2 / 2 | $4.69 / $6.47 | 1,294 s / 2,012 s | 6 / 6 of 6 | 0 / 0 |  | T L L T T |
@@ -658,12 +658,12 @@ V verification, C cost, T time, R requirements, S cap stops: W win, T tie, L los
 
 ### Stated tests
 
+- `frontier-2/rw-compound-comp`: one-sided Fisher exact, p = 1 (preregistered; stated in `results/frontier-2/PREREGISTRATION.md`).
 - `hard-task-1/rw-vyper-sqrt`: one-sided Fisher exact, p = 0.08333 (preregistered; stated in `results/hard-task-1/PREREGISTRATION.md`).
 - `hard-task-1/rw-oz-sqrt`: one-sided Fisher exact, p = 1 (preregistered; stated in `results/hard-task-1/PREREGISTRATION.md`).
 - `hard-task-1/both-tasks`: one-sided Fisher exact (secondary, pooled), p = 0.1749 (preregistered; stated in `results/hard-task-1/PREREGISTRATION.md`).
 - `vyper-replication-1/rw-vyper-sqrt`: one-sided Fisher exact, p = 0.5 (preregistered; stated in `results/vyper-replication-1/PREREGISTRATION.md`).
 - `vyper-replication-1/rw-vyper-sqrt+hard-task-1`: one-sided Fisher exact (secondary, includes the motivating hard-task-1 runs), p = 0.08429 (preregistered; stated in `results/vyper-replication-1/PREREGISTRATION.md`).
-- `frontier-2/rw-compound-comp`: one-sided Fisher exact, p = 1 (preregistered; stated in `results/frontier-2/PREREGISTRATION.md`).
 - `frontier-3/rw-compound-comp`: one-sided Fisher exact, p = 0.2368 (preregistered; stated in `results/frontier-3/PREREGISTRATION.md`).
 - `frontier-3+frontier-2/rw-compound-comp`: one-sided Fisher exact (secondary, frontier-2 and frontier-3 runs on its own pooled), p = 0.1034 (preregistered; stated in `results/frontier-3/PREREGISTRATION.md`).
 - `hard-task-2/rw-kyber-swapstep`: one-sided Fisher exact, p = 1 (preregistered; stated in `results/hard-task-2/PREREGISTRATION.md`).
@@ -706,6 +706,19 @@ p below 0.05:
 
 ### Per experiment
 
+frontier-2:
+
+- Preregistered (results/frontier-2/PREREGISTRATION.md, commit 995ee6e): 10 runs per arm per task, one-sided Fisher exact test per task, alpha 0.025 per task (two tasks).
+- The ProofForgeFin modules the ProofForge arm imports (SqrtIter, WordBridge, NatSqrt, Accumulator) were written after earlier runs on these two tasks failed; a gap between the arms measures ProofForge including that library work.
+- Final candidates judged again outside the budget from commit 995ee6e (judged/<task>/<run>/passport.json); every Passport reproduced; no run set aside, none rerun.
+
+frontier-4:
+
+- Preregistered (results/frontier-4/PREREGISTRATION.md, commit dbc2c01): 10 runs per arm, one-sided Fisher exact test, alpha 0.05.
+- The full toolset's build feedback, the skill's steps and the ProofForgeFin additions were built from the frontier-3 ProofForge runs on this task; a gap between the arms measures ProofForge including that work. The alone arm has none of it.
+- Final candidates judged again outside the budget from commit dbc2c01 (judged/<task>/<run>/passport.json); every Passport reproduced; no run set aside, none rerun.
+- The runs on its own pool frontier-2 (commit 995ee6e), frontier-3 (commit a3a1307) and frontier-4 (commit dbc2c01); the alone arm is the same in all three.
+
 hard-task-1:
 
 - Preregistered (results/hard-task-1/PREREGISTRATION.md, plan commit 54bf8cc): 5 runs per arm per task, one-sided Fisher exact test, alpha 0.05; with 5 runs per arm only a difference of four reaches p < 0.05.
@@ -718,25 +731,12 @@ vyper-replication-1:
 - Preregistered (results/vyper-replication-1/PREREGISTRATION.md): 10 runs per arm, one-sided Fisher exact test on this experiment's 20 runs alone, alpha 0.05.
 - rw-vyper-sqrt was chosen after the hard-task-1 results; the pooled comparison includes the runs that motivated this experiment and is secondary.
 
-frontier-2:
-
-- Preregistered (results/frontier-2/PREREGISTRATION.md, commit 995ee6e): 10 runs per arm per task, one-sided Fisher exact test per task, alpha 0.025 per task (two tasks).
-- The ProofForgeFin modules the ProofForge arm imports (SqrtIter, WordBridge, NatSqrt, Accumulator) were written after earlier runs on these two tasks failed; a gap between the arms measures ProofForge including that library work.
-- Final candidates judged again outside the budget from commit 995ee6e (judged/<task>/<run>/passport.json); every Passport reproduced; no run set aside, none rerun.
-
 frontier-3:
 
 - Preregistered (results/frontier-3/PREREGISTRATION.md, commit a3a1307): 10 runs per arm, one-sided Fisher exact test, alpha 0.05; with 0 verified on its own, p < 0.05 needs at least 4 verified with ProofForge.
 - ProofForgeFin.Accumulator.Market was written after the frontier-2 runs on this task stopped at 5 of 8 requirements; a gap between the arms measures ProofForge including that library work.
 - Final candidates judged again outside the budget from commit a3a1307 (judged/<task>/<run>/passport.json); every Passport reproduced; no run set aside, none rerun.
 - The runs on its own pool frontier-2 (commit 995ee6e) and frontier-3 (commit a3a1307); the alone arm is the same in both.
-
-frontier-4:
-
-- Preregistered (results/frontier-4/PREREGISTRATION.md, commit dbc2c01): 10 runs per arm, one-sided Fisher exact test, alpha 0.05.
-- The full toolset's build feedback, the skill's steps and the ProofForgeFin additions were built from the frontier-3 ProofForge runs on this task; a gap between the arms measures ProofForge including that work. The alone arm has none of it.
-- Final candidates judged again outside the budget from commit dbc2c01 (judged/<task>/<run>/passport.json); every Passport reproduced; no run set aside, none rerun.
-- The runs on its own pool frontier-2 (commit 995ee6e), frontier-3 (commit a3a1307) and frontier-4 (commit dbc2c01); the alone arm is the same in all three.
 
 hard-task-2:
 

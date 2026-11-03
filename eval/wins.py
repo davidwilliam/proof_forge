@@ -1086,19 +1086,14 @@ def wins(L):
 
 
 def build():
-    comps = []
+    # The strongest preregistered results first: OpenZeppelin Math.sqrt, Compound, then Vyper sqrt().
     h, hard_pooled = hard_task_1()
-    comps += h
     v, vinfo = vyper_replication_1(hard_pooled)
-    comps += v
     f2, f2info = frontier_2()
-    comps += f2
     f3, f3info = frontier_3()
-    comps += f3
     f4, f4info = frontier_4()
-    comps += f4
     h2, h2info = hard_task_2()
-    comps += h2
+    comps = f2 + f4 + h + v + f3 + h2
     comps += muse_code_1()
     f, bl = flagship_pairs()
     comps += f
