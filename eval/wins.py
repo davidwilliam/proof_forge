@@ -525,6 +525,12 @@ E1 = {
         "Meta's open-weight Muse Spark Open (meta-models/muse-spark-open-1026) through Baseten Model APIs; run from an isolated checkout at commit 36fc8d3; the directory has no README (results/README.md describes it).",
         "The 30 test tasks are 9 base specifications with variants, not independent problems.",
         "McNemar exact p from eval/e1.py (results/e1-test-open-1/e1.md); not preregistered in a committed document."]},
+    "e1-test-open-2": {"pf_arms": ("A1",), "price": "list", "rerun": "e1-test-open-2-rerun", "report": "e1-test-open-2/primary",
+                       "preregistered": True, "caveats": [
+        "Meta's open-weight Muse Spark Open through Baseten Model APIs: 18 tasks on meta-models/muse-spark-open-1026 from a worktree at commit 57d1ed5; the other 12 rerun on meta-models/muse-spark-open from a worktree at b81133a after the provider refused the first runs with HTTP 402 (Addenda 1 to 3 of results/e1-test-open-2/PREREGISTRATION.md). Both arms of each task use the same model ID.",
+        "The 30 test tasks are 9 base specifications with variants, not independent problems.",
+        "The repair-agent changes measured here were made knowing these test tasks and A1's failures on them in e1-test-open-1 (PREREGISTRATION.md).",
+        "Primary analysis as preregistered: two-sided exact McNemar on the 30 paired tasks (results/e1-test-open-2/primary/e1.md). The 24 refused runs stay in results/e1-test-open-2 and are not scored."]},
     "e1-test-glimmer-1": {"pf_arms": ("A1",), "price": "GPU-cost price per token (agents/budget.py), not a list price",
                           "outage": {("permissions-grants-b1", "A1"), ("permissions-grants-b2", "A1"), ("permissions-grants-b3", "A1")},
                           "caveats": [
@@ -548,7 +554,12 @@ def e1(label):
     cfg = load(base / "config.json")
     model = cfg["model"]
     runs, lost, totals = {}, [], {}
-    for d in sorted(base.glob("*/*")):
+    dirs = sorted(base.glob("*/*"))
+    if "rerun" in spec:       # the rerun's runs replace the original runs of its tasks
+        rr = sorted((RES / spec["rerun"]).glob("*/*"))
+        redo = {d.parent.name for d in rr if (d / "eval.json").exists()}
+        dirs = [d for d in dirs if d.parent.name not in redo] + rr
+    for d in dirs:
         if not (d.is_dir() and (d / "eval.json").exists()):
             continue
         ev = load(d / "eval.json")
@@ -564,6 +575,8 @@ def e1(label):
             continue
         runs[key] = agent_run(d, "eval")
     tasks = sorted({t for t, _ in runs})
+    models = sorted({r["model"] for r in runs.values()})
+    report = spec.get("report", label)
     out = []
     if lost:
         spec = dict(spec, caveats=spec["caveats"] + [f"Set aside here, lost to network timeouts with no verdict (eval.json judge MISSING, no summary.json): {', '.join(lost)}. eval/e1.py counts them as not completed."])
@@ -576,21 +589,40 @@ def e1(label):
         paired = [t for t in tasks if (t, "A0") in runs and (t, pa) in runs]
         cav = spec["caveats"] + ([A2_NOTE] if pa == "A2" else [])
         for t in paired:
-            out.append(comparison(f"{label}/{t}/{pa}-vs-A0", label, t, model, arm("A0", [runs[(t, "A0")]], price_basis=spec["price"]),
+            src = pathlib.Path(runs[(t, pa)]["dir"]).parts[1]
+            out.append(comparison(f"{label}/{t}/{pa}-vs-A0", label, t, runs[(t, pa)]["model"], arm("A0", [runs[(t, "A0")]], price_basis=spec["price"]),
                                   arm(pa, [runs[(t, pa)]], price_basis=spec["price"]), caveats=cav, flags=flags,
-                                  sources=[f"results/{label}/e1.json"]))
+                                  sources=[f"results/{src}/e1.json"]))
         b = sum(runs[(t, pa)]["verified"] and not runs[(t, "A0")]["verified"] for t in paired)
         c = sum(runs[(t, "A0")]["verified"] and not runs[(t, pa)]["verified"] for t in paired)
-        stated = load(base / "e1.json")["summary"]["pairs"].get(f"{pa}-A0", {}).get("mcnemar_p")
+        stated = load(RES / report / "e1.json")["summary"]["pairs"].get(f"{pa}-A0", {}).get("mcnemar_p")
         test = {"name": "two-sided exact McNemar on paired tasks", "p": rp(mcnemar_exact(b, c)), "discordant": {"proofforge_only": b, "alone_only": c},
-                "preregistered": False, "stated_in": f"results/{label}/e1.md", "computed_by": "eval/e1.py", "stated_p": rp(stated),
+                "preregistered": spec.get("preregistered", False), "stated_in": f"results/{report}/e1.md", "computed_by": "eval/e1.py", "stated_p": rp(stated),
                 "significant_at_0_05": mcnemar_exact(b, c) < 0.05}
-        out.append(comparison(f"{label}/all/{pa}-vs-A0", label, f"{len(paired)} paired tasks", model,
+        out.append(comparison(f"{label}/all/{pa}-vs-A0", label, f"{len(paired)} paired tasks", " and ".join(models) if len(models) > 1 else model,
                               arm("A0", [runs[(t, "A0")] for t in paired], price_basis=spec["price"]),
                               arm(pa, [runs[(t, pa)] for t in paired], price_basis=spec["price"]),
-                              scope="aggregate", test=test, caveats=cav, flags=flags, sources=[f"results/{label}/e1.md", f"results/{label}/e1.json"],
+                              scope="aggregate", test=test, caveats=cav, flags=flags, sources=[f"results/{report}/e1.md", f"results/{report}/e1.json"],
                               time_mode="paired", pairs=[(runs[(t, "A0")], runs[(t, pa)]) for t in paired]))
     return out, {"runs": runs, "lost": lost, "totals": totals}
+
+
+def e1_open_pooled(r2, r1):
+    """e1-test-open-2 (scored as its primary analysis) and e1-test-open-1 pooled per task: a secondary analysis of e1-test-open-2."""
+    pairs = [(r["runs"][(t, "A0")], r["runs"][(t, "A1")]) for r in (r2, r1)
+             for t in sorted({t for t, _ in r["runs"]}) if (t, "A0") in r["runs"] and (t, "A1") in r["runs"]]
+    b = sum(y["verified"] and not x["verified"] for x, y in pairs)
+    c = sum(x["verified"] and not y["verified"] for x, y in pairs)
+    p = mcnemar_exact(b, c)
+    test = {"name": "two-sided exact McNemar on paired task runs (secondary, e1-test-open-1 and e1-test-open-2 pooled)", "p": rp(p),
+            "discordant": {"proofforge_only": b, "alone_only": c}, "preregistered": True,
+            "stated_in": "results/e1-test-open-2/PREREGISTRATION.md", "significant_at_0_05": p < 0.05}
+    models = sorted({r["model"] for x, y in pairs for r in (x, y)})
+    return [comparison("e1-test-open-2+e1-test-open-1/all/A1-vs-A0", "e1-test-open-2", f"{len(pairs)} paired task runs (30 tasks, two experiments)",
+                       " and ".join(models), arm("A0", [x for x, _ in pairs], price_basis="list"), arm("A1", [y for _, y in pairs], price_basis="list"),
+                       scope="aggregate", test=test, flags=["includes the runs that motivated the repair-agent changes"],
+                       caveats=E1["e1-test-open-2"]["caveats"] + ["Each task appears twice, once per experiment; the two runs of a task are not independent. e1-test-open-1 ran from commit 36fc8d3, before the repair-agent changes."],
+                       sources=["results/e1-test-open-2/README.md", "results/e1-test-open-1/e1.md"], time_mode="paired", pairs=pairs)]
 
 
 def flagship_pairs():
@@ -849,6 +881,25 @@ def claims(L):
     claim(o, "e1-test-open-1: A1 24 of 30", 24, g("e1-test-open-1/all/A1-vs-A0", "proofforge", "verified"))
     claim(o, "e1-test-open-1: McNemar exact p = 0.51", 0.51, by["e1-test-open-1/all/A1-vs-A0"]["test"]["p"], 0.005)
     claim(o, "e1-test-open-1: all 9 A0 failures stopped at the dollar cap", 9, by["e1-test-open-1/all/A1-vs-A0"]["alone"]["cap_stops"]["usd"])
+    o2, a2, p2 = "results/e1-test-open-2/README.md", "e1-test-open-2/all/A1-vs-A0", "e1-test-open-2+e1-test-open-1/all/A1-vs-A0"
+    claim(o2, "A0 completed 22 of 30", 22, g(a2, "alone", "verified"))
+    claim(o2, "A1 completed 24 of 30", 24, g(a2, "proofforge", "verified"))
+    claim(o2, "discordant pairs 6 for A1 and 4 for A0", [6, 4], list(by[a2]["test"]["discordant"].values()))
+    claim(o2, "two-sided exact McNemar p = 0.75", 0.75, by[a2]["test"]["p"], 0.005)
+    claim(o2, "required theorems proved per run 6.0 with A0", 6.0, g(a2, "alone", "req_proved_mean"), 0.05)
+    claim(o2, "required theorems proved per run 7.4 with A1", 7.4, g(a2, "proofforge", "req_proved_mean"), 0.05)
+    claim(o2, "list dollars per completed repair $1.45 with A0", 1.45, g(a2, "alone", "list_usd_per_verified"), 0.005)
+    claim(o2, "list dollars per completed repair $1.30 with A1", 1.30, g(a2, "proofforge", "list_usd_per_verified"), 0.005)
+    claim(o2, "list dollars total $32.00 with A0", 32.00, g(a2, "alone", "list_usd_total"), 0.005)
+    claim(o2, "list dollars total $31.13 with A1", 31.13, g(a2, "proofforge", "list_usd_total"), 0.005)
+    claim(o2, "A0 runs stopped by the dollar cap: 7", 7, by[a2]["alone"]["cap_stops"]["usd"])
+    claim(o2, "A1 runs stopped by the dollar or wall cap: 5 and 1", [5, 1], [by[a2]["proofforge"]["cap_stops"]["usd"], by[a2]["proofforge"]["cap_stops"]["wall"]])
+    rr = [r for (t, a), r in E["e1-test-open-2"]["runs"].items() if r["model"] == "meta-models/muse-spark-open"]
+    claim(o2, "rerun tasks alone: A0 8 of 12", 8, sum(r["verified"] for r in rr if r["arm"] == "A0"))
+    claim(o2, "rerun tasks alone: A1 10 of 12", 10, sum(r["verified"] for r in rr if r["arm"] == "A1"))
+    claim(o2, "pooled with e1-test-open-1: A0 43 of 60", 43, g(p2, "alone", "verified"))
+    claim(o2, "pooled with e1-test-open-1: A1 48 of 60", 48, g(p2, "proofforge", "verified"))
+    claim(o2, "pooled two-sided exact McNemar p = 0.36", 0.36, by[p2]["test"]["p"], 0.005)
     gl = "results/e1-test-glimmer-1/README.md"
     gr = L["_e1_runs"]["e1-test-glimmer-1"]["runs"]
     claim(gl, "excluding the outage runs, A0 completed 0 of 15", 15, sum(1 for (t, a) in gr if a == "A0"))
@@ -1006,10 +1057,11 @@ def build():
     fm, finfo = feedback_measure_1()
     comps += fm
     e1_runs = {}
-    for lab in ("e1-test-1", "e1-test-open-1", "e1-test-glimmer-1", "e1-dev-2", "e1-dev-1"):
+    for lab in ("e1-test-1", "e1-test-open-2", "e1-test-open-1", "e1-test-glimmer-1", "e1-dev-2", "e1-dev-1"):
         c, runs = e1(lab)
         comps += c
         e1_runs[lab] = runs
+    comps += e1_open_pooled(e1_runs["e1-test-open-2"], e1_runs["e1-test-open-1"])
     L = {"schema": 1, "generator": "eval/wins.py",
          "rules": {"verified": "Passport status VERIFIED from bin/proofforge check on the final candidate; for E1 runs, eval.json completed (judge ACCEPT and binary PASS on 2,000 property cases)",
                    "verification": "win when the ProofForge arm's verified fraction is higher, loss when lower",
