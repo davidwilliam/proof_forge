@@ -1,4 +1,4 @@
-"""The API's task listing and the counterexample option of POST /api/verify.
+"""The API's task listing, the counterexample option of POST /api/verify and GET /api/results.
 No model calls, no Docker and no Lean: the Passport pipeline is replaced by a stub.
 
 Run: .venv/bin/python tests/test_api_tasks.py
@@ -63,6 +63,18 @@ def test_verify_passes_the_counterexample_option_to_the_pipeline():
         api.verify(api.VerifyRequest(task="rw-cetus-shlw", source=src, counterexample=True), request())
         api.verify(api.VerifyRequest(task="rw-cetus-shlw", source=src), request(ip="203.0.113.10"))
     assert seen == [("rw-cetus-shlw", 1000, 0, True), ("rw-cetus-shlw", 1000, 0, False)]
+
+
+
+def test_results_serve_the_muse_code_experiments_with_their_passports():
+    r = api.results()
+    assert list(r)[:6] == list(api.MUSE_CODE_EXPERIMENTS)
+    f4 = r["frontier-4"]
+    task = next(c for c in f4["comparisons"] if c["id"] == "frontier-4/rw-compound-comp")
+    assert (task["alone"]["verified"], task["proofforge"]["verified"]) == (0, 8)
+    assert len(f4["runs"]) == 20 and sum(x["status"] == "VERIFIED" for x in f4["runs"]) == 8
+    assert all((ROOT / x["passport"]).exists() and len(x["passport_sha256"]) == 64 for x in f4["runs"])
+    assert "e1-test-open-2" in r and "e2-all-1" in r
 
 
 if __name__ == "__main__":

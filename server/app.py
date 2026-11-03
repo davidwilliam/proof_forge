@@ -777,9 +777,33 @@ def admin_mode(body: ModeRequest, request: Request):
 
 # Results
 
+# The preregistered Muse Code experiments, strongest result first.
+MUSE_CODE_EXPERIMENTS = ("frontier-2", "frontier-4", "hard-task-1", "vyper-replication-1", "frontier-3", "hard-task-2")
+
+
+def muse_code_experiment(name: str, ledger: dict) -> dict:
+    """One preregistered Muse Code experiment: its comparisons from the wins ledger and the Passport of every
+    run's final candidate, judged again from the experiment's frozen commit (judged/<task>/<run>/passport.json)."""
+    base = ROOT / "results" / name
+    runs = []
+    for pp in sorted(base.glob("judged/*/*/passport.json")):
+        d = json.loads(pp.read_text())
+        runs.append({"task": pp.parent.parent.name, "run": pp.parent.name, "status": d.get("status"),
+                     "passport_sha256": d.get("passport_sha256"), "passport": str(pp.relative_to(ROOT))})
+    return {"readme": f"results/{name}/README.md", "preregistration": f"results/{name}/PREREGISTRATION.md",
+            "source": "results/wins/ledger.json",
+            "comparisons": [c for c in ledger["comparisons"] if c["experiment"] == name], "runs": runs}
+
+
 @app.get("/api/results")
 def results():
     out = {}
+    ledger_file = ROOT / "results/wins/ledger.json"
+    if ledger_file.exists():
+        ledger = json.loads(ledger_file.read_text())
+        for name in MUSE_CODE_EXPERIMENTS:
+            if (ROOT / "results" / name / "README.md").exists():
+                out[name] = muse_code_experiment(name, ledger)
     for p in sorted((ROOT / "results").glob("e*-*/e*.json")):
         data = json.loads(p.read_text())
         out[p.parent.name] = data.get("summary", data)
