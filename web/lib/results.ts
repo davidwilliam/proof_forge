@@ -55,6 +55,62 @@ export function isE2(v: unknown): v is E2Data {
   return !!v && typeof v === "object" && Array.isArray((v as E2Data).rows);
 }
 
+/** A preregistered Muse Code experiment as GET /api/results serves it: its comparisons from the wins
+ * ledger (results/wins/ledger.json) and the judged Passport of every run's final candidate. */
+export interface MuseCodeExperiment {
+  readme: string;
+  preregistration: string;
+  source: string;
+  comparisons: LedgerComparison[];
+  runs: { task: string; run: string; status: string; passport_sha256: string; passport: string }[];
+}
+
+interface LedgerArm {
+  verified: number;
+  runs: number;
+  list_usd_per_verified: number | null;
+  list_usd_total: number | null;
+  cap_stops: { usd: number; wall: number };
+  req_proved_mean: number;
+  req_total: number;
+}
+
+export interface LedgerComparison {
+  id: string;
+  task: string;
+  model: string;
+  scope: "task" | "aggregate";
+  alone: LedgerArm;
+  proofforge: LedgerArm;
+  test: { name: string; p: number; secondary?: { name: string; p: number } } | null;
+  factors: { cost?: number | null; time?: number | null };
+}
+
+export function isMuseCode(v: unknown): v is MuseCodeExperiment {
+  return !!v && typeof v === "object" && Array.isArray((v as MuseCodeExperiment).comparisons) && Array.isArray((v as MuseCodeExperiment).runs);
+}
+
+const ledgerArm = (a: LedgerArm) => ({
+  verified: a.verified,
+  runs: a.runs,
+  usdPerVerified: a.list_usd_per_verified,
+  usdTotal: a.list_usd_total,
+  capStops: a.cap_stops.usd + a.cap_stops.wall,
+  reqMean: a.req_proved_mean,
+  reqTotal: a.req_total,
+});
+
+/** A ledger comparison in the shape the /methods page words (scripts/methods.mjs maps the same fields). */
+export const ledgerComparison = (c: LedgerComparison) => ({
+  id: c.id,
+  task: c.task,
+  model: c.model,
+  alone: ledgerArm(c.alone),
+  proofforge: ledgerArm(c.proofforge),
+  test: c.test ? { name: c.test.name, p: c.test.p, ...(c.test.secondary ? { secondary: { name: c.test.secondary.name, p: c.test.secondary.p } } : {}) } : null,
+  factors: { cost: c.factors.cost ?? null, time: c.factors.time ?? null },
+});
+
 export function isE1(v: unknown): v is E1Summary {
   return !!v && typeof v === "object" && (typeof (v as E1Summary).arms === "object" || typeof (v as E1Summary).pairs === "object");
 }

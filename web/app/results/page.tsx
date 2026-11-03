@@ -3,7 +3,9 @@ import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import "./results.css";
 import { getJson } from "@/lib/api";
-import { aggregateE2, e2ArmLabels, isE1, isE2, pairText, type E1Summary, type E2Aggregate, type E2Data, type Rate } from "@/lib/results";
+import { aggregateE2, e2ArmLabels, isE1, isE2, isMuseCode, ledgerComparison, pairText, type E1Summary, type E2Aggregate, type E2Data, type MuseCodeExperiment, type Rate } from "@/lib/results";
+import { byGain, resultSentence, taskModel } from "@/lib/methods";
+import { githubFile } from "@/lib/flagships";
 import { ARMS, SET_MODEL, SET_ORDER, armName, e1Grid, e1Lead, resultsKpis, usdPerCompleted } from "@/lib/results-view";
 import { formatUsd, prettyJson } from "@/lib/format";
 import { CatchWaffles } from "@/components/FrontierViz";
@@ -44,6 +46,62 @@ const priceWord = (name: string) => (SET_MODEL[name]?.price === "gpu" ? "at the 
 /** The heatmap tint of a share; any count above zero gets at least a visible tint, and the cell prints the count. */
 const pct = (x: number) => `${x > 0 ? Math.max(14, Math.round(x * 1000) / 10) : 0}%`;
 
+function MuseCodeSection({ name, x }: { name: string; x: MuseCodeExperiment }) {
+  const tasks = byGain(x.comparisons.filter((c) => c.scope === "task").map(ledgerComparison));
+  const verified = x.runs.filter((r) => r.status === "VERIFIED");
+  return (
+    <section className="rs-set" aria-labelledby={`rs-${name}`}>
+      <h3 id={`rs-${name}`}>{name}</h3>
+      {tasks.map((c) => (
+        <div key={c.id} className="rs-muse-task">
+          <p className="rs-muse-name">
+            <code>{c.task}</code>
+            <span className="muted">, {taskModel(c)} in Muse Code</span>
+          </p>
+          <div className="strip-rows">
+            {(
+              [
+                ["With ProofForge", c.proofforge, "pf"],
+                ["On its own", c.alone, "alone"],
+              ] as const
+            ).map(([label, arm, k]) => (
+              <div key={k} className={`strip-row strip-row-${k}`} role="img" aria-label={`${label}: ${arm.verified} of ${arm.runs} runs verified`}>
+                <span className="strip-arm">{label}</span>
+                <span className="strip-dots strip-dots-wide" aria-hidden="true">
+                  {Array.from({ length: arm.runs }, (_, i) => (
+                    <span key={i} className={i < arm.verified ? "sd sd-on" : "sd"} data-unit="run" />
+                  ))}
+                </span>
+                <span className="strip-count">
+                  {arm.verified} <span>of {arm.runs}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="small">{resultSentence(c)}</p>
+        </div>
+      ))}
+      {verified.length ? (
+        <p className="small rs-muse-passports">
+          VERIFIED Passports:{" "}
+          {verified.map((r, i) => (
+            <span key={r.passport}>
+              {i ? ", " : ""}
+              <a href={githubFile(r.passport)}>
+                <code>{r.passport_sha256.slice(0, 16)}</code>
+              </a>
+            </span>
+          ))}
+        </p>
+      ) : null}
+      <p className="small muted">
+        <a href={githubFile(x.readme)}>Results README</a>, <a href={githubFile(x.preregistration)}>preregistration</a>, {x.runs.length} runs
+        judged.
+      </p>
+    </section>
+  );
+}
+
 export default async function ResultsPage() {
   let data: Record<string, unknown>;
   try {
@@ -57,9 +115,11 @@ export default async function ResultsPage() {
     );
   }
   const entries = Object.entries(data ?? {});
+  // In the API's order: the strongest preregistered result first.
+  const museCode = entries.filter(([, v]) => isMuseCode(v)) as [string, MuseCodeExperiment][];
   const e1 = (entries.filter(([k, v]) => k.startsWith("e1") && isE1(v)) as [string, E1Summary][]).sort(([a], [b]) => order(a) - order(b));
   const e2 = entries.filter(([k, v]) => k.startsWith("e2") && isE2(v)) as [string, E2Data][];
-  const other = entries.filter(([k]) => !e1.some(([x]) => x === k) && !e2.some(([x]) => x === k));
+  const other = entries.filter(([k]) => !e1.some(([x]) => x === k) && !e2.some(([x]) => x === k) && !museCode.some(([x]) => x === k));
   const e1Current = e1.filter(([key]) => !(key in SUPERSEDED));
   const e2Current = e2.filter(([key]) => !(key in SUPERSEDED)).map(([name, d]) => ({ name, d, agg: aggregateE2(d) }));
   const earlier: [string, ReactNode][] = [
@@ -79,6 +139,9 @@ export default async function ResultsPage() {
     <main id="main" className="page results-page">
       <h1>Results</h1>
       <p className="lead">
+        {museCode.length
+          ? `Muse Code, Meta's coding agent, verified OpenZeppelin Math.sqrt and Compound Proposal 62 with ProofForge in preregistered experiments where it verified neither on its own; every run and its Passport are below. `
+          : null}
         {allGain
           ? `On the frozen test tasks, every Meta model measured completed more repairs with ProofForge than on its own, under the same caps. `
           : null}
@@ -106,6 +169,20 @@ export default async function ResultsPage() {
       </p>
       {entries.length === 0 ? (
         <div className="notice">No result sets have been published yet. They appear here when the evaluation writes results under results/.</div>
+      ) : null}
+
+      {museCode.length ? (
+        <section aria-labelledby="rs-muse" className="rs-group">
+          <h2 id="rs-muse">Muse Code with ProofForge, preregistered</h2>
+          <p className="wins-group-lead">
+            Muse Spark 1.3 in Muse Code, on its own (Lean only) and with ProofForge (the MCP server, the skill and ProofForgeFin), at the same
+            caps. Every final candidate is judged again from the experiment&apos;s frozen commit; every dot is one run, filled when its Passport is
+            VERIFIED.
+          </p>
+          {museCode.map(([key, x]) => (
+            <MuseCodeSection key={key} name={key} x={x} />
+          ))}
+        </section>
       ) : null}
 
       {e1Current.length ? (
