@@ -372,89 +372,38 @@ export function HeroLenses(props: HeroLensesProps) {
   return (
     <div className="hero-top" data-lens={lens + 1} data-hole={(lens === 2 && holeOn) || undefined}>
       <div className="hero-copy" id="hl-text">
-        <div className="hl-stack hl-heads">
-          <div className="hl-layer" data-on={lens === 0 || undefined}>
-            <h1 id="home-title">{text.headline}</h1>
+        <div className="hl-stack hl-lenses">
+          <div className="hl-lens">
+            <div className="hl-layer hl-head" data-on={lens === 0 || undefined}>
+              <h1 id="home-title">{text.headline}</h1>
+            </div>
+            <div className="hl-layer hl-body" data-on={lens === 0 || undefined} aria-hidden={lens !== 0}>
+              <p className="hero-sub">{text.summary}</p>
+            </div>
           </div>
-          <div className="hl-layer" data-on={lens === 1 || undefined} aria-hidden={lens !== 1}>
-            <h2 className="hl-title">{text.layersTitle}</h2>
+          <div className="hl-lens">
+            <div className="hl-layer hl-head" data-on={lens === 1 || undefined} aria-hidden={lens !== 1}>
+              <h2 className="hl-title">{text.layersTitle}</h2>
+            </div>
+            <div className="hl-layer hl-body" data-on={lens === 1 || undefined} aria-hidden={lens !== 1}>
+              <p className="hero-sub">{text.layersText}</p>
+            </div>
           </div>
-          <div className="hl-layer" data-on={lens === 2 || undefined} aria-hidden={lens !== 2}>
-            <h2 className="hl-title">{text.guaranteeTitle}</h2>
-          </div>
-        </div>
-        <div className="hl-stack hl-bodies">
-          <div className="hl-layer" data-on={lens === 0 || undefined} aria-hidden={lens !== 0}>
-            <p className="hero-sub">{text.summary}</p>
-          </div>
-          <div className="hl-layer" data-on={lens === 1 || undefined} aria-hidden={lens !== 1}>
-            <p className="hero-sub">{text.layersText}</p>
-          </div>
-          <div className="hl-layer" data-on={lens === 2 || undefined} aria-hidden={lens !== 2}>
-            <div className="hl-stack">
-              {guarantees.map((x, i) => (
-                <div key={x.id} className="hl-layer hl-guarantee" data-on={(!holeOn && i === g) || undefined} aria-hidden={holeOn || i !== g}>
-                  <blockquote className="hl-quote">
-                    <p>
-                      &ldquo;<Quote text={x.statement} />&rdquo;
-                    </p>
-                  </blockquote>
-                  <p className="hl-cite">
-                    <code>{x.id}</code>, locked in the {text.task} task (from its README).
-                  </p>
-                  <dl className="hl-readings">
-                    <div>
-                      <dt>Declarations</dt>
-                      <dd>{x.size}</dd>
-                    </div>
-                    <div>
-                      <dt>Levels</dt>
-                      <dd>{x.levels}</dd>
-                    </div>
-                    <div>
-                      <dt>Kernels</dt>
-                      <dd>
-                        {readings.kernels.length} of {readings.kernels.length}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Passport</dt>
-                      <dd>
-                        <a href={passportHref} tabIndex={lens === 2 && !holeOn && i === g ? undefined : -1}>
-                          {readings.passport.slice(0, 8)}
-                        </a>
-                      </dd>
-                    </div>
-                  </dl>
-                </div>
-              ))}
-              {hole.guarantees.map((x, i) => {
-                const lemmas = x.holes.every((h) => h.kind === "lemma");
-                const n = x.holes.length;
-                return (
-                  <div key={x.id} className="hl-layer hl-guarantee hl-holetext" data-on={(holeOn && i === hg) || undefined} aria-hidden={!holeOn || i !== hg}>
-                    <blockquote className={`hl-quote${x.quote.length > 160 ? " hl-quote-long" : ""}`}>
+          <div className="hl-lens">
+            <div className="hl-layer hl-head" data-on={lens === 2 || undefined} aria-hidden={lens !== 2}>
+              <h2 className="hl-title">{text.guaranteeTitle}</h2>
+            </div>
+            <div className="hl-layer hl-body" data-on={lens === 2 || undefined} aria-hidden={lens !== 2}>
+              <div className="hl-stack">
+                {guarantees.map((x, i) => (
+                  <div key={x.id} className="hl-layer hl-guarantee" data-on={(!holeOn && i === g) || undefined} aria-hidden={holeOn || i !== g}>
+                    <blockquote className="hl-quote">
                       <p>
-                        &ldquo;<Quote text={x.quote} />&rdquo;
+                        &ldquo;<Quote text={x.statement} />&rdquo;
                       </p>
                     </blockquote>
                     <p className="hl-cite">
-                      <code>{x.id}</code>, locked in the {hole.task.name} task (
-                      {x.quoteFrom.kind === "readme" ? "from its README" : "the doc comment in its locked specification"}). In run {hole.run.name},{" "}
-                      {n
-                        ? `Muse left ${count(n)} ${lemmas ? (n === 1 ? "lemma" : "lemmas") : n === 1 ? "declaration" : "declarations"} of its proof as`
-                        : "Muse proved every declaration of its shape"}
-                      {n ? (
-                        <>
-                          {" "}
-                          <code>sorry</code>
-                        </>
-                      ) : null}
-                      {x.openInEveryRun ? `; it is open in all ${count(hole.runsMeasured)} ${hole.task.name} runs of that series` : ""}
-                      {hole.laterVerified
-                        ? `. Muse Code with ProofForge later proved it, with every other requirement, in ${hole.laterVerified.verified} of ${hole.laterVerified.runs} ${hole.laterVerified.experiment} runs`
-                        : ""}
-                      .
+                      <code>{x.id}</code>, locked in the {text.task} task (from its README).
                     </p>
                     <dl className="hl-readings">
                       <div>
@@ -466,34 +415,89 @@ export function HeroLenses(props: HeroLensesProps) {
                         <dd>{x.levels}</dd>
                       </div>
                       <div>
-                        <dt>Holes</dt>
-                        <dd className={n ? "hl-bad" : undefined}>{n}</dd>
+                        <dt>Kernels</dt>
+                        <dd>
+                          {readings.kernels.length} of {readings.kernels.length}
+                        </dd>
                       </div>
                       <div>
                         <dt>Passport</dt>
-                        <dd className="hl-none">none</dd>
+                        <dd>
+                          <a href={passportHref} tabIndex={lens === 2 && !holeOn && i === g ? undefined : -1}>
+                            {readings.passport.slice(0, 8)}
+                          </a>
+                        </dd>
                       </div>
                     </dl>
                   </div>
-                );
-              })}
+                ))}
+                {hole.guarantees.map((x, i) => {
+                  const lemmas = x.holes.every((h) => h.kind === "lemma");
+                  const n = x.holes.length;
+                  return (
+                    <div key={x.id} className="hl-layer hl-guarantee hl-holetext" data-on={(holeOn && i === hg) || undefined} aria-hidden={!holeOn || i !== hg}>
+                      <blockquote className={`hl-quote${x.quote.length > 160 ? " hl-quote-long" : ""}`}>
+                        <p>
+                          &ldquo;<Quote text={x.quote} />&rdquo;
+                        </p>
+                      </blockquote>
+                      <p className="hl-cite">
+                        <code>{x.id}</code>, locked in the {hole.task.name} task (
+                        {x.quoteFrom.kind === "readme" ? "from its README" : "the doc comment in its locked specification"}). In run {hole.run.name},{" "}
+                        {n
+                          ? `Muse left ${count(n)} ${lemmas ? (n === 1 ? "lemma" : "lemmas") : n === 1 ? "declaration" : "declarations"} of its proof as`
+                          : "Muse proved every declaration of its shape"}
+                        {n ? (
+                          <>
+                            {" "}
+                            <code>sorry</code>
+                          </>
+                        ) : null}
+                        {x.openInEveryRun ? `; it is open in all ${count(hole.runsMeasured)} ${hole.task.name} runs of that series` : ""}
+                        {hole.laterVerified
+                          ? `. Muse Code with ProofForge later proved it, with every other requirement, in ${hole.laterVerified.verified} of ${hole.laterVerified.runs} ${hole.laterVerified.experiment} runs`
+                          : ""}
+                        .
+                      </p>
+                      <dl className="hl-readings">
+                        <div>
+                          <dt>Declarations</dt>
+                          <dd>{x.size}</dd>
+                        </div>
+                        <div>
+                          <dt>Levels</dt>
+                          <dd>{x.levels}</dd>
+                        </div>
+                        <div>
+                          <dt>Holes</dt>
+                          <dd className={n ? "hl-bad" : undefined}>{n}</dd>
+                        </div>
+                        <div>
+                          <dt>Passport</dt>
+                          <dd className="hl-none">none</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                role="switch"
+                className="hl-switch"
+                aria-checked={holeOn}
+                tabIndex={lens === 2 ? undefined : -1}
+                onClick={() => {
+                  stopTour();
+                  setHoleOn((x) => !x);
+                }}
+              >
+                <span className="hl-switch-track" aria-hidden="true">
+                  <span className="hl-switch-thumb" />
+                </span>
+                A guarantee with a hole
+              </button>
             </div>
-            <button
-              type="button"
-              role="switch"
-              className="hl-switch"
-              aria-checked={holeOn}
-              tabIndex={lens === 2 ? undefined : -1}
-              onClick={() => {
-                stopTour();
-                setHoleOn((x) => !x);
-              }}
-            >
-              <span className="hl-switch-track" aria-hidden="true">
-                <span className="hl-switch-thumb" />
-              </span>
-              A guarantee with a hole
-            </button>
           </div>
         </div>
         {actions}
