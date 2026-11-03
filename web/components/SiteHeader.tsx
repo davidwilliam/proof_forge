@@ -170,26 +170,64 @@ function ResourcesMenu({ path }: { path: string }) {
   );
 }
 
+/** Below the one-row width the links fold into a panel under the header, opened by a menu button.
+    The panel closes on navigation, on Escape (focus returns to the button) and on a press outside the header. */
 export function SiteHeader() {
   const path = usePathname();
+  const [open, setOpen] = useState(false);
+  const header = useRef<HTMLElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  const navId = useId();
+
+  useEffect(() => setOpen(false), [path]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (e: PointerEvent) => {
+      if (header.current && !header.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      // An open Resources panel takes the first Escape.
+      if (e.key === "Escape" && !header.current?.querySelector('.res-button[aria-expanded="true"]')) {
+        setOpen(false);
+        toggle.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
   // The home page opens on the Void hero band, so its header is dark in both themes.
   return (
-    <header className="site-header" data-tone={path === "/" ? "dark" : undefined}>
+    <header ref={header} className="site-header" data-tone={path === "/" ? "dark" : undefined}>
       <Link href="/" className="brand" aria-label="ProofForge, overview">
         <Lockup />
       </Link>
-      <nav className="site-nav" aria-label="Main">
+      <nav className="site-nav" id={navId} aria-label="Main" data-open={open || undefined}>
         {LINKS.map((l) => (
-          <Link key={l.href} href={l.href} aria-current={path === l.href ? "page" : undefined}>
+          <Link key={l.href} href={l.href} aria-current={path === l.href ? "page" : undefined} onClick={() => setOpen(false)}>
             {l.label}
           </Link>
         ))}
         <ResourcesMenu path={path} />
-        <Link href="/about" className="nav-about" aria-current={path === "/about" ? "page" : undefined}>
+        <Link href="/about" className="nav-about" aria-current={path === "/about" ? "page" : undefined} onClick={() => setOpen(false)}>
           About
         </Link>
       </nav>
       <ThemeToggle />
+      <button ref={toggle} type="button" className="nav-toggle" aria-label="Menu" aria-expanded={open} aria-controls={navId} onClick={() => setOpen((o) => !o)}>
+        <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
+          {open ? (
+            <path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          ) : (
+            <path d="M3 6h14M3 10h14M3 14h14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          )}
+        </svg>
+      </button>
     </header>
   );
 }
